@@ -1,0 +1,26 @@
+[package]
+name = "taser-em-shaders"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+links = "taser-em-shaders"
+build = "build.rs"
+
+[features]
+dim1 = []
+dim2 = []
+dim3 = []
+cpu = ["khal-std/cpu"]
+cpu-parallel = ["khal-std/cpu-parallel"]
+cuda = ["khal-std/cuda"]
+
+[dependencies]
+khal-std.workspace = true
+
+[target.'cfg(not(any(target_arch = "spirv", target_arch = "nvptx64")))'.dependencies]
+khal.workspace = true
+
+[build-dependencies]
+khal-std.workspace = true

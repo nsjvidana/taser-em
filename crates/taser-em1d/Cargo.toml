@@ -1,0 +1,29 @@
+[package]
+name = "taser-em1d"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+
+[features]
+default = ["dim1", "webgpu"]
+dim1 = []
+webgpu = ["khal/webgpu"]
+cpu = ["khal/cpu", "taser-em-shaders/cpu"]
+cpu-parallel = ["cpu", "taser-em-shaders/cpu-parallel"]
+cuda = ["khal/cuda", "khal-builder/cuda", "taser-em-shaders/cuda"]
+
+[lib]
+name = "taser_em1d"
+path = "../../src/lib.rs"
+required-features = ["dim1"]
+
+[dependencies]
+khal.workspace = true
+taser-em-shaders = { path = "../taser-em-shaders" }
+include_dir.workspace = true
+
+[build-dependencies]
+khal-builder.workspace = true
+taser-em-shaders = { path = "../taser-em-shaders" }
