@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/taser-em-shaders","crates/taser-em1d"]
+members = ["crates/taser-em-shaders","crates/taser-em1d", "crates/taser-testbed"]
 resolver = "2"
 
 [workspace.package]
