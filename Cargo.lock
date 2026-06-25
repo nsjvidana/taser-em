@@ -3098,10 +3098,8 @@ dependencies = [
 name = "taser-testbed"
 version = "0.1.0"
 dependencies = [
- "glamx",
  "khal",
  "kiss3d",
- "taser-em-shaders",
  "taser-em1d",
 ]
 

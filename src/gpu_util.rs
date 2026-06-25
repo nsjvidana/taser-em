@@ -26,8 +26,10 @@ impl<T: DeviceValue + NoUninit + AnyBitPattern> GpuBufferReadable<T> {
 
 pub trait CreateGpuBuffer<T: DeviceValue + NoUninit> {
     fn create_gpu_buffer(&self, backend: &GpuBackend) -> GpuResult<GpuBuffer<T>>;
+
+    #[allow(unused_variables)]
     fn create_gpu_uniform(&self, backend: &GpuBackend) -> GpuResult<GpuBuffer<T>> {
-        panic!("Unimplemented or cannot be a uniform!")
+        panic!("Unimplemented for this type or cannot be a uniform!")
     }
 }
 

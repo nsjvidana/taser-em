@@ -8,7 +8,5 @@ edition.workspace = true
 
 [dependencies]
 taser-em1d = { path = "../taser-em1d" }
-taser-em-shaders = { path = "../taser-em-shaders" }
 kiss3d = "0.44.0"
 khal.workspace = true
-glamx.workspace = true
