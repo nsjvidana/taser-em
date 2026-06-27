@@ -1,5 +1,5 @@
 [package]
-name = "taser-testbed"
+name = "taser-testbed" # TODO: rename to taser-em-testbed
 version.workspace = true
 authors.workspace = true
 categories.workspace = true

@@ -3080,6 +3080,7 @@ dependencies = [
 name = "taser-em-shaders"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "khal",
  "khal-std",
 ]

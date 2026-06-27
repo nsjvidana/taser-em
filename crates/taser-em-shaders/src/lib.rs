@@ -1,6 +1,8 @@
 #![allow(unexpected_cfgs)] // TODO: remove this if we can?
 #![cfg_attr(target_arch = "spirv", no_std)]
 
+pub mod fdtd1;
+
 use khal_std::glamx::UVec3;
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
