@@ -3086,6 +3086,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "taser-em-testbed"
+version = "0.1.0"
+dependencies = [
+ "khal",
+ "kiss3d",
+ "taser-em1d",
+]
+
+[[package]]
 name = "taser-em1d"
 version = "0.1.0"
 dependencies = [
@@ -3093,15 +3102,6 @@ dependencies = [
  "khal",
  "khal-builder",
  "taser-em-shaders",
-]
-
-[[package]]
-name = "taser-testbed"
-version = "0.1.0"
-dependencies = [
- "khal",
- "kiss3d",
- "taser-em1d",
 ]
 
 [[package]]
