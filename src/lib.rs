@@ -9,10 +9,32 @@ use crate::prelude::GpuResult;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
-#[derive(Shader)]
-pub struct AddAssign {
-    pub add_assign: taser_em_shaders::AddAssign
+macro_rules! shader_struct {
+    ($name:ident, $inner:ty) => {
+        #[derive(Shader)]
+        pub struct $name {
+            pub kernel: $inner
+        }
+
+        impl AsRef<$inner> for $name {
+            fn as_ref(&self) -> &$inner {
+                &self.kernel
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = $inner;
+
+            fn deref(&self) -> &Self::Target {
+                &self.kernel
+            }
+        }
+    };
 }
+
+shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
+
+shader_struct!(AddAssign, taser_em_shaders::AddAssign);
 
 pub struct AddAssignRunner {
     pub a: Vec<f32>,

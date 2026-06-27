@@ -17,8 +17,7 @@ async fn main() {
 
     let webgpu = WebGpu::default().await.unwrap();
     let backend = GpuBackend::WebGpu(webgpu);
-    let add_assign = AddAssign::from_backend(&backend).unwrap()
-        .add_assign;
+    let add_assign = AddAssign::from_backend(&backend).unwrap();
     let mut runner = AddAssignRunner::new(a, b, &backend).unwrap();
 
     while window.render_3d(&mut scene, &mut camera).await {
