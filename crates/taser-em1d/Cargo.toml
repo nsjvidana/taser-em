@@ -24,6 +24,7 @@ required-features = ["dim1"]
 khal.workspace = true
 taser-em-shaders = { path = "../taser-em-shaders" }
 include_dir.workspace = true
+derivative.workspace = true
 
 [build-dependencies]
 khal-builder.workspace = true
