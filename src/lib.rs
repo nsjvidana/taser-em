@@ -48,9 +48,9 @@ pub struct Fdtd1Runner {
 impl Fdtd1Runner {
     // TODO: make Fdtd1Runner with things other than just `num_cells`
     pub fn new(
+        backend: &GpuBackend,
         num_cells: usize,
-        grid_params: GridParameters,
-        backend: &GpuBackend
+        grid_params: GridParameters
     ) -> GpuResult<Self> {
         let h_x = vec![Default::default(); num_cells];
         let dn_y = vec![Default::default(); num_cells];
@@ -78,9 +78,9 @@ impl Fdtd1Runner {
 
     pub fn submit(
         &mut self,
+        backend: &GpuBackend,
         kernel: &taser_em_shaders::fdtd1::Fdtd1DnY,
-        timestamps: Option<&mut GpuTimestamps>,
-        backend: &GpuBackend
+        timestamps: Option<&mut GpuTimestamps>
     ) -> GpuResult<()> {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("fdtd1_dn_y", timestamps);
@@ -123,7 +123,7 @@ pub struct AddAssignRunner {
 }
 
 impl AddAssignRunner {
-    pub fn new(a: Vec<f32>, b: Vec<f32>, backend: &GpuBackend) -> GpuResult<Self> {
+    pub fn new(backend: &GpuBackend, a: Vec<f32>, b: Vec<f32>) -> GpuResult<Self> {
         let buffers = AddAssignBuffers {
             a: a.create_gpu_buffer_readable(backend)?,
             b: b.create_gpu_buffer(backend)?
@@ -134,9 +134,9 @@ impl AddAssignRunner {
 
     pub fn submit(
         &mut self,
+        backend: &GpuBackend,
         kernel: &taser_em_shaders::AddAssign,
-        timestamps: Option<&mut GpuTimestamps>,
-        backend: &GpuBackend
+        timestamps: Option<&mut GpuTimestamps>
     ) -> GpuResult<()> {
         let mut encoder = backend.begin_encoding();
 

@@ -16,10 +16,10 @@ async fn main() {
     let webgpu = WebGpu::default().await.unwrap();
     let backend = GpuBackend::WebGpu(webgpu);
     let kernel = Fdtd1::from_backend(&backend).unwrap();
-    let mut runner = Fdtd1Runner::new(100, GridParameters { dz: 1. }, &backend).unwrap();
+    let mut runner = Fdtd1Runner::new(&backend, 100, GridParameters { dz: 1. }).unwrap();
 
     while window.render_3d(&mut scene, &mut camera).await {
-        let _ = runner.submit(&kernel, None, &backend).unwrap();
+        let _ = runner.submit(&backend, &kernel, None).unwrap();
         let start = std::time::Instant::now();
         backend.synchronize().unwrap();
         let elapsed = start.elapsed();
