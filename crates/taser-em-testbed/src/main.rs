@@ -18,13 +18,20 @@ async fn main() {
     let kernel = Fdtd1::from_backend(&backend).unwrap();
     let mut runner = Fdtd1Runner::new(&backend, 100, GridParameters { dz: 1. }).unwrap();
 
+    let mut total = std::time::Duration::default();
+    let mut count = 0;
+    let max_count = 100;
     while window.render_3d(&mut scene, &mut camera).await {
         let _ = runner.submit(&backend, &kernel, None).unwrap();
         let start = std::time::Instant::now();
         backend.synchronize().unwrap();
         let elapsed = start.elapsed();
-        runner.buffers.en_y.read(&backend, &mut runner.en_y)
-            .await.unwrap();
-        println!("{:?}", elapsed);
+        total += elapsed;
+        count += 1;
+        if count >= max_count {
+            println!("{}ms", total.as_secs_f64() * 1000. / max_count as f64);
+            total = std::time::Duration::default();
+            count = 0;
+        }
     }
 }

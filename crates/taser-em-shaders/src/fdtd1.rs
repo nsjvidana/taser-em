@@ -73,5 +73,4 @@ pub struct PmlCoefficients {
     // pub dn_y2: f32,
     // pub dn_y5: f32,
     // pub dn_y6: f32,
-
 }
