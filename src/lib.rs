@@ -1,9 +1,12 @@
 pub mod prelude;
 pub mod gpu_util;
 
+pub use taser_em_shaders as shaders;
+
 use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
+use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use crate::prelude::GpuResult;
 
@@ -34,6 +37,84 @@ macro_rules! shader_struct {
 
 shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
 
+pub struct Fdtd1Runner {
+    pub h_x: Vec<f32>,
+    pub dn_y: Vec<f32>,
+    pub en_y: Vec<f32>,
+    pub int_en_y: Vec<f32>,
+    pub buffers: Fdtd1Buffers,
+}
+
+impl Fdtd1Runner {
+    // TODO: make Fdtd1Runner with things other than just `num_cells`
+    pub fn new(
+        num_cells: usize,
+        grid_params: GridParameters,
+        backend: &GpuBackend
+    ) -> GpuResult<Self> {
+        let h_x = vec![Default::default(); num_cells];
+        let dn_y = vec![Default::default(); num_cells];
+        let en_y = vec![Default::default(); num_cells];
+        let int_en_y = vec![Default::default(); num_cells];
+        let coeffs = vec![PmlCoefficients::default(); num_cells];
+
+        let buffers = Fdtd1Buffers {
+            h_x: h_x.create_gpu_buffer_readable(backend)?,
+            dn_y: dn_y.create_gpu_buffer_readable(backend)?,
+            en_y: en_y.create_gpu_buffer_readable(backend)?,
+            int_en_y: int_en_y.create_gpu_buffer(backend)?,
+            coeffs: coeffs.create_gpu_buffer(backend)?,
+            grid: grid_params.create_gpu_uniform(backend)?,
+        };
+
+        Ok(Self {
+            h_x,
+            dn_y,
+            en_y,
+            int_en_y,
+            buffers,
+        })
+    }
+
+    pub fn submit(
+        &mut self,
+        kernel: &taser_em_shaders::fdtd1::Fdtd1DnY,
+        backend: &GpuBackend
+        // TODO: take in a `Option<GpuTimestamps>` here
+    ) -> GpuResult<GpuTimestamps> {
+        let mut encoder = backend.begin_encoding();
+        let mut timestamps = GpuTimestamps::new(backend, 1);
+        let mut pass = encoder.begin_pass("fdtd1_dn_y", Some(&mut timestamps));
+        kernel.call(
+            &mut pass,
+            self.dn_y.len(),
+            &mut self.buffers.h_x.buffer,
+            &mut self.buffers.dn_y.buffer,
+            &mut self.buffers.en_y.buffer,
+            &mut self.buffers.int_en_y,
+            &self.buffers.coeffs,
+            &self.buffers.grid,
+        )?;
+        drop(pass);
+        self.buffers.h_x.encode_copy_cmd(&mut encoder)?;
+        self.buffers.dn_y.encode_copy_cmd(&mut encoder)?;
+        self.buffers.en_y.encode_copy_cmd(&mut encoder)?;
+
+        backend.submit(encoder)?;
+
+        Ok(timestamps)
+    }
+}
+
+pub struct Fdtd1Buffers {
+    pub h_x: GpuBufferReadable<f32>,
+    pub dn_y: GpuBufferReadable<f32>,
+    pub en_y: GpuBufferReadable<f32>,
+    pub int_en_y: GpuBuffer<f32>,
+    pub coeffs: GpuBuffer<PmlCoefficients>,
+    pub grid: GpuBuffer<GridParameters>,
+}
+
 shader_struct!(AddAssign, taser_em_shaders::AddAssign);
 
 pub struct AddAssignRunner {
@@ -43,7 +124,7 @@ pub struct AddAssignRunner {
 }
 
 impl AddAssignRunner {
-    pub fn new(a: Vec<f32>, b: Vec<f32>, backend: &GpuBackend) -> GpuResult<Self>{
+    pub fn new(a: Vec<f32>, b: Vec<f32>, backend: &GpuBackend) -> GpuResult<Self> {
         let buffers = AddAssignBuffers {
             a: a.create_gpu_buffer_readable(backend)?,
             b: b.create_gpu_buffer(backend)?

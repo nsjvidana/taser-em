@@ -3,6 +3,9 @@ use khal_std::glamx::{UVec3, Vec2, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 
+/// Lossless 1-dimensional FDTD kernel in "Ey" mode.
+///
+/// Only the x and y components of E and H fields, respectively, are simulated.
 #[spirv_bindgen]
 #[spirv(compute(threads(64)))]
 pub fn fdtd1_dn_y(
@@ -25,30 +28,28 @@ pub fn fdtd1_dn_y(
         en_y_coeff,
         ..
     } = coeffs.read(idx);
-    for _ in 0..100 {
-        let en_y_k = en_y.read(idx);
+    let en_y_k = en_y.read(idx);
 
-        let not_boundary = (idx < boundary_idx) as u32 as f32;
-        let en_y_k1 = en_y.read((idx + 1).max(boundary_idx)) * not_boundary;
-        let e_curl_x = -(en_y_k1 - en_y_k) / dz;
-        let new_h_x_k = h_x_coeffs.dot(Vec2::new(
-            h_x.read(idx), e_curl_x
-        ));
-        *h_x.at_mut(idx) = new_h_x_k;
+    let not_boundary = (idx < boundary_idx) as u32 as f32;
+    let en_y_k1 = en_y.read((idx + 1).max(boundary_idx)) * not_boundary;
+    let e_curl_x = -(en_y_k1 - en_y_k) / dz;
+    let new_h_x_k = h_x_coeffs.dot(Vec2::new(
+        h_x.read(idx), e_curl_x
+    ));
+    *h_x.at_mut(idx) = new_h_x_k;
 
-        let new_int_en_y_k = int_en_y.read(idx) + en_y_k;
+    let new_int_en_y_k = int_en_y.read(idx) + en_y_k;
 
-        let not_boundary = (idx > 0) as u32 as f32;
-        let h_x_km1 = h_x.read(idx.wrapping_sub(1).clamp(0, boundary_idx)) * not_boundary;
-        let h_curl_y = (new_h_x_k - h_x_km1) / dz;
-        let new_dn_y_k = dn_y_coeffs.dot(Vec4::new(
-            dn_y.read(idx), h_curl_y, en_y_k, new_int_en_y_k
-        ));
-        *dn_y.at_mut(idx) = new_dn_y_k;
-        *int_en_y.at_mut(idx) = new_int_en_y_k;
+    let not_boundary = (idx > 0) as u32 as f32;
+    let h_x_km1 = h_x.read(idx.wrapping_sub(1).clamp(0, boundary_idx)) * not_boundary;
+    let h_curl_y = (new_h_x_k - h_x_km1) / dz;
+    let new_dn_y_k = dn_y_coeffs.dot(Vec4::new(
+        dn_y.read(idx), h_curl_y, en_y_k, new_int_en_y_k
+    ));
+    *dn_y.at_mut(idx) = new_dn_y_k;
+    *int_en_y.at_mut(idx) = new_int_en_y_k;
 
-        *en_y.at_mut(idx) = en_y_coeff * new_dn_y_k;
-    }
+    *en_y.at_mut(idx) = en_y_coeff * new_dn_y_k;
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
