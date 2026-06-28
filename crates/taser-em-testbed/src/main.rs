@@ -1,7 +1,8 @@
 use khal::backend::{Backend, GpuBackend, WebGpu};
 use khal::Shader;
 use kiss3d::prelude::*;
-use taser_em1d::{AddAssign, AddAssignRunner};
+use taser_em1d::{AddAssign, AddAssignRunner, Fdtd1, Fdtd1Runner};
+use taser_em1d::shaders::fdtd1::GridParameters;
 
 #[kiss3d::main]
 async fn main() {
@@ -12,20 +13,18 @@ async fn main() {
         .add_light(Light::point(100.0))
         .set_position(Vec3::new(0.0, 2.0, -2.0));
 
-    let mut a = (0..10000).map(|i| i as f32).collect::<Vec<_>>();
-    let b = (0..10000).map(|i| i as f32 * 10.0).collect::<Vec<_>>();
-
     let webgpu = WebGpu::default().await.unwrap();
     let backend = GpuBackend::WebGpu(webgpu);
-    let add_assign = AddAssign::from_backend(&backend).unwrap();
-    let mut runner = AddAssignRunner::new(a, b, &backend).unwrap();
+    let kernel = Fdtd1::from_backend(&backend).unwrap();
+    let mut runner = Fdtd1Runner::new(100, GridParameters { dz: 1. }, &backend).unwrap();
 
     while window.render_3d(&mut scene, &mut camera).await {
-        let timestamp = runner.submit(&add_assign, &backend).unwrap();
+        let _ = runner.submit(&kernel, &backend).unwrap();
+        let start = std::time::Instant::now();
         backend.synchronize().unwrap();
-        let t = timestamp.read(&backend).await.unwrap()[0].clone();
-        runner.buffers.a.read(&backend, &mut runner.a)
+        let elapsed = start.elapsed();
+        runner.buffers.en_y.read(&backend, &mut runner.en_y)
             .await.unwrap();
-        println!("{}: {}ms", t.label, t.duration_ms);
+        println!("{:?}", elapsed);
     }
 }
