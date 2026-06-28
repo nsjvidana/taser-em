@@ -79,12 +79,11 @@ impl Fdtd1Runner {
     pub fn submit(
         &mut self,
         kernel: &taser_em_shaders::fdtd1::Fdtd1DnY,
+        timestamps: Option<&mut GpuTimestamps>,
         backend: &GpuBackend
-        // TODO: take in a `Option<GpuTimestamps>` here
-    ) -> GpuResult<GpuTimestamps> {
+    ) -> GpuResult<()> {
         let mut encoder = backend.begin_encoding();
-        let mut timestamps = GpuTimestamps::new(backend, 1);
-        let mut pass = encoder.begin_pass("fdtd1_dn_y", Some(&mut timestamps));
+        let mut pass = encoder.begin_pass("fdtd1_dn_y", timestamps);
         kernel.call(
             &mut pass,
             self.dn_y.len(),
@@ -102,7 +101,7 @@ impl Fdtd1Runner {
 
         backend.submit(encoder)?;
 
-        Ok(timestamps)
+        Ok(())
     }
 }
 
@@ -136,12 +135,12 @@ impl AddAssignRunner {
     pub fn submit(
         &mut self,
         kernel: &taser_em_shaders::AddAssign,
+        timestamps: Option<&mut GpuTimestamps>,
         backend: &GpuBackend
-    ) -> GpuResult<GpuTimestamps>{
+    ) -> GpuResult<()> {
         let mut encoder = backend.begin_encoding();
 
-        let mut timestamps = GpuTimestamps::new(backend, 1);
-        let mut pass = encoder.begin_pass("add_assign", Some(&mut timestamps));
+        let mut pass = encoder.begin_pass("add_assign", timestamps);
 
         let AddAssignBuffers {
             a, b
@@ -157,7 +156,7 @@ impl AddAssignRunner {
 
         backend.submit(encoder)?;
 
-        Ok(timestamps)
+        Ok(())
     }
 }
 

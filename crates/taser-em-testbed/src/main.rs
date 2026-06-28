@@ -19,7 +19,7 @@ async fn main() {
     let mut runner = Fdtd1Runner::new(100, GridParameters { dz: 1. }, &backend).unwrap();
 
     while window.render_3d(&mut scene, &mut camera).await {
-        let _ = runner.submit(&kernel, &backend).unwrap();
+        let _ = runner.submit(&kernel, None, &backend).unwrap();
         let start = std::time::Instant::now();
         backend.synchronize().unwrap();
         let elapsed = start.elapsed();
