@@ -2,6 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec2, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
+use crate::math::Vect;
 
 /// Lossless 1-dimensional FDTD kernel in "Ey" mode.
 ///
@@ -10,10 +11,10 @@ use khal_std::macros::{spirv, spirv_bindgen};
 #[spirv(compute(threads(64)))]
 pub fn fdtd1_dn_y(
     #[spirv(global_invocation_id)] id: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h_x: &mut [f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn_y: &mut [f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en_y: &mut [f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] int_en_y: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h_x: &mut [Vect],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn_y: &mut [Vect],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en_y: &mut [Vect],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] int_en_y: &mut [Vect],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] coeffs: &[PmlCoefficients],
     #[spirv(uniform, descriptor_set = 0, binding = 5)] grid: &GridParameters,
 ) {

@@ -9,7 +9,7 @@ build = "../../build.rs"
 
 [features]
 default = ["dim1", "webgpu"]
-dim1 = []
+dim1 = ["taser-em-shaders/dim1"]
 webgpu = ["khal/webgpu"]
 cpu = ["khal/cpu", "taser-em-shaders/cpu"]
 cpu-parallel = ["cpu", "taser-em-shaders/cpu-parallel"]

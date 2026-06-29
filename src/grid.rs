@@ -1,6 +1,7 @@
-use glamx::Vec3;
 use taser_em_shaders::fdtd1::PmlCoefficients;
-use crate::{ElectricMaterial, DIM};
+use crate::ElectricMaterial;
+use glamx::Vec3;
+use taser_em_shaders::math::{GridIndex, DIM};
 
 pub struct YeeGrid {
     /// Relative Permeability (located at H field components)
@@ -12,11 +13,16 @@ pub struct YeeGrid {
 }
 
 impl YeeGrid {
-    pub fn update_coeffs_pml(&self, dims: PmlDimensions, n_cells: u32) -> Vec<PmlCoefficients> {
+    pub fn update_coeffs_pml(&self, dims: PmlDimensions, n_cells: GridIndex) -> Vec<PmlCoefficients> {
         todo!()
     }
 
-    pub fn fill_region(&mut self, start: u32, end: u32, material: ElectricMaterial) -> Vec<PmlCoefficients> {
+    pub fn fill_region(
+        &mut self,
+        start: GridIndex,
+        end: GridIndex,
+        material: ElectricMaterial
+    ) -> Vec<PmlCoefficients> {
         todo!()
     }
 

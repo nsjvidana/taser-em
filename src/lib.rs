@@ -2,25 +2,19 @@ pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
 
-use derivative::Derivative;
-use glamx::Vec3;
 pub use taser_em_shaders as shaders;
 
+use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
+use crate::prelude::GpuResult;
+use derivative::Derivative;
+use glamx::Vec3;
 use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
-use crate::prelude::GpuResult;
+use taser_em_shaders::math::{GridIndex, Vect};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
-
-#[cfg(feature = "dim1")]
-pub const DIM: usize = 1;
-#[cfg(feature = "dim2")]
-pub const DIM: usize = 2;
-#[cfg(feature = "dim3")]
-pub const DIM: usize = 3;
 
 pub const C_0: f32 = 299792458.0;
 
@@ -52,9 +46,9 @@ shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
 #[derive(Default)]
 pub struct FdtdParameters1 {
     pub dt: f32,
-    pub cell_size: f32, // TODO: use a `Vect` type alias that changes depending on dim feature?
+    pub cell_size: Vect,
     /// Number of grid cells (in each principal direction)
-    pub n_cells: u32, // TODO: use `UVect` type alias?
+    pub n_cells: GridIndex,
     // TODO: E-field (or H field for current loops) Source enum
 }
 
@@ -77,7 +71,7 @@ impl FdtdStability1 {
         todo!()
     }
 
-    pub fn snap_to_critical_dim(&self, cell_size: f32, critical_dim: f32) -> f32 {
+    pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> f32 {
         todo!()
     }
 
@@ -95,10 +89,10 @@ pub struct ElectricMaterial {
 }
 
 pub struct Fdtd1Runner {
-    pub h_x: Vec<f32>,
-    pub dn_y: Vec<f32>,
-    pub en_y: Vec<f32>,
-    pub int_en_y: Vec<f32>,
+    pub h_x: Vec<Vect>,
+    pub dn_y: Vec<Vect>,
+    pub en_y: Vec<Vect>,
+    pub int_en_y: Vec<Vect>,
     pub buffers: Fdtd1Buffers,
 }
 
@@ -163,10 +157,10 @@ impl Fdtd1Runner {
 }
 
 pub struct Fdtd1Buffers {
-    pub h_x: GpuBufferReadable<f32>,
-    pub dn_y: GpuBufferReadable<f32>,
-    pub en_y: GpuBufferReadable<f32>,
-    pub int_en_y: GpuBuffer<f32>,
+    pub h_x: GpuBufferReadable<Vect>,
+    pub dn_y: GpuBufferReadable<Vect>,
+    pub en_y: GpuBufferReadable<Vect>,
+    pub int_en_y: GpuBuffer<Vect>,
     pub coeffs: GpuBuffer<PmlCoefficients>,
     pub grid: GpuBuffer<GridParameters>,
 }

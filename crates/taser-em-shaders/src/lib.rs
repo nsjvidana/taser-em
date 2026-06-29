@@ -2,6 +2,7 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
 pub mod fdtd1;
+pub mod math;
 
 use khal_std::glamx::UVec3;
 use khal_std::index::MaybeIndexUnchecked;
