@@ -3121,6 +3121,7 @@ name = "taser-em1d"
 version = "0.1.0"
 dependencies = [
  "derivative",
+ "glamx",
  "include_dir",
  "khal",
  "khal-builder",

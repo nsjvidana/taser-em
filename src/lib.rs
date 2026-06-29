@@ -1,6 +1,9 @@
 pub mod prelude;
 pub mod gpu_util;
+pub mod grid;
 
+use derivative::Derivative;
+use glamx::Vec3;
 pub use taser_em_shaders as shaders;
 
 use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
@@ -11,6 +14,15 @@ use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadabl
 use crate::prelude::GpuResult;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
+
+#[cfg(feature = "dim1")]
+pub const DIM: usize = 1;
+#[cfg(feature = "dim2")]
+pub const DIM: usize = 2;
+#[cfg(feature = "dim3")]
+pub const DIM: usize = 3;
+
+pub const C_0: f32 = 299792458.0;
 
 macro_rules! shader_struct {
     ($name:ident, $inner:ty) => {
@@ -36,6 +48,51 @@ macro_rules! shader_struct {
 }
 
 shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
+
+#[derive(Default)]
+pub struct FdtdParameters1 {
+    pub dt: f32,
+    pub cell_size: f32, // TODO: use a `Vect` type alias that changes depending on dim feature?
+    /// Number of grid cells (in each principal direction)
+    pub n_cells: u32, // TODO: use `UVect` type alias?
+    // TODO: E-field (or H field for current loops) Source enum
+}
+
+#[derive(Derivative, Clone)]
+#[derivative(Default)]
+pub struct FdtdStability1 {
+    #[derivative(Default(value = "10"))]
+    pub cells_per_wavelength: u32,
+    #[derivative(Default(value = "2."))]
+    pub dt_safety_factor: f32,
+}
+
+impl FdtdStability1 {
+
+    pub fn cell_size_from_min_wavelength(&self, f_max: f32) -> f32 {
+        todo!()
+    }
+
+    pub fn cfl_condition(&self, params: &mut FdtdParameters1) -> f32 {
+        todo!()
+    }
+
+    pub fn snap_to_critical_dim(&self, cell_size: f32, critical_dim: f32) -> f32 {
+        todo!()
+    }
+
+    // pub fn dt_from_source(&self, source: FdtdSource) -> f32 {}
+}
+
+pub const FREE_SPACE: ElectricMaterial = ElectricMaterial {
+    eps_r: Vec3::ONE, mu_r: Vec3::ONE
+};
+
+#[derive(Copy, Clone, Debug)]
+pub struct ElectricMaterial {
+    pub eps_r: Vec3,
+    pub mu_r: Vec3
+}
 
 pub struct Fdtd1Runner {
     pub h_x: Vec<f32>,

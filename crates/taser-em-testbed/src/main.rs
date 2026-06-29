@@ -1,8 +1,8 @@
 use khal::backend::{Backend, GpuBackend, WebGpu};
 use khal::Shader;
 use kiss3d::prelude::*;
-use taser_em1d::{AddAssign, AddAssignRunner, Fdtd1, Fdtd1Runner};
 use taser_em1d::shaders::fdtd1::GridParameters;
+use taser_em1d::{Fdtd1, Fdtd1Runner};
 
 #[kiss3d::main]
 async fn main() {
