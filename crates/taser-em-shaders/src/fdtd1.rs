@@ -4,7 +4,7 @@ use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::Vect;
 
-/// Lossless 1-dimensional FDTD kernel in "Ey" mode.
+/// Lossy 1-dimensional FDTD kernel in "Ey" mode.
 ///
 /// Only the x and y components of E and H fields, respectively, are simulated.
 #[spirv_bindgen]

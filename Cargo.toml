@@ -17,6 +17,7 @@ keywords = ["physics", "electromagnetics", "fdtd", "n-dimensional"]
 edition = "2024"
 
 [workspace.dependencies]
+parry3d = "0.28"
 khal = { version = "0.2.0", features = ["derive"] }
 khal-builder = "0.2.0"
 khal-std = "0.2.0"

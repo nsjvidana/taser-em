@@ -21,6 +21,7 @@ path = "../../src/lib.rs"
 required-features = ["dim1"]
 
 [dependencies]
+parry3d.workspace = true
 khal.workspace = true
 taser-em-shaders = { path = "../taser-em-shaders" }
 glamx.workspace = true
