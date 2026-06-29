@@ -3185,12 +3185,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "taser-em-build"
+version = "0.1.0"
+
+[[package]]
 name = "taser-em-shaders"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "taser-em-build",
 ]
 
 [[package]]
@@ -3212,6 +3217,7 @@ dependencies = [
  "khal",
  "khal-builder",
  "parry3d",
+ "taser-em-build",
  "taser-em-shaders",
 ]
 

@@ -1,0 +1,7 @@
+[package]
+name = "taser-em-build"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true

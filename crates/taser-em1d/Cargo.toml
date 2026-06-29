@@ -30,4 +30,5 @@ derivative.workspace = true
 
 [build-dependencies]
 khal-builder.workspace = true
+taser-em-build = { path = "../taser-em-build" }
 taser-em-shaders = { path = "../taser-em-shaders" }
