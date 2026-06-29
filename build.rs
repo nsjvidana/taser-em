@@ -10,7 +10,7 @@ fn main() {
 
     let mut builder = KhalBuilder::from_dependency("taser-em-shaders", true);
 
-    // Enable dim features in sahder compilation
+    // Enable dim features in shader compilation
     for dim in 1..=3 {
         if env::var(format!("CARGO_FEATURE_DIM{dim}")).is_ok() {
             builder = builder.feature(format!("dim{dim}"));
