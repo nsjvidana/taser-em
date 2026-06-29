@@ -8,6 +8,14 @@ fn main() {
     let output_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR environment variable not set"))
         .join("shaders-spirv");
 
-    KhalBuilder::from_dependency("taser-em-shaders", true)
-        .build(&output_dir);
+    let mut builder = KhalBuilder::from_dependency("taser-em-shaders", true);
+
+    // Enable dim features in sahder compilation
+    for dim in 1..=3 {
+        if env::var(format!("CARGO_FEATURE_DIM{dim}")).is_ok() {
+            builder = builder.feature(format!("dim{dim}"));
+        }
+    }
+
+    builder.build(&output_dir);
 }

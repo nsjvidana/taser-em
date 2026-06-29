@@ -9,7 +9,6 @@ links = "taser-em-shaders"
 build = "build.rs"
 
 [features]
-default = ["dim1"]
 dim1 = []
 dim2 = []
 dim3 = []
