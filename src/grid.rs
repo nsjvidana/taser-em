@@ -15,7 +15,7 @@ pub struct YeeGrid {
 }
 
 impl YeeGrid {
-    pub fn update_coeffs_pml(&self, dims: PmlDimensions, n_cells: GridIndex) -> Vec<PmlCoefficients> {
+    pub fn update_coeffs_pml(&self, _dims: PmlDimensions, _n_cells: GridIndex) -> Vec<PmlCoefficients> {
         todo!()
     }
 

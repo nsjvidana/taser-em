@@ -62,15 +62,15 @@ pub struct FdtdStability1 {
 
 impl FdtdStability1 {
 
-    pub fn cell_size_from_min_wavelength(&self, f_max: f32) -> f32 {
+    pub fn cell_size_from_min_wavelength(&self, _f_max: f32) -> f32 {
         todo!()
     }
 
-    pub fn cfl_condition(&self, params: &mut FdtdParameters1) -> f32 {
+    pub fn cfl_condition(&self, _params: &mut FdtdParameters1) -> f32 {
         todo!()
     }
 
-    pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> f32 {
+    pub fn snap_to_critical_dim(&self, _cell_size: Vect, _critical_dim: Vect) -> f32 {
         todo!()
     }
 
