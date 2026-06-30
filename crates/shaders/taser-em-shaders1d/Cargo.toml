@@ -8,6 +8,12 @@ edition.workspace = true
 links = "taser-em-shaders1d"
 build = "../build.rs"
 
+[lints]
+rust.unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(feature, values("dim2", "dim3"))',
+    'cfg(target_arch, values("spirv"))',
+] }
+
 [features]
 default = ["dim1"]
 dim1 = []

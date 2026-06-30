@@ -1,4 +1,3 @@
-#![allow(unexpected_cfgs)] // TODO: remove this if we can?
 #![cfg_attr(target_arch = "spirv", no_std)]
 
 pub mod fdtd1;
