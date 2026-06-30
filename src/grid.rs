@@ -4,7 +4,7 @@ use glamx::Vec3;
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
-use taser_em_shaders::math::{GridIndex, MathW, To3D, Vect, DIM};
+use taser_em_shaders::math::{vec3_to_vect, GridIndex, Vect, VectExt, DIM};
 
 pub struct MaterialRegions {
     pub regions: Vec<(SharedShape, Pose, ElectricMaterial)>,
@@ -17,9 +17,9 @@ impl MaterialRegions {
         end: Vect,
         material: ElectricMaterial
     ) -> &mut Self {
-        let half_extents = MathW(end - start).to_3d(Vec3::ONE);
+        let half_extents = (end - start).to_3d(Vec3::ONE);
         let shape = SharedShape::new(Cuboid::new(half_extents));
-        let middle = MathW((start + end) / 2.).to_3d(Vec3::ZERO);
+        let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
         let pose = Pose::from_translation(middle);
 
         self.regions.push((shape, pose, material));
@@ -45,10 +45,26 @@ pub struct YeeGrid {
     pub mu_r: Vec<[Vec3; DIM]>,
     /// Relative Permittivity (located at E field components)
     pub eps_r: Vec<[Vec3; DIM]>,
+    /// Number of grid cells (in each principal direction)
+    pub n_cells: GridIndex,
+    /// Size of each cell (in meters)
     pub cell_size: Vect,
 }
 
 impl YeeGrid {
+    pub fn empty_from_regions(regions: &MaterialRegions, cell_size: Vect) -> Self {
+        let bb = regions.compute_bounding_box();
+        let n_cells = vec3_to_vect((bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil())
+            .to_grid_index();
+
+        Self {
+            mu_r: vec![],
+            eps_r: vec![],
+            n_cells,
+            cell_size,
+        }
+    }
+
     pub fn update_coeffs_pml(&self, _dims: PmlDimensions, _n_cells: GridIndex) -> Vec<PmlCoefficients> {
         todo!()
     }

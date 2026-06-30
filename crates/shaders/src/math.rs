@@ -1,56 +1,22 @@
 use khal_std::glamx::Vec3;
 pub use dim_types::*;
 
-/// Wrapper type for math utilities
-pub struct MathW<T>(pub T);
-
-impl<T> core::ops::Deref for MathW<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target { &self.0 }
-}
-
-impl<T> core::ops::DerefMut for MathW<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
-}
-
-/// Trait for converting `Vect` to `Vec3`
-pub trait To3D {
-    /// `mask` sets the components that `self` don't already have.
-    ///
-    /// e.g. `MathW<f32>::to_3d()` would return `Vec3::new(mask.x, mask.y, self.0)`
-    fn to_3d(self, mask: Vec3) -> Vec3;
-}
-
 #[cfg(feature = "dim1")]
 mod dim_types {
-    use khal_std::glamx::Vec3;
-    use crate::math::{MathW, To3D};
-
     pub const DIM: usize = 1;
     /// A shader's vector field element (a Z component in 1 dimension)
     pub type Vect = f32;
     pub type GridIndex = u32;
-
-    impl To3D for MathW<Vect> {
-        #[inline]
-        fn to_3d(self, mask: Vec3) -> Vec3 { mask.with_x(self.0) }
-    }
 }
 
 #[cfg(feature = "dim2")]
 mod dim_types {
-    use khal_std::glamx::{UVec2, Vec2, Vec3, Vec3Swizzles};
+    use khal_std::glamx::{UVec2, Vec2};
 
     pub const DIM: usize = 2;
     /// A shader's vector field element
     pub type Vect = Vec2;
     pub type GridIndex = UVec2;
-
-
-    impl crate::math::To3D for crate::math::MathW<Vect> {
-        #[inline]
-        fn to_3d(self, mask: Vec3) -> Vec3 { mask.with_xy(self.0) }
-    }
 }
 
 #[cfg(feature = "dim3")]
@@ -60,9 +26,50 @@ mod dim_types {
     /// A shader's vector field element
     pub type Vect = Vec3;
     pub type GridIndex = UVec3;
+}
 
-    impl crate::math::To3D for crate::math::MathW<Vect> {
-        #[inline]
-        fn to_3d(self, _mask: Vec3) -> Vec3 { self.0 }
+#[allow(unused_imports)]
+use khal_std::glamx::Vec3Swizzles;
+
+pub trait VectExt {
+    fn to_3d(self, mask: Vec3) -> Vec3;
+    fn to_grid_index(self) -> GridIndex;
+}
+
+impl VectExt for Vect {
+    /// Converts a [`Vect`] to [`Vec3`]
+    /// `mask` sets the components that `self` don't already have.
+    ///
+    /// e.g. `MathW<f32>::to_3d()` would return `Vec3::new(mask.x, mask.y, self.0)`
+    #[inline]
+    #[allow(unused_variables)]
+    fn to_3d(self, mask: Vec3) -> Vec3 {
+        #[cfg(feature = "dim1")]
+        return mask.with_x(self);
+        #[cfg(feature = "dim2")]
+        return mask.with_xy(self);
+        #[cfg(feature = "dim3")]
+        self
     }
+
+    /// Convert [`Vect`] to [`GridIndex`] using `as`
+    #[inline]
+    fn to_grid_index(self) -> GridIndex {
+        #[cfg(feature = "dim1")]
+        return self as GridIndex;
+        #[cfg(feature = "dim2")]
+        return self.as_uvec2();
+        #[cfg(feature = "dim3")]
+        self.as_uvec3()
+    }
+}
+
+#[inline]
+pub fn vec3_to_vect(vec3: Vec3) -> Vect {
+    #[cfg(feature = "dim1")]
+    return vec3.z;
+    #[cfg(feature = "dim2")]
+    return vec3.xy();
+    #[cfg(feature = "dim3")]
+    vec3
 }
