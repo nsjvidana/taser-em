@@ -38,6 +38,7 @@ pub struct PmlDimensions {
 
 impl PmlDimensions {
     // TODO: a new() function for each dim feature?
+    #[cfg(feature = "dim1")]
     pub fn new(z_lo: u32, z_hi: u32) -> Self {
         Self {
             widths: [[z_lo, z_hi]]

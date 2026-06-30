@@ -1,9 +1,13 @@
 [workspace]
 members = [
-    "crates/taser-em-shaders",
     "crates/taser-em1d",
+    "crates/shaders/taser-em-shaders1d",
+    "crates/taser-em2d",
+    "crates/shaders/taser-em-shaders2d",
+    "crates/taser-em3d",
+    "crates/shaders/taser-em-shaders3d",
     "crates/taser-em-testbed",
-    "crates/taser-em-build"
+    "crates/taser-em-build",
 ]
 resolver = "2"
 

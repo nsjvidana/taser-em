@@ -3189,7 +3189,27 @@ name = "taser-em-build"
 version = "0.1.0"
 
 [[package]]
-name = "taser-em-shaders"
+name = "taser-em-shaders1d"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "khal",
+ "khal-std",
+ "taser-em-build",
+]
+
+[[package]]
+name = "taser-em-shaders2d"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "khal",
+ "khal-std",
+ "taser-em-build",
+]
+
+[[package]]
+name = "taser-em-shaders3d"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -3218,7 +3238,35 @@ dependencies = [
  "khal-builder",
  "parry3d",
  "taser-em-build",
- "taser-em-shaders",
+ "taser-em-shaders1d",
+]
+
+[[package]]
+name = "taser-em2d"
+version = "0.1.0"
+dependencies = [
+ "derivative",
+ "glamx",
+ "include_dir",
+ "khal",
+ "khal-builder",
+ "parry3d",
+ "taser-em-build",
+ "taser-em-shaders2d",
+]
+
+[[package]]
+name = "taser-em3d"
+version = "0.1.0"
+dependencies = [
+ "derivative",
+ "glamx",
+ "include_dir",
+ "khal",
+ "khal-builder",
+ "parry3d",
+ "taser-em-build",
+ "taser-em-shaders3d",
 ]
 
 [[package]]

@@ -89,10 +89,10 @@ pub struct ElectricMaterial {
 }
 
 pub struct Fdtd1Runner {
-    pub h_x: Vec<Vect>,
-    pub dn_y: Vec<Vect>,
-    pub en_y: Vec<Vect>,
-    pub int_en_y: Vec<Vect>,
+    pub h_x: Vec<f32>,
+    pub dn_y: Vec<f32>,
+    pub en_y: Vec<f32>,
+    pub int_en_y: Vec<f32>,
     pub buffers: Fdtd1Buffers,
 }
 
@@ -157,10 +157,10 @@ impl Fdtd1Runner {
 }
 
 pub struct Fdtd1Buffers {
-    pub h_x: GpuBufferReadable<Vect>,
-    pub dn_y: GpuBufferReadable<Vect>,
-    pub en_y: GpuBufferReadable<Vect>,
-    pub int_en_y: GpuBuffer<Vect>,
+    pub h_x: GpuBufferReadable<f32>,
+    pub dn_y: GpuBufferReadable<f32>,
+    pub en_y: GpuBufferReadable<f32>,
+    pub int_en_y: GpuBuffer<f32>,
     pub coeffs: GpuBuffer<PmlCoefficients>,
     pub grid: GpuBuffer<GridParameters>,
 }
