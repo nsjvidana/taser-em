@@ -1,15 +1,17 @@
 use taser_em_shaders::fdtd1::PmlCoefficients;
 use crate::ElectricMaterial;
 use glamx::Vec3;
-use taser_em_shaders::math::{GridIndex, DIM};
+use parry3d::math::Pose;
+use parry3d::shape::{Cuboid, SharedShape};
+use taser_em_shaders::math::{GridIndex, MathW, To3D, Vect, DIM};
 
 pub struct YeeGrid {
     /// Relative Permeability (located at H field components)
     pub mu_r: Vec<[Vec3; DIM]>,
     /// Relative Permittivity (located at E field components)
     pub eps_r: Vec<[Vec3; DIM]>,
-    // #[cfg(feature = "parry")]
-    // pub shapes: Vec<(SharedShape, Pose, ElectricMaterial)>,
+    pub cell_size: Vect,
+    pub mat_regions: Vec<(SharedShape, Pose, ElectricMaterial)>,
 }
 
 impl YeeGrid {
@@ -19,14 +21,26 @@ impl YeeGrid {
 
     pub fn fill_region(
         &mut self,
-        start: GridIndex,
-        end: GridIndex,
+        start: Vect,
+        end: Vect,
         material: ElectricMaterial
-    ) -> Vec<PmlCoefficients> {
-        todo!()
+    ) {
+        let half_extents = MathW((end - start) * self.cell_size / 2.)
+            .to_3d(Vec3::ONE);
+        let shape = SharedShape::new(Cuboid::new(half_extents));
+        let middle = MathW((start + end) / 2.).to_3d(Vec3::ZERO);
+        let pose = Pose::from_translation(middle);
+
+        self.mat_regions.push((shape, pose, material));
     }
 
-    // #[cfg(feature = "parry")]
+    /// Clears all stored material properties and material regions
+    pub fn clear(&mut self) {
+        self.mu_r.clear();
+        self.eps_r.clear();
+        self.mat_regions.clear();
+    }
+
     // pub fn shape_in_grid(shape: SharedShape, pose: Pose, material: ElectricMaterial)
 
     // normal map creation?

@@ -2,6 +2,8 @@ pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
 
+// TODO: add [lints] to api crates
+
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
@@ -46,7 +48,6 @@ shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
 #[derive(Default)]
 pub struct FdtdParameters1 {
     pub dt: f32,
-    pub cell_size: Vect,
     /// Number of grid cells (in each principal direction)
     pub n_cells: GridIndex,
     // TODO: E-field (or H field for current loops) Source enum
