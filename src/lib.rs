@@ -48,6 +48,8 @@ pub struct FdtdParameters1 {
     pub dt: f32,
     /// Number of grid cells (in each principal direction)
     pub n_cells: GridIndex,
+    /// Size of each cell (in meters)
+    pub cell_size: Vect,
     // TODO: E-field (or H field for current loops) Source enum
 }
 
