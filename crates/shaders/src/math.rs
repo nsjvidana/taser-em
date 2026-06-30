@@ -18,7 +18,6 @@ pub trait To3D {
     /// `mask` sets the components that `self` don't already have.
     ///
     /// e.g. `MathW<f32>::to_3d()` would return `Vec3::new(mask.x, mask.y, self.0)`
-    #[inline]
     fn to_3d(self, mask: Vec3) -> Vec3;
 }
 

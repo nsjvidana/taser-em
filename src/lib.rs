@@ -2,8 +2,6 @@ pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
 
-// TODO: add [lints] to api crates
-
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
