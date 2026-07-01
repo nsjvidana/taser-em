@@ -6,43 +6,6 @@ use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd1::PmlCoefficients;
 use taser_em_shaders::math::{to_3d, to_grid_index, vec3_to_vect, GridIndex, Vect, DIM};
 
-#[derive(Default)]
-pub struct MaterialRegions {
-    pub regions: Vec<(SharedShape, Pose, ElectricMaterial)>,
-}
-
-impl MaterialRegions {
-    pub fn new() -> Self { Self::default() }
-
-    pub fn fill_region(
-        &mut self,
-        start: Vect,
-        end: Vect,
-        material: ElectricMaterial
-    ) -> &mut Self {
-        let half_extents = to_3d(end - start, Vec3::ONE);
-        let shape = SharedShape::new(Cuboid::new(half_extents));
-        let middle = to_3d((start + end) / 2., Vec3::ZERO);
-        let pose = Pose::from_translation(middle);
-
-        self.regions.push((shape, pose, material));
-        self
-    }
-
-    pub fn compute_bounding_box(&self) -> Aabb {
-        let aabbs = self.regions
-            .iter()
-            .map(|(s, pose, _)| s.compute_aabb(pose))
-            .collect::<Vec<_>>();
-
-        let mut full_bb = Aabb::new_invalid();
-        for bb in aabbs.iter() {
-            full_bb.merge(bb);
-        }
-        full_bb
-    }
-}
-
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
     /// Number of grid cells, in each principal direction, excluding spacer regions
@@ -99,6 +62,43 @@ impl YeeGrid {
     // pub fn shape_in_grid(shape: SharedShape, pose: Pose, material: ElectricMaterial)
 
     // normal map creation?
+}
+
+#[derive(Default)]
+pub struct MaterialRegions {
+    pub regions: Vec<(SharedShape, Pose, ElectricMaterial)>,
+}
+
+impl MaterialRegions {
+    pub fn new() -> Self { Self::default() }
+
+    pub fn fill_region(
+        &mut self,
+        start: Vect,
+        end: Vect,
+        material: ElectricMaterial
+    ) -> &mut Self {
+        let half_extents = to_3d(end - start, Vec3::ONE);
+        let shape = SharedShape::new(Cuboid::new(half_extents));
+        let middle = to_3d((start + end) / 2., Vec3::ZERO);
+        let pose = Pose::from_translation(middle);
+
+        self.regions.push((shape, pose, material));
+        self
+    }
+
+    pub fn compute_bounding_box(&self) -> Aabb {
+        let aabbs = self.regions
+            .iter()
+            .map(|(s, pose, _)| s.compute_aabb(pose))
+            .collect::<Vec<_>>();
+
+        let mut full_bb = Aabb::new_invalid();
+        for bb in aabbs.iter() {
+            full_bb.merge(bb);
+        }
+        full_bb
+    }
 }
 
 /// The widths of layers of cells at the boundary of the simulation. (e.g. PMLs)
