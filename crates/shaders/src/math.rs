@@ -1,6 +1,9 @@
 use khal_std::glamx::Vec3;
 pub use dim_types::*;
 
+pub type Real = f32;
+pub type Index = u32;
+
 #[cfg(feature = "dim1")]
 mod dim_types {
     pub const DIM: usize = 1;
@@ -31,37 +34,30 @@ mod dim_types {
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
 
-pub trait VectExt {
-    fn to_3d(self, mask: Vec3) -> Vec3;
-    fn to_grid_index(self) -> GridIndex;
+/// Converts a [`Vect`] to [`Vec3`]
+/// `mask` sets the components that `self` don't already have.
+///
+/// e.g. `MathW<f32>::to_3d()` would return `Vec3::new(mask.x, mask.y, self.0)`
+#[inline]
+#[allow(unused_variables)]
+pub fn to_3d(v: Vect, mask: Vec3) -> Vec3 {
+    #[cfg(feature = "dim1")]
+    return mask.with_x(v);
+    #[cfg(feature = "dim2")]
+    return mask.with_xy(v);
+    #[cfg(feature = "dim3")]
+    v
 }
 
-impl VectExt for Vect {
-    /// Converts a [`Vect`] to [`Vec3`]
-    /// `mask` sets the components that `self` don't already have.
-    ///
-    /// e.g. `MathW<f32>::to_3d()` would return `Vec3::new(mask.x, mask.y, self.0)`
-    #[inline]
-    #[allow(unused_variables)]
-    fn to_3d(self, mask: Vec3) -> Vec3 {
-        #[cfg(feature = "dim1")]
-        return mask.with_x(self);
-        #[cfg(feature = "dim2")]
-        return mask.with_xy(self);
-        #[cfg(feature = "dim3")]
-        self
-    }
-
-    /// Convert [`Vect`] to [`GridIndex`] using `as`
-    #[inline]
-    fn to_grid_index(self) -> GridIndex {
-        #[cfg(feature = "dim1")]
-        return self as GridIndex;
-        #[cfg(feature = "dim2")]
-        return self.as_uvec2();
-        #[cfg(feature = "dim3")]
-        self.as_uvec3()
-    }
+/// Convert [`Vect`] to [`GridIndex`] using `as` keyword
+#[inline]
+pub fn to_grid_index(v: Vect) -> GridIndex {
+    #[cfg(feature = "dim1")]
+    return v as GridIndex;
+    #[cfg(feature = "dim2")]
+    return v.as_uvec2();
+    #[cfg(feature = "dim3")]
+    v.as_uvec3()
 }
 
 #[inline]

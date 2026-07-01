@@ -1,6 +1,7 @@
 pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
+pub mod util;
 
 pub use taser_em_shaders as shaders;
 
@@ -13,6 +14,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::{GridIndex, Vect};
+use crate::grid::AxisIndex;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -53,11 +55,13 @@ pub struct FdtdParameters1 {
     // TODO: E-field (or H field for current loops) Source enum
 }
 
+/// Contains parameters and functions for ensuring simulation stability.
 #[derive(Derivative, Clone)]
 #[derivative(Default)]
 pub struct FdtdStability1 {
     #[derivative(Default(value = "10"))]
     pub cells_per_wavelength: u32,
+    /// Divides CFL condition upper bound by this amount.
     #[derivative(Default(value = "2."))]
     pub dt_safety_factor: f32,
 }
@@ -79,14 +83,27 @@ impl FdtdStability1 {
     // pub fn dt_from_source(&self, source: FdtdSource) -> f32 {}
 }
 
-pub const FREE_SPACE: ElectricMaterial = ElectricMaterial {
-    eps_r: Vec3::ONE, mu_r: Vec3::ONE
-};
-
+/// Relative material properties
 #[derive(Copy, Clone, Debug)]
 pub struct ElectricMaterial {
+    /// Relative permittivity
     pub eps_r: Vec3,
+    /// Relative permeability
     pub mu_r: Vec3
+}
+
+impl ElectricMaterial {
+    /// A material representing free space
+    pub const FREE_SPACE: ElectricMaterial = ElectricMaterial {
+        eps_r: Vec3::ONE, mu_r: Vec3::ONE
+    };
+
+    /// Get refractive index in a specific axis direction.
+    #[allow(unused_variables)]
+    pub fn refractive_index(&self, axis: AxisIndex) -> f32 {
+        let i = axis as usize;
+        (self.eps_r[i] * self.mu_r[i]).sqrt()
+    }
 }
 
 pub struct Fdtd1Runner {
