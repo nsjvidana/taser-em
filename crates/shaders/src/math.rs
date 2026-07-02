@@ -61,6 +61,22 @@ pub fn to_grid_index(v: Vect) -> GridIndex {
 }
 
 #[inline]
+pub fn grid_index_to_array(idx: GridIndex) -> [u32; DIM] {
+    #[cfg(feature = "dim1")]
+    return [idx];
+    #[cfg(not(feature = "dim1"))]
+    idx.to_array()
+}
+
+#[inline]
+pub fn grid_index_from_array(arr: [u32; DIM]) -> GridIndex {
+    #[cfg(feature = "dim1")]
+    return arr[0];
+    #[cfg(not(feature = "dim1"))]
+    GridIndex::from_array(arr)
+}
+
+#[inline]
 pub fn vec3_to_vect(vec3: Vec3) -> Vect {
     #[cfg(feature = "dim1")]
     return vec3.z;

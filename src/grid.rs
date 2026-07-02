@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd1::PmlCoefficients;
-use taser_em_shaders::math::{to_3d, to_grid_index, vec3_to_vect, GridIndex, Vect, DIM};
+use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, GridIndex, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -47,10 +47,16 @@ impl YeeGrid {
     /// Computes the total number of cells, in each principal direction,
     /// accounting for spacer regions as well.
     pub fn n_cells(&self) -> GridIndex {
-        todo!()
+        let mut n_cells = grid_index_to_array(self.inner_n_cells);
+        for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
+            .zip(self.spacer_region_widths.iter_axes())
+        {
+            *n_cells_i += lo_hi_widths.iter().sum();
+        }
+        grid_index_from_array(n_cells)
     }
 
-    pub fn update_coeffs_pml(&self, _pml_dims: LayerWidths, _n_cells: GridIndex) -> Vec<PmlCoefficients> {
+    pub fn update_coeffs_pml(&self, pml_dims: LayerWidths) -> Vec<PmlCoefficients> {
         todo!()
     }
 
@@ -171,6 +177,23 @@ impl core::ops::Add for LayerWidths {
         {
             *lo1 += lo2;
             *hi1 += hi2;
+        }
+        self
+    }
+}
+
+impl core::ops::SubAssign for LayerWidths {
+    fn add_assign(&mut self, rhs: Self) { *self = *self - rhs; }
+}
+
+impl core::ops::Sub for LayerWidths {
+    type Output = Self;
+    fn add(mut self, rhs: Self) -> Self::Output {
+        for ([lo1, hi1], [lo2, hi2]) in self.widths.iter_mut()
+            .zip(rhs.widths.iter())
+        {
+            *lo1 -= lo2;
+            *hi1 -= hi2;
         }
         self
     }
