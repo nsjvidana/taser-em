@@ -18,7 +18,14 @@ use crate::grid::AxisIndex;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
+/// Speed of EM wave in free space
 pub const C_0: f32 = 299792458.0;
+/// Free space permittivity
+pub const EPS_0: f32 = 8.8541878188e-12;
+/// Free space permeability
+pub const MU_0: f32 = 1.25663706127e-6;
+/// Free space wave impedance
+pub const IMPEDANCE_0: f32 = 376.730313412;
 
 macro_rules! shader_struct {
     ($name:ident, $inner:ty) => {
