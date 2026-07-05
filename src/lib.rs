@@ -1,7 +1,6 @@
 pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
-pub mod util;
 
 pub use taser_em_shaders as shaders;
 
@@ -14,7 +13,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::{GridIndex, Vect};
-use crate::grid::AxisIndex;
+use grid::AxisIndex;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 

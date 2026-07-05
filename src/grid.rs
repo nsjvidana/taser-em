@@ -1,10 +1,11 @@
-use crate::ElectricMaterial;
+use crate::{ElectricMaterial, EPS_0};
 use glamx::Vec3;
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
+use khal::re_exports::bytemuck::{Pod, Zeroable};
 use taser_em_shaders::fdtd1::PmlCoefficients;
-use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, GridIndex, Vect, DIM};
+use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, GridIndex, Real, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -56,7 +57,7 @@ impl YeeGrid {
         grid_index_from_array(n_cells)
     }
 
-    pub fn update_coeffs_pml(&self, pml_dims: LayerWidths) -> Vec<PmlCoefficients> {
+    pub fn update_coeffs_pml(&mut self, pml_dims: LayerWidths, dt: Real) -> Vec<PmlCoefficients> {
         todo!()
     }
 
@@ -212,6 +213,7 @@ impl core::ops::IndexMut<AxisIndex> for LayerWidths {
     }
 }
 
+#[derive(Copy, Clone)]
 #[repr(usize)]
 pub enum AxisIndex {
     X = 0,
@@ -221,10 +223,14 @@ pub enum AxisIndex {
 
 impl AxisIndex {
     /// Convert to dimension index. [`AxisIndex::Z`] is `0` in 1 dimension.
+    ///
+    /// Returns an invalid index that can cause out-of-bounds access errors (e.g. [`usize::MAX`])
+    /// if the dimension doesn't exist.
     pub fn into_dim_idx(self) -> usize {
         #[cfg(feature = "dim1")]
-        {
-            0
+        match self {
+            AxisIndex::Z => 0,
+            _ => usize::MAX // an invalid dimension index
         }
         #[cfg(not(feature = "dim1"))]
         {
