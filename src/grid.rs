@@ -51,7 +51,7 @@ impl YeeGrid {
         for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
             .zip(self.spacer_region_widths.iter_axes())
         {
-            *n_cells_i += lo_hi_widths.iter().sum();
+            *n_cells_i += lo_hi_widths.iter().sum::<u32>();
         }
         grid_index_from_array(n_cells)
     }
@@ -183,12 +183,12 @@ impl core::ops::Add for LayerWidths {
 }
 
 impl core::ops::SubAssign for LayerWidths {
-    fn add_assign(&mut self, rhs: Self) { *self = *self - rhs; }
+    fn sub_assign(&mut self, rhs: Self) { *self = *self - rhs; }
 }
 
 impl core::ops::Sub for LayerWidths {
     type Output = Self;
-    fn add(mut self, rhs: Self) -> Self::Output {
+    fn sub(mut self, rhs: Self) -> Self::Output {
         for ([lo1, hi1], [lo2, hi2]) in self.widths.iter_mut()
             .zip(rhs.widths.iter())
         {
