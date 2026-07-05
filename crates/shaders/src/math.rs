@@ -85,3 +85,34 @@ pub fn vec3_to_vect(vec3: Vec3) -> Vect {
     #[cfg(feature = "dim3")]
     vec3
 }
+
+#[allow(unused_variables)]
+pub fn flat_idx_to_grid_index(idx: u32, grid_dim: GridIndex) -> GridIndex {
+    #[cfg(feature = "dim1")]
+    return idx;
+    #[cfg(feature = "dim2")]
+    return GridIndex::new(
+        idx % grid_dim.x,
+        (idx / grid_dim.x) % grid_dim.y,
+    );
+    #[cfg(feature = "dim3")]
+    GridIndex::new(
+        idx % grid_dim.x,
+        (idx / grid_dim.x) % grid_dim.y,
+        idx / (grid_dim.x * grid_dim.y),
+    )
+}
+
+#[allow(unused_variables)]
+pub fn grid_index_to_flat_idx(grid_idx: GridIndex, grid_dim: GridIndex) -> u32 {
+    #[cfg(feature = "dim1")]
+    return grid_idx;
+    #[cfg(feature = "dim2")]
+    return grid_idx.y * grid_dim.x + grid_idx.x;
+    #[cfg(feature = "dim3")]
+    {
+        grid_idx.z * grid_dim.x * grid_dim.y +
+            grid_idx.y * grid_dim.x +
+            grid_idx.x
+    }
+}
