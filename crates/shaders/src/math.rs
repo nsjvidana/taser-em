@@ -33,6 +33,61 @@ mod dim_types {
     pub type GridIndex = UVec3;
 }
 
+/// A helper enum for indexing into various things (e.g. indexing into components of [`Vect`] and [`GridIndex`])
+///
+/// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
+#[derive(Copy, Clone)]
+pub enum AxisIndex {
+    X = 0,
+    Y = 1,
+    Z = 2,
+}
+
+impl AxisIndex {
+    /// Convert to usize representing an existing spatial dimension.
+    /// Used for indexing into components of [`Vect`] and [`GridIndex`].
+    ///
+    /// # Panics
+    /// If the spatial dimension doesn't exist in the simulation domain, this function panics.
+    /// (e.g. `AxisIndex::X.into_dim_index()` panics in 1D since only the Z spatial dimension exists)
+    pub fn into_spatial_dim(self) -> usize {
+        #[cfg(feature = "dim1")]
+        match self {
+            AxisIndex::Z => 0,
+            _ => panic!("Spatial dimension doesn't exist")
+        }
+        #[cfg(not(feature = "dim1"))]
+        match self {
+            AxisIndex::X => 0,
+            AxisIndex::Y => 1,
+            AxisIndex::Z =>
+                if cfg!(feature = "dim2") { panic!("Spatial dimension doesn't exist") }
+                else { 2 }
+        }
+    }
+}
+
+impl TryFrom<usize> for AxisIndex {
+    type Error = ();
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
+        match value {
+            0 => Ok(AxisIndex::X),
+            1 => Ok(AxisIndex::Y),
+            2 => Ok(AxisIndex::Z),
+            _ => Err(()),
+        }
+
+        #[cfg(feature = "dim1")]
+        match value {
+            0 => Ok(AxisIndex::Z),
+            _ => Err(()),
+        }
+    }
+}
+
+// impl core::ops::Index<>
+
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
 

@@ -1,11 +1,10 @@
-use crate::{ElectricMaterial, EPS_0};
+use crate::ElectricMaterial;
 use glamx::Vec3;
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
-use khal::re_exports::bytemuck::{Pod, Zeroable};
 use taser_em_shaders::fdtd1::PmlCoefficients;
-use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, GridIndex, Real, Vect, DIM};
+use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, AxisIndex, GridIndex, Real, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -203,55 +202,12 @@ impl core::ops::Sub for LayerWidths {
 impl core::ops::Index<AxisIndex> for LayerWidths {
     type Output = [u32; 2];
     fn index(&self, index: AxisIndex) -> &Self::Output {
-        &self.widths[index.into_dim_idx()]
+        &self.widths[index.into_spatial_dim()]
     }
 }
 
 impl core::ops::IndexMut<AxisIndex> for LayerWidths {
     fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
-        &mut self.widths[index.into_dim_idx()]
-    }
-}
-
-#[derive(Copy, Clone)]
-#[repr(usize)]
-pub enum AxisIndex {
-    X = 0,
-    Y = 1,
-    Z = 2,
-}
-
-impl AxisIndex {
-    /// Convert to dimension index. [`AxisIndex::Z`] is `0` in 1 dimension.
-    ///
-    /// Returns an invalid index that can cause out-of-bounds access errors (e.g. [`usize::MAX`])
-    /// if the dimension doesn't exist.
-    pub fn into_dim_idx(self) -> usize {
-        #[cfg(feature = "dim1")]
-        match self {
-            AxisIndex::Z => 0,
-            _ => usize::MAX // an invalid dimension index
-        }
-        #[cfg(not(feature = "dim1"))]
-        {
-            self as usize
-        }
-    }
-}
-
-impl TryFrom<usize> for AxisIndex {
-    type Error = ();
-    fn try_from(value: usize) -> Result<Self, Self::Error> {
-        #[cfg(any(feature = "dim2", feature = "dim3"))]
-        match value {
-            0 => Ok(AxisIndex::X),
-            1 => Ok(AxisIndex::Y),
-            2 => Ok(AxisIndex::Z),
-            _ => Err(()),
-        }
-
-        #[cfg(feature = "dim1")]
-        if value == 0 { Ok(AxisIndex::Z) }
-        else { Err(()) }
+        &mut self.widths[index.into_spatial_dim()]
     }
 }

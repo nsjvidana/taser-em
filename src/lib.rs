@@ -13,7 +13,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::{GridIndex, Vect};
-use grid::AxisIndex;
+use taser_em_shaders::math::AxisIndex;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
