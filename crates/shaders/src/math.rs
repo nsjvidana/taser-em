@@ -44,6 +44,7 @@ pub enum AxisIndex {
 }
 
 impl AxisIndex {
+    pub const ALL_AXES: [AxisIndex; 3] = [AxisIndex::X, AxisIndex::Y, AxisIndex::Z];
     /// Convert to usize representing an existing spatial dimension.
     /// Used for indexing into components of [`Vect`] and [`GridIndex`].
     ///
@@ -86,7 +87,39 @@ impl TryFrom<usize> for AxisIndex {
     }
 }
 
-// impl core::ops::Index<>
+impl core::ops::Index<AxisIndex> for Vec3 {
+    type Output = Real;
+    fn index(&self, index: AxisIndex) -> &Self::Output {
+        match index {
+            AxisIndex::X => &self.x,
+            AxisIndex::Y => &self.y,
+            AxisIndex::Z => &self.z,
+        }
+    }
+}
+
+impl core::ops::IndexMut<AxisIndex> for Vec3 {
+    fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
+        match index {
+            AxisIndex::X => &mut self.x,
+            AxisIndex::Y => &mut self.y,
+            AxisIndex::Z => &mut self.z,
+        }
+    }
+}
+
+impl core::ops::Index<AxisIndex> for Vec4 {
+    type Output = Real;
+    fn index(&self, index: AxisIndex) -> &Self::Output {
+        &self.as_ref()[index as usize]
+    }
+}
+
+impl core::ops::IndexMut<AxisIndex> for Vec4 {
+    fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
+        &mut self.as_mut()[index as usize]
+    }
+}
 
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
