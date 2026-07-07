@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd1::PmlCoefficients;
-use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, AxisIndex, GridIndex, Real, Vect, DIM};
+use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, Axis, GridIndex, Real, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -151,17 +151,17 @@ impl LayerWidths {
     }
 
     #[inline]
-    pub fn iter_axes(&self) -> impl Iterator<Item = (AxisIndex, &[u32; 2])> {
+    pub fn iter_axes(&self) -> impl Iterator<Item = (Axis, &[u32; 2])> {
         self.widths.iter()
             .enumerate()
-            .map(|(axis, lo_hi)| (AxisIndex::try_from_spatial_dim(axis).unwrap(), lo_hi))
+            .map(|(axis, lo_hi)| (Axis::try_from_spatial_dim(axis).unwrap(), lo_hi))
     }
 
     #[inline]
-    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (AxisIndex, &mut [u32; 2])> {
+    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (Axis, &mut [u32; 2])> {
         self.widths.iter_mut()
             .enumerate()
-            .map(|(axis, lo_hi)| (AxisIndex::try_from_spatial_dim(axis).unwrap(), lo_hi))
+            .map(|(axis, lo_hi)| (Axis::try_from_spatial_dim(axis).unwrap(), lo_hi))
     }
 }
 
@@ -199,15 +199,15 @@ impl core::ops::Sub for LayerWidths {
     }
 }
 
-impl core::ops::Index<AxisIndex> for LayerWidths {
+impl core::ops::Index<Axis> for LayerWidths {
     type Output = [u32; 2];
-    fn index(&self, index: AxisIndex) -> &Self::Output {
+    fn index(&self, index: Axis) -> &Self::Output {
         &self.widths[index.try_into_spatial_dim().expect("Spatial dimension doesn't exist")]
     }
 }
 
-impl core::ops::IndexMut<AxisIndex> for LayerWidths {
-    fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
+impl core::ops::IndexMut<Axis> for LayerWidths {
+    fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
         &mut self.widths[index.try_into_spatial_dim().expect("Spatial dimension doesn't exist")]
     }
 }

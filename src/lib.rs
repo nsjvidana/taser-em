@@ -13,7 +13,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::{GridIndex, Vect};
-use taser_em_shaders::math::AxisIndex;
+use taser_em_shaders::math::Axis;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -49,6 +49,7 @@ macro_rules! shader_struct {
     };
 }
 
+shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
 
 #[derive(Default)]
@@ -106,7 +107,7 @@ impl ElectricMaterial {
 
     /// Get refractive index in a specific axis direction.
     #[allow(unused_variables)]
-    pub fn refractive_index(&self, axis: AxisIndex) -> f32 {
+    pub fn refractive_index(&self, axis: Axis) -> f32 {
         let i = axis as usize;
         (self.eps_r[i] * self.mu_r[i]).sqrt()
     }

@@ -38,98 +38,105 @@ mod dim_types {
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
 #[derive(Copy, Clone)]
 #[repr(u32)]
-pub enum AxisIndex {
+pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
 }
 
-impl AxisIndex {
-    pub const ALL_AXES: [AxisIndex; 3] = [AxisIndex::X, AxisIndex::Y, AxisIndex::Z];
+impl Axis {
+    pub fn next_axis(&self) -> Self {
+        match self {
+            Axis::X => Axis::Y,
+            Axis::Y => Axis::Z,
+            Axis::Z => Axis::X,
+        }
+    }
+
     /// Try to convert to a usize representing an existing spatial dimension.
     /// Used for indexing into components of [`Vect`] and [`GridIndex`].
     ///
     /// Returns [`None`] if the dimension doesn't exist in the simulation domain.
-    /// (e.g. `AxisIndex::X.try_into_spatial_dim()` returns [`None`] 1D since only the Z spatial dimension exists)
+    /// (e.g. `Axis::X.try_into_spatial_dim()` returns [`None`] 1D since only the Z spatial dimension exists)
     #[inline]
     pub fn try_into_spatial_dim(self) -> Option<usize> {
         #[cfg(feature = "dim1")]
         match self {
-            AxisIndex::Z => Some(0),
+            Axis::Z => Some(0),
             _ => None
         }
         #[cfg(not(feature = "dim1"))]
         match self {
-            AxisIndex::X => Some(0),
-            AxisIndex::Y => Some(1),
-            AxisIndex::Z =>
+            Axis::X => Some(0),
+            Axis::Y => Some(1),
+            Axis::Z =>
                 if cfg!(feature = "dim2") { None }
                 else { Some(2) }
         }
     }
 
     #[inline]
-    pub fn try_from_spatial_dim(axis: usize) -> Option<AxisIndex> {
+    pub fn spatial_dim_exists(self) -> bool {
+        self.try_into_spatial_dim().is_some()
+    }
+
+    #[inline]
+    pub fn try_from_spatial_dim(axis_idx: usize) -> Option<Self> {
         #[cfg(feature = "dim1")]
-        match axis {
-            0 => Some(AxisIndex::Z),
+        match axis_idx {
+            0 => Some(Axis::Z),
             _ => None,
         }
         #[cfg(any(feature = "dim2", feature = "dim3"))]
-        match axis {
-            0 => Some(AxisIndex::X),
-            1 => Some(AxisIndex::Y),
-            2 => if cfg!(feature = "dim2") { None } else { Some(AxisIndex::Z) },
+        match axis_idx {
+            0 => Some(Axis::X),
+            1 => Some(Axis::Y),
+            2 => if cfg!(feature = "dim2") { None } else { Some(Axis::Z) },
             _ => None,
         }
     }
 }
 
-impl TryFrom<usize> for AxisIndex {
+impl TryFrom<usize> for Axis {
     type Error = ();
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(AxisIndex::X),
-            1 => Ok(AxisIndex::Y),
-            2 => Ok(AxisIndex::Z),
+            0 => Ok(Axis::X),
+            1 => Ok(Axis::Y),
+            2 => Ok(Axis::Z),
             _ => Err(()),
         }
     }
 }
 
-impl core::ops::Index<AxisIndex> for Vec3 {
-    type Output = Real;
-    fn index(&self, index: AxisIndex) -> &Self::Output {
-        match index {
-            AxisIndex::X => &self.x,
-            AxisIndex::Y => &self.y,
-            AxisIndex::Z => &self.z,
+macro_rules! impl_vec3_axis_index {
+    ($v:ident, $out:ty) => {
+        impl core::ops::Index<Axis> for $v {
+            type Output = $out;
+            fn index(&self, index: Axis) -> &Self::Output {
+                match index {
+                    Axis::X => &self.x,
+                    Axis::Y => &self.y,
+                    Axis::Z => &self.z,
+                }
+            }
         }
-    }
-}
 
-impl core::ops::IndexMut<AxisIndex> for Vec3 {
-    fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
-        match index {
-            AxisIndex::X => &mut self.x,
-            AxisIndex::Y => &mut self.y,
-            AxisIndex::Z => &mut self.z,
+        impl core::ops::IndexMut<Axis> for $v {
+            fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
+                match index {
+                    Axis::X => &mut self.x,
+                    Axis::Y => &mut self.y,
+                    Axis::Z => &mut self.z,
+                }
+            }
         }
-    }
+    };
 }
 
-impl core::ops::Index<AxisIndex> for Vec4 {
-    type Output = Real;
-    fn index(&self, index: AxisIndex) -> &Self::Output {
-        &self.as_ref()[index as usize]
-    }
-}
-
-impl core::ops::IndexMut<AxisIndex> for Vec4 {
-    fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
-        &mut self.as_mut()[index as usize]
-    }
-}
+impl_vec3_axis_index!(UVec3, Index);
+impl_vec3_axis_index!(Vec3, Real);
+impl_vec3_axis_index!(Vec4, Real);
 
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
