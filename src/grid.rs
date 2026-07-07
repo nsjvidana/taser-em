@@ -154,14 +154,14 @@ impl LayerWidths {
     pub fn iter_axes(&self) -> impl Iterator<Item = (AxisIndex, &[u32; 2])> {
         self.widths.iter()
             .enumerate()
-            .map(|(axis, lo_hi)| (AxisIndex::try_from(axis).unwrap(), lo_hi))
+            .map(|(axis, lo_hi)| (AxisIndex::try_from_spatial_dim(axis).unwrap(), lo_hi))
     }
 
     #[inline]
     pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (AxisIndex, &mut [u32; 2])> {
         self.widths.iter_mut()
             .enumerate()
-            .map(|(axis, lo_hi)| (AxisIndex::try_from(axis).unwrap(), lo_hi))
+            .map(|(axis, lo_hi)| (AxisIndex::try_from_spatial_dim(axis).unwrap(), lo_hi))
     }
 }
 
@@ -202,12 +202,12 @@ impl core::ops::Sub for LayerWidths {
 impl core::ops::Index<AxisIndex> for LayerWidths {
     type Output = [u32; 2];
     fn index(&self, index: AxisIndex) -> &Self::Output {
-        &self.widths[index.into_spatial_dim()]
+        &self.widths[index.try_into_spatial_dim().expect("Spatial dimension doesn't exist")]
     }
 }
 
 impl core::ops::IndexMut<AxisIndex> for LayerWidths {
     fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
-        &mut self.widths[index.into_spatial_dim()]
+        &mut self.widths[index.try_into_spatial_dim().expect("Spatial dimension doesn't exist")]
     }
 }

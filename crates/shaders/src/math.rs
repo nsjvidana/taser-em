@@ -37,6 +37,7 @@ mod dim_types {
 ///
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
 #[derive(Copy, Clone)]
+#[repr(u32)]
 pub enum AxisIndex {
     X = 0,
     Y = 1,
@@ -45,25 +46,41 @@ pub enum AxisIndex {
 
 impl AxisIndex {
     pub const ALL_AXES: [AxisIndex; 3] = [AxisIndex::X, AxisIndex::Y, AxisIndex::Z];
-    /// Convert to usize representing an existing spatial dimension.
+    /// Try to convert to a usize representing an existing spatial dimension.
     /// Used for indexing into components of [`Vect`] and [`GridIndex`].
     ///
-    /// # Panics
-    /// If the spatial dimension doesn't exist in the simulation domain, this function panics.
-    /// (e.g. `AxisIndex::X.into_dim_index()` panics in 1D since only the Z spatial dimension exists)
-    pub fn into_spatial_dim(self) -> usize {
+    /// Returns [`None`] if the dimension doesn't exist in the simulation domain.
+    /// (e.g. `AxisIndex::X.try_into_spatial_dim()` returns [`None`] 1D since only the Z spatial dimension exists)
+    #[inline]
+    pub fn try_into_spatial_dim(self) -> Option<usize> {
         #[cfg(feature = "dim1")]
         match self {
-            AxisIndex::Z => 0,
-            _ => panic!("Spatial dimension doesn't exist")
+            AxisIndex::Z => Some(0),
+            _ => None
         }
         #[cfg(not(feature = "dim1"))]
         match self {
-            AxisIndex::X => 0,
-            AxisIndex::Y => 1,
+            AxisIndex::X => Some(0),
+            AxisIndex::Y => Some(1),
             AxisIndex::Z =>
-                if cfg!(feature = "dim2") { panic!("Spatial dimension doesn't exist") }
-                else { 2 }
+                if cfg!(feature = "dim2") { None }
+                else { Some(2) }
+        }
+    }
+
+    #[inline]
+    pub fn try_from_spatial_dim(axis: usize) -> Option<AxisIndex> {
+        #[cfg(feature = "dim1")]
+        match axis {
+            0 => Some(AxisIndex::Z),
+            _ => None,
+        }
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
+        match axis {
+            0 => Some(AxisIndex::X),
+            1 => Some(AxisIndex::Y),
+            2 => if cfg!(feature = "dim2") { None } else { Some(AxisIndex::Z) },
+            _ => None,
         }
     }
 }
@@ -71,17 +88,10 @@ impl AxisIndex {
 impl TryFrom<usize> for AxisIndex {
     type Error = ();
     fn try_from(value: usize) -> Result<Self, Self::Error> {
-        #[cfg(any(feature = "dim2", feature = "dim3"))]
         match value {
             0 => Ok(AxisIndex::X),
             1 => Ok(AxisIndex::Y),
             2 => Ok(AxisIndex::Z),
-            _ => Err(()),
-        }
-
-        #[cfg(feature = "dim1")]
-        match value {
-            0 => Ok(AxisIndex::Z),
             _ => Err(()),
         }
     }
