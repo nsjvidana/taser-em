@@ -97,16 +97,21 @@ impl Axis {
         }
     }
 
+    /// Transmutes `idx` into an [`Axis`]
+    /// 
+    /// # Safety
+    /// Will cause undefined behavior if `idx` isn't `0`, `1`, or `2`.
+    /// [`Axis::try_from()`] is a safer alternative to this function.
     #[inline]
     pub unsafe fn from_index_unchecked(idx: u32) -> Self {
         unsafe { core::mem::transmute(idx) }
     }
 }
 
-impl TryFrom<usize> for Axis {
+impl TryFrom<u32> for Axis {
     type Error = ();
     #[inline]
-    fn try_from(value: usize) -> Result<Self, Self::Error> {
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Axis::X),
             1 => Ok(Axis::Y),
@@ -184,7 +189,10 @@ pub fn vect_to_array(v: Vect) -> [Real; DIM] {
 
 #[inline]
 pub fn vect_from_array(arr: [Real; DIM]) -> Vect {
-    unsafe { *(&arr as *const [Real; DIM] as *const Vect) }
+    #[cfg(feature = "dim1")]
+    return arr[0];
+    #[cfg(not(feature = "dim1"))]
+    Vect::from_array(arr)
 }
 
 #[inline]
@@ -199,18 +207,18 @@ pub fn vec3_to_vect(vec3: Vec3) -> Vect {
 
 #[inline]
 pub fn vec4_to_vect(v: Vec4) -> Vect {
-    #[cfg(feature = "dim1")]
-    return v.z;
-    #[cfg(feature = "dim2")]
-    {
-        use khal_std::glamx::Vec4Swizzles;
-        return v.xy();
+    cfg_select! {
+        feature = "dim1" => v.z,
+        feature = "dim2" => {
+            use khal_std::glamx::Vec4Swizzles;
+            v.xy()
+        },
+        feature = "dim3" => {
+            use khal_std::glamx::Vec4Swizzles;
+            v.xyz()
+        },
     }
-    #[cfg(feature = "dim3")]
-    {
-        use khal_std::glamx::Vec4Swizzles;
-        return v.xyz();
-    }
+
 }
 
 /// Converts a [`GridIndex`] to [`UVec3`]

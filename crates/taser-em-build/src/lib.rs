@@ -1,7 +1,7 @@
 use std::env;
 
 pub fn dimensions_check() {
-    let dim_features = vec![
+    let dim_features = [
         "CARGO_FEATURE_DIM1",
         "CARGO_FEATURE_DIM2",
         "CARGO_FEATURE_DIM3",
