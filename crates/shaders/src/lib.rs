@@ -2,6 +2,7 @@
 
 pub mod fdtd1;
 pub mod math;
+pub mod fdtd;
 
 use khal_std::glamx::UVec3;
 use khal_std::index::MaybeIndexUnchecked;
