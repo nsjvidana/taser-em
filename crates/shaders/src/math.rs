@@ -1,4 +1,4 @@
-use khal_std::glamx::{UVec3, Vec3, Vec4};
+use khal_std::glamx::{UVec2, UVec3, Vec2, Vec3, Vec4};
 pub use dim_types::*;
 
 pub type Real = f32;
@@ -95,6 +95,11 @@ impl Axis {
             _ => None,
         }
     }
+
+    #[inline]
+    pub unsafe fn from_index_unchecked(idx: u32) -> Self {
+        core::mem::transmute(idx)
+    }
 }
 
 impl TryFrom<usize> for Axis {
@@ -109,34 +114,43 @@ impl TryFrom<usize> for Axis {
     }
 }
 
-macro_rules! impl_vec3_axis_index {
-    ($v:ident, $out:ty) => {
+macro_rules! impl_vector_indexing {
+    ($v:ident, $elemty:ty) => {
         impl core::ops::Index<Axis> for $v {
-            type Output = $out;
+            type Output = $elemty;
+            #[inline]
             fn index(&self, index: Axis) -> &Self::Output {
-                match index {
-                    Axis::X => &self.x,
-                    Axis::Y => &self.y,
-                    Axis::Z => &self.z,
-                }
+                &(unsafe { &*(self as *const $v as *const [$elemty; $v::AXES.len()]) } [index as usize])
             }
         }
 
         impl core::ops::IndexMut<Axis> for $v {
+            #[inline]
             fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
-                match index {
-                    Axis::X => &mut self.x,
-                    Axis::Y => &mut self.y,
-                    Axis::Z => &mut self.z,
-                }
+                &mut (unsafe { &mut *(self as *mut $v as *mut [$elemty; $v::AXES.len()]) } [index as usize])
             }
         }
     };
 }
 
-impl_vec3_axis_index!(UVec3, Index);
-impl_vec3_axis_index!(Vec3, Real);
-impl_vec3_axis_index!(Vec4, Real);
+impl core::ops::Index<Axis> for Real {
+    type Output = Real;
+    fn index(&self, index: Axis) -> &Self::Output {
+        &(unsafe { &*(self as *const Real as *const [Real; 1]) } [index as usize])
+    }
+}
+
+impl core::ops::IndexMut<Axis> for Real {
+    fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
+        &mut (unsafe { &mut *(self as *mut Real as *mut [Real; 1]) } [index as usize])
+    }
+}
+
+impl_vector_indexing!(UVec2, Index);
+impl_vector_indexing!(Vec2, Real);
+impl_vector_indexing!(UVec3, Index);
+impl_vector_indexing!(Vec3, Real);
+impl_vector_indexing!(Vec4, Real);
 
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
@@ -270,4 +284,11 @@ pub fn grid_index_to_flat_idx(grid_idx: GridIndex, grid_dim: GridIndex) -> u32 {
             grid_idx.y * grid_dim.x +
             grid_idx.x
     }
+}
+
+/// A saturating_sub implementation that computes `a - b`.
+/// Because Rust-GPU doesn't have the core library's saturating_sub() implemented yet, we have this function.
+#[inline]
+pub fn saturating_sub(a: usize, b: usize) -> usize {
+    if a > b { a.wrapping_sub(b) } else { 0 }
 }
