@@ -179,6 +179,11 @@ pub fn vect_to_array(v: Vect) -> [Real; DIM] {
 }
 
 #[inline]
+pub fn vect_from_array(arr: [Real; DIM]) -> Vect {
+    unsafe { *(&arr as *const [Real; DIM] as *const Vect) }
+}
+
+#[inline]
 pub fn vec4_to_vect(v: Vec4) -> Vect {
     #[cfg(feature = "dim1")]
     return v.z;

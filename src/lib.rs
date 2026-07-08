@@ -12,7 +12,7 @@ use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{GridIndex, Vect};
+use taser_em_shaders::math::{vect_from_array, vect_to_array, GridIndex, Real, Vect, DIM};
 use taser_em_shaders::math::Axis;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -75,16 +75,27 @@ pub struct FdtdStability1 {
 
 impl FdtdStability1 {
 
-    pub fn cell_size_from_min_wavelength(&self, _f_max: f32) -> f32 {
-        todo!()
+    pub fn cell_size_from_min_wavelength(&self, f_max: f32) -> Vect {
+        let min_wavelen = C_0 / f_max;
+        let cell_size = min_wavelen / self.cells_per_wavelength as f32;
+        vect_from_array([cell_size; DIM])
     }
 
-    pub fn cfl_condition(&self, _params: &mut FdtdParameters1) -> f32 {
-        todo!()
+    pub fn cfl_condition(&self, cell_size: Vect) -> f32 {
+        let cell_size_term = vect_to_array(cell_size)
+            .map(|v| {
+                v.powi(2).recip()
+            })
+            .iter()
+            .sum::<Real>()
+            .sqrt();
+        let safety_factor = self.dt_safety_factor.max(1.);
+        1. / (C_0 * cell_size_term * safety_factor)
     }
 
-    pub fn snap_to_critical_dim(&self, _cell_size: Vect, _critical_dim: Vect) -> f32 {
-        todo!()
+    pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> Vect {
+        let cells_per_crit_dim = (critical_dim / cell_size).ceil();
+        critical_dim / cells_per_crit_dim
     }
 
     // pub fn dt_from_source(&self, source: FdtdSource) -> f32 {}
