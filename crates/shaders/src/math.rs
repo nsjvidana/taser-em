@@ -45,6 +45,7 @@ pub enum Axis {
 }
 
 impl Axis {
+    #[inline]
     pub fn next_axis(&self) -> Self {
         match self {
             Axis::X => Axis::Y,
@@ -104,6 +105,7 @@ impl Axis {
 
 impl TryFrom<usize> for Axis {
     type Error = ();
+    #[inline]
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Axis::X),
@@ -135,12 +137,14 @@ macro_rules! impl_vector_indexing {
 
 impl core::ops::Index<Axis> for Real {
     type Output = Real;
+    #[inline]
     fn index(&self, index: Axis) -> &Self::Output {
         &(unsafe { &*(self as *const Real as *const [Real; 1]) } [index as usize])
     }
 }
 
 impl core::ops::IndexMut<Axis> for Real {
+    #[inline]
     fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
         &mut (unsafe { &mut *(self as *mut Real as *mut [Real; 1]) } [index as usize])
     }
@@ -181,6 +185,16 @@ pub fn vect_to_array(v: Vect) -> [Real; DIM] {
 #[inline]
 pub fn vect_from_array(arr: [Real; DIM]) -> Vect {
     unsafe { *(&arr as *const [Real; DIM] as *const Vect) }
+}
+
+#[inline]
+pub fn vec3_to_vect(vec3: Vec3) -> Vect {
+    #[cfg(feature = "dim1")]
+    return vec3.z;
+    #[cfg(feature = "dim2")]
+    return vec3.xy();
+    #[cfg(feature = "dim3")]
+    vec3
 }
 
 #[inline]
@@ -242,16 +256,6 @@ pub fn grid_index_from_array(arr: [u32; DIM]) -> GridIndex {
 }
 
 #[inline]
-pub fn vec3_to_vect(vec3: Vec3) -> Vect {
-    #[cfg(feature = "dim1")]
-    return vec3.z;
-    #[cfg(feature = "dim2")]
-    return vec3.xy();
-    #[cfg(feature = "dim3")]
-    vec3
-}
-
-#[inline]
 pub fn uvec3_to_grid_index(uvec3: UVec3) -> GridIndex {
     #[cfg(feature = "dim1")]
     return uvec3.z;
@@ -261,6 +265,7 @@ pub fn uvec3_to_grid_index(uvec3: UVec3) -> GridIndex {
     uvec3
 }
 
+#[inline]
 #[allow(unused_variables)]
 pub fn flat_idx_to_grid_index(idx: u32, grid_dim: GridIndex) -> GridIndex {
     #[cfg(feature = "dim1")]
@@ -278,6 +283,7 @@ pub fn flat_idx_to_grid_index(idx: u32, grid_dim: GridIndex) -> GridIndex {
     )
 }
 
+#[inline]
 #[allow(unused_variables)]
 pub fn grid_index_to_flat_idx(grid_idx: GridIndex, grid_dim: GridIndex) -> u32 {
     #[cfg(feature = "dim1")]
