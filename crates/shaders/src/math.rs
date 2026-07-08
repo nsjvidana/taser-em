@@ -98,7 +98,7 @@ impl Axis {
 
     #[inline]
     pub unsafe fn from_index_unchecked(idx: u32) -> Self {
-        core::mem::transmute(idx)
+        unsafe { core::mem::transmute(idx) }
     }
 }
 
@@ -199,6 +199,7 @@ pub fn vec4_to_vect(v: Vec4) -> Vect {
 ///
 /// e.g. `grid_index_to_3d(k, UVec3::ONE)` would return `UVec3::new(1, 1, k)` in 1D.
 #[inline]
+#[allow(unused_variables)]
 pub fn grid_index_to_3d(idx: GridIndex, mask: UVec3) -> UVec3 {
     #[cfg(feature = "dim1")]
     return mask.with_x(idx);

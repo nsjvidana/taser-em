@@ -56,7 +56,7 @@ impl YeeGrid {
         grid_index_from_array(n_cells)
     }
 
-    pub fn update_coeffs_pml(&mut self, pml_dims: LayerWidths, dt: Real) -> Vec<PmlCoefficients> {
+    pub fn update_coeffs_pml(&mut self, _pml_dims: LayerWidths, _dt: Real) -> Vec<PmlCoefficients> {
         todo!()
     }
 
