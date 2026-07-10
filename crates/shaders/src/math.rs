@@ -36,7 +36,7 @@ mod dim_types {
 /// A helper enum for indexing into various things (e.g. indexing into components of [`Vect`] and [`GridIndex`])
 ///
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(u32)]
 pub enum Axis {
     X = 0,
@@ -45,55 +45,15 @@ pub enum Axis {
 }
 
 impl Axis {
+    /// Circular permutation of `self` in the following sequence:
+    ///
+    /// [`Axis::X`] -> [`Axis::Y`] -> [`Axis::Z`] -> [`Axis::X`] -> ...
     #[inline]
-    pub fn next_axis(&self) -> Self {
+    pub fn permute(&self) -> Self {
         match self {
             Axis::X => Axis::Y,
             Axis::Y => Axis::Z,
             Axis::Z => Axis::X,
-        }
-    }
-
-    /// Try to convert to a usize representing an existing spatial dimension.
-    /// Used for indexing into components of [`Vect`] and [`GridIndex`].
-    ///
-    /// Returns [`None`] if the dimension doesn't exist in the simulation domain.
-    /// (e.g. `Axis::X.try_into_spatial_dim()` returns [`None`] 1D since only the Z spatial dimension exists)
-    #[inline]
-    pub fn try_into_spatial_dim(self) -> Option<usize> {
-        #[cfg(feature = "dim1")]
-        match self {
-            Axis::Z => Some(0),
-            _ => None
-        }
-        #[cfg(not(feature = "dim1"))]
-        match self {
-            Axis::X => Some(0),
-            Axis::Y => Some(1),
-            Axis::Z =>
-                if cfg!(feature = "dim2") { None }
-                else { Some(2) }
-        }
-    }
-
-    #[inline]
-    pub fn spatial_dim_exists(self) -> bool {
-        self.try_into_spatial_dim().is_some()
-    }
-
-    #[inline]
-    pub fn try_from_spatial_dim(axis_idx: usize) -> Option<Self> {
-        #[cfg(feature = "dim1")]
-        match axis_idx {
-            0 => Some(Axis::Z),
-            _ => None,
-        }
-        #[cfg(any(feature = "dim2", feature = "dim3"))]
-        match axis_idx {
-            0 => Some(Axis::X),
-            1 => Some(Axis::Y),
-            2 => if cfg!(feature = "dim2") { None } else { Some(Axis::Z) },
-            _ => None,
         }
     }
 
@@ -104,7 +64,7 @@ impl Axis {
     /// [`Axis::try_from()`] is a safer alternative to this function.
     #[inline]
     pub unsafe fn from_index_unchecked(idx: u32) -> Self {
-        unsafe { core::mem::transmute(idx) }
+        unsafe { core::mem::transmute::<u32, Self>(idx) }
     }
 }
 
@@ -117,6 +77,68 @@ impl TryFrom<u32> for Axis {
             1 => Ok(Axis::Y),
             2 => Ok(Axis::Z),
             _ => Err(()),
+        }
+    }
+}
+
+impl From<SpatialAxis> for Axis {
+    #[allow(unused_variables)]
+    #[inline]
+    fn from(value: SpatialAxis) -> Self {
+        #[cfg(feature = "dim1")]
+        { Axis::Z }
+        #[cfg(not(feature = "dim1"))]
+        unsafe { core::mem::transmute::<SpatialAxis, Axis>(value) }
+    }
+}
+
+/// The axes that are in the computational domain. EM waves only propagate in spaces that these axes
+/// form (Z axis in 1D; X-Y plane in 2D; X-Y-Z space in 3D).
+#[derive(Copy, Clone, Debug)]
+#[repr(u32)]
+pub enum SpatialAxis {
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    X = 0,
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    Y = 1,
+    #[cfg(any(feature = "dim1", feature = "dim3"))]
+    Z = if cfg!(feature = "dim1") { 0 } else { 2 },
+}
+
+impl SpatialAxis {
+    /// All spatial axes in an array of [`DIM`] elements.
+    pub const ALL_AXES: [Self; DIM] = cfg_select! {
+        feature = "dim1" => [Self::Z],
+        feature = "dim2" => [Self::X, Self::Y],
+        feature = "dim3" => [Self::X, Self::Y, Self::Z],
+    };
+
+    /// Efficiently check if an [`Axis`] is a spatial axis.
+    #[inline]
+    pub fn is_spatial_axis(axis: Axis) -> bool {
+        #[cfg(feature = "dim1")]
+        { matches!(axis, Axis::Z) }
+        #[cfg(not(feature = "dim1"))]
+        { (axis as usize) < DIM }
+    }
+}
+
+impl TryFrom<Axis> for SpatialAxis {
+    type Error = ();
+    #[inline]
+    fn try_from(axis: Axis) -> Result<Self, Self::Error> {
+        #[cfg(feature = "dim1")]
+        match axis {
+            Axis::Z => Ok(SpatialAxis::Z),
+            _ => Err(())
+        }
+        #[cfg(not(feature = "dim1"))]
+        match axis {
+            Axis::Z => cfg_select! {
+                feature = "dim2" => Err(()),
+                feature = "dim3" => Ok(SpatialAxis::Z),
+            },
+            _ => unsafe { Ok(core::mem::transmute::<Axis, SpatialAxis>(axis)) }
         }
     }
 }
@@ -207,18 +229,16 @@ pub fn vec3_to_vect(vec3: Vec3) -> Vect {
 
 #[inline]
 pub fn vec4_to_vect(v: Vec4) -> Vect {
-    cfg_select! {
-        feature = "dim1" => v.z,
-        feature = "dim2" => {
-            use khal_std::glamx::Vec4Swizzles;
-            v.xy()
-        },
-        feature = "dim3" => {
-            use khal_std::glamx::Vec4Swizzles;
-            v.xyz()
-        },
+    #[cfg(feature = "dim1")]
+    { v.z }
+    #[cfg(feature = "dim2")] {
+        use khal_std::glamx::Vec4Swizzles;
+        v.xy()
     }
-
+    #[cfg(feature = "dim3")] {
+        use khal_std::glamx::Vec4Swizzles;
+        v.xyz()
+    }
 }
 
 /// Converts a [`GridIndex`] to [`UVec3`]
