@@ -4,7 +4,8 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd1::PmlCoefficients;
-use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, to_grid_index, vec3_to_vect, GridIndex, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::fdtd::PmlCoefficients2;
+use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, vect_to_3d, to_grid_index, vec3_to_vect, GridIndex, Real, SpatialAxis, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -43,19 +44,15 @@ impl YeeGrid {
     /// accounting for spacer regions as well.
     pub fn n_cells(&self) -> GridIndex {
         let bb = self.material_regions.compute_bounding_box();
-        let n_cells_vec3 = (bb.extents() / to_3d(self.cell_size, Vec3::ONE)).ceil();
+        let n_cells_vec3 = (bb.extents() / vect_to_3d(self.cell_size, Vec3::ONE)).ceil();
         let materials_n_cells = to_grid_index(vec3_to_vect(n_cells_vec3));
 
-        let mut n_cells = grid_index_to_array(materials_n_cells);
-        for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
-            .zip(self.spacer_region_widths.iter_axes())
-        {
-            *n_cells_i += lo_hi_widths.iter().sum::<u32>();
-        }
-        grid_index_from_array(n_cells)
+        self.spacer_region_widths
+            .sum_with_n_cells(materials_n_cells)
     }
 
-    pub fn update_coeffs_pml(&mut self, _pml_dims: LayerWidths, _dt: Real) -> Vec<PmlCoefficients> {
+    /// Discretize shapes and compute PML update coefficients
+    pub fn update_coeffs_pml(&self, _pml_dims: LayerWidths, _dt: Real) -> Vec<PmlCoefficients2> {
         todo!()
     }
 
@@ -82,9 +79,9 @@ impl MaterialRegions {
         end: Vect,
         material: ElectricMaterial
     ) -> &mut Self {
-        let half_extents = to_3d(end - start, Vec3::ONE);
+        let half_extents = vect_to_3d(end - start, Vec3::ONE);
         let shape = SharedShape::new(Cuboid::new(half_extents));
-        let middle = to_3d((start + end) / 2., Vec3::ZERO);
+        let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
         let pose = Pose::from_translation(middle);
 
         self.regions.push((shape, pose, material));
@@ -150,6 +147,17 @@ impl LayerWidths {
         return Self::new(width, width, width, width);
         #[cfg(feature = "dim3")]
         Self::new(width, width, width, width, width, width)
+    }
+
+    /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
+    pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
+        let mut n_cells = grid_index_to_array(n_cells);
+        for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
+            .zip(self.iter_axes())
+        {
+            *n_cells_i += lo_hi_widths.iter().sum::<u32>();
+        }
+        grid_index_from_array(n_cells)
     }
 
     #[inline]

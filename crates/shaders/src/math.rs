@@ -192,7 +192,7 @@ use khal_std::glamx::Vec3Swizzles;
 /// e.g. `to_3d(z, Vec3::ONE)` would return `Vec3::new(1., 1., z)` in 1D.
 #[inline]
 #[allow(unused_variables)]
-pub fn to_3d(v: Vect, mask: Vec3) -> Vec3 {
+pub fn vect_to_3d(v: Vect, mask: Vec3) -> Vec3 {
     #[cfg(feature = "dim1")]
     return mask.with_x(v);
     #[cfg(feature = "dim2")]

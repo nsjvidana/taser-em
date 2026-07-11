@@ -7,14 +7,15 @@ pub use taser_em_shaders as shaders;
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
-use glamx::Vec3;
+use glamx::{UVec3, Vec3, Vec4};
 use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{vect_from_array, vect_to_array, GridIndex, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::fdtd::{GridParameters2, IntegrationTerms, PmlCoefficients2};
+use taser_em_shaders::math::{grid_index_to_3d, grid_index_to_array, grid_index_to_flat_idx, vect_to_3d, vect_from_array, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 use taser_em_shaders::math::Axis;
-use crate::grid::YeeGrid;
+use crate::grid::{LayerWidths, YeeGrid};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -31,7 +32,7 @@ macro_rules! shader_struct {
     ($name:ident, $inner:ty) => {
         #[derive(Shader)]
         pub struct $name {
-            pub kernel: $inner
+            kernel: $inner
         }
 
         impl AsRef<$inner> for $name {
@@ -51,6 +52,44 @@ macro_rules! shader_struct {
 }
 
 shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
+
+pub struct FdtdSolver {
+    pub kernel: FdtdWithLoss,
+    pub grid: YeeGrid,
+    pub pml_widths: LayerWidths,
+    pub dt: Real,
+    pub buffers: Option<FdtdSolverBuffers>,
+}
+
+impl FdtdSolver {
+    pub fn new(backend: &GpuBackend, grid: YeeGrid, pml_widths: LayerWidths, dt: Real) -> GpuResult<FdtdSolver> {
+        Ok(Self {
+            kernel: FdtdWithLoss::from_backend(backend)?,
+            grid,
+            pml_widths,
+            dt,
+            buffers: None
+        })
+    }
+
+    /// Prepares for simulating by:
+    /// - discretizing shapes
+    /// - calculating update coefficients
+    /// - initializing buffers
+    pub fn prepare_for_simulation(&self, _backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
+        todo!()
+    }
+}
+
+pub struct FdtdSolverBuffers {
+    pub h: GpuBufferReadable<Vec4>,
+    pub dn: GpuBufferReadable<Vec4>,
+    pub en: GpuBufferReadable<Vec4>,
+    pub int_terms: GpuBuffer<IntegrationTerms>,
+    pub grid_coeffs: GpuBuffer<PmlCoefficients2>,
+    pub grid_params: GpuBuffer<GridParameters2>,
+}
+
 shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
 
 #[derive(Default)]
@@ -63,26 +102,27 @@ pub struct FdtdParameters1 {
     // TODO: E-field (or H field for current loops) Source enum
 }
 
-/// Contains parameters and functions for ensuring simulation stability.
+/// Helper struct containing parameters and functions for ensuring simulation stability.
 #[derive(Derivative, Clone)]
 #[derivative(Default)]
-pub struct FdtdStability1 {
+pub struct FdtdStability {
     #[derivative(Default(value = "10"))]
-    pub cells_per_wavelength: u32,
-    /// Divides CFL condition upper bound by this amount.
+    pub cells_per_wavelength: Index,
+    /// Divides CFL condition upper bound by `dt_safety_factor`.
+    ///
+    /// `dt_safety_factor > 1.` to improve stability.
     #[derivative(Default(value = "2."))]
-    pub dt_safety_factor: f32,
+    pub dt_safety_factor: Real,
 }
 
-impl FdtdStability1 {
-
-    pub fn cell_size_from_min_wavelength(&self, f_max: f32) -> Vect {
+impl FdtdStability {
+    pub fn cell_size_from_min_wavelength(&self, f_max: Real) -> Vect {
         let min_wavelen = C_0 / f_max;
-        let cell_size = min_wavelen / self.cells_per_wavelength as f32;
+        let cell_size = min_wavelen / self.cells_per_wavelength as Real;
         vect_from_array([cell_size; DIM])
     }
 
-    pub fn cfl_condition(&self, cell_size: Vect) -> f32 {
+    pub fn cfl_condition(&self, cell_size: Vect) -> Real {
         let cell_size_term = vect_to_array(cell_size)
             .map(|v| {
                 v.powi(2).recip()
