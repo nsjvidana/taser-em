@@ -12,8 +12,9 @@ use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{vect_from_array, vect_to_array, GridIndex, Real, Vect, DIM};
+use taser_em_shaders::math::{vect_from_array, vect_to_array, GridIndex, Real, SpatialAxis, Vect, DIM};
 use taser_em_shaders::math::Axis;
+use crate::grid::YeeGrid;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -199,6 +200,65 @@ pub struct Fdtd1Buffers {
     pub int_en_y: GpuBuffer<f32>,
     pub coeffs: GpuBuffer<PmlCoefficients>,
     pub grid: GpuBuffer<GridParameters>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Source {
+    Dipole {
+        position: Vect,
+        t_offset: f32,
+        vals: Vec<f32>
+    },
+    PlaneWave {
+        axis: SpatialAxis,
+        t_offset: f32,
+        vals: Vec<f32>
+    }
+}
+
+impl Source {
+    /// Helper function that generates data points for a Gaussian curve with a maximum frequency of
+    /// `f_max` (Hz).
+    ///
+    /// # Panics
+    /// When `f_max <= 0.` or when `dt <= 0.`
+    pub fn gaussian_max_f(&mut self, f_max: f32, amplitude: f32, dt: f32) -> Vec<f32> {
+        assert!(f_max > 0.0, "f_max must be > 0");
+        let tau = core::f32::consts::FRAC_1_PI / f_max;
+        let t_0 = 6. * tau;
+        let approx_dur = 12. * tau;
+        self.function_data_points(dt, approx_dur, |t| {
+            amplitude * core::f32::consts::E.powf(-((t - t_0) / tau).powi(2))
+        })
+    }
+
+    /// Samples data points from the function of time `f`
+    ///
+    /// # Panics
+    /// When `dt <= 0.` or `duration <= 0.`
+    pub fn function_data_points(&mut self, dt: f32, duration: f32, mut f: impl FnMut(f32) -> f32) -> Vec<f32> {
+        assert!(dt > 0.0, "dt must be > 0");
+        assert!(duration > 0.0, "source duration must be > 0");
+        let num_vals = (duration / dt) as usize;
+        let mut vals = vec![0.; num_vals];
+
+        let mut t = 0.;
+        for val in vals.iter_mut() {
+            *val = f(t);
+            t += dt;
+        }
+        vals
+    }
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Self::Dipole {
+            position: Default::default(),
+            t_offset: Default::default(),
+            vals: Default::default(),
+        }
+    }
 }
 
 shader_struct!(AddAssign, taser_em_shaders::AddAssign);
