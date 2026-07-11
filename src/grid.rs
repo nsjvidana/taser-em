@@ -11,6 +11,9 @@ use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, vect_to
 pub struct YeeGrid {
     /// Size of each cell (in meters)
     pub cell_size: Vect,
+    /// Which vector components will exist in the computational domain. See [`PolarizationMode`] for
+    /// more info.
+    pub polarization_mode: PolarizationMode,
     /// Objects/devices within the simulation, stored as raw shapes.
     /// These shapes get pixelized/voxelized before running the simulation.
     pub material_regions: MaterialRegions,
@@ -25,9 +28,10 @@ pub struct YeeGrid {
 }
 
 impl YeeGrid {
-    pub fn new(material_regions: MaterialRegions, cell_size: Vect) -> Self {
+    pub fn new(cell_size: Vect, polarization_mode: PolarizationMode, material_regions: MaterialRegions) -> Self {
         Self {
             cell_size,
+            polarization_mode,
             material_regions,
             background_material: ElectricMaterial::FREE_SPACE,
             spacer_region_widths: LayerWidths::default(),
@@ -63,6 +67,25 @@ impl YeeGrid {
     }
 
     // normal map creation?
+}
+
+/// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
+/// In 3D, all axes are computed for all fields.
+/// See the docs of this enum's variants to know which axes are enabled for each mode.
+///
+/// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
+/// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
+#[derive(Copy, Clone, Debug)]
+#[repr(u32)]
+pub enum PolarizationMode {
+    /// 1D: Ey, Hx
+    /// 2D: Ex, Ey, Hz
+    /// 3D: All axes
+    TransverseMagnetic = 0,
+    /// 1D: Ex, Hy
+    /// 2D: Ez, Hx, Hy
+    /// 3D: All axes
+    TransverseElectric = 1,
 }
 
 #[derive(Default)]

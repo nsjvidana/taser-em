@@ -160,14 +160,7 @@ pub struct GridParameters2 {
     /// Increments by 1 in i/j/k indices for flat indexing. Used for accessing
     /// data from neighboring cells.
     pub flat_idx_incrs: UVec3,
-    /// The polarization mode can either be Transverse-Magnetic (TM) or Transverse-Electric (TE).
-    /// `polarization_mode = 0` is TM mode, TE otherwise.
-    ///
-    /// Each mode affects which field components are actually computed.
-    /// For example in TM mode, only the H field's Z component is computed in 2D; in 1D, Hx is computed.
-    ///
-    /// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
-    /// simulation domain specifically in 2D FDTD, so the word becomes meaningless 1D and 3D contexts, but it's used here anyway for simplicity.
+    // TODO: make this use a newtype that ensures the u32 is valid.
     pub polarization_mode: u32,
     pub n_cells: UVec3,
     pub _padding0: u32,
