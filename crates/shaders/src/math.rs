@@ -47,6 +47,7 @@ pub enum Axis {
 }
 
 impl Axis {
+    pub const ALL_AXES: [Self; MAX_DIM] = [Axis::X, Axis::Y, Axis::Z];
     /// Circular permutation of `self` in the following sequence:
     ///
     /// [`Axis::X`] -> [`Axis::Y`] -> [`Axis::Z`] -> [`Axis::X`] -> ...
@@ -141,6 +142,16 @@ impl TryFrom<Axis> for SpatialAxis {
                 feature = "dim3" => Ok(SpatialAxis::Z),
             },
             _ => unsafe { Ok(core::mem::transmute::<Axis, SpatialAxis>(axis)) }
+        }
+    }
+}
+
+impl TryFrom<u32> for SpatialAxis {
+    type Error = ();
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            v if v < DIM as u32 => unsafe { Ok(core::mem::transmute::<u32, SpatialAxis>(value)) },
+            _ => Err(())
         }
     }
 }
