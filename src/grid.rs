@@ -1,10 +1,10 @@
-use crate::ElectricMaterial;
+use crate::{ElectricMaterial, PmlParameters};
 use glamx::Vec3;
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::PmlCoefficients2;
-use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, vect_to_3d, to_grid_index, vec3_to_vect, GridIndex, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_grid_index, vec3_to_vect, vect_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -54,8 +54,14 @@ impl YeeGrid {
             .sum_with_n_cells(materials_n_cells)
     }
 
-    /// Discretize shapes and compute PML update coefficients
-    pub fn update_coeffs_pml(&self, _pml_dims: LayerWidths, _dt: Real) -> Vec<PmlCoefficients2> {
+    /// Discretize shapes and compute PML update coefficients.
+    ///
+    /// `sig_max` is the maximum conductivity of the PML.
+    pub fn update_coeffs_pml(
+        &self,
+        _pml_parameters: PmlParameters,
+        _dt: Real
+    ) -> (GridIndex, Vec<PmlCoefficients2>) {
         todo!()
     }
 
@@ -133,13 +139,13 @@ impl MaterialRegions {
 /// Stores the "low" and "high" widths on each axis.
 #[derive(Copy, Clone, Default)]
 pub struct LayerWidths {
-    pub widths: [[u32; 2]; DIM],
+    pub widths: [[Index; 2]; DIM],
 }
 
 impl LayerWidths {
     #[inline]
     #[cfg(feature = "dim1")]
-    pub fn new(z_lo: u32, z_hi: u32) -> Self {
+    pub fn new(z_lo: Index, z_hi: Index) -> Self {
         Self {
             widths: [[z_lo, z_hi]]
         }
@@ -147,7 +153,7 @@ impl LayerWidths {
 
     #[inline]
     #[cfg(feature = "dim2")]
-    pub fn new(x_lo: u32, x_hi: u32, y_lo: u32, y_hi: u32) -> Self {
+    pub fn new(x_lo: Index, x_hi: Index, y_lo: Index, y_hi: Index) -> Self {
         Self {
             widths: [[x_lo, x_hi], [y_lo, y_hi]]
         }
@@ -155,14 +161,15 @@ impl LayerWidths {
 
     #[inline]
     #[cfg(feature = "dim3")]
-    pub fn new(x_lo: u32, x_hi: u32, y_lo: u32, y_hi: u32, z_lo: u32, z_hi: u32) -> Self {
+    pub fn new(x_lo: Index, x_hi: Index, y_lo: Index, y_hi: Index, z_lo: Index, z_hi: Index) -> Self {
         Self {
             widths: [[x_lo, x_hi], [y_lo, y_hi], [z_lo, z_hi]]
         }
     }
 
+    /// [`LayerWidths`] with widths along all axes set to `width`.
     #[inline]
-    pub fn splat(width: u32) -> Self {
+    pub fn splat(width: Index) -> Self {
         #[cfg(feature = "dim1")]
         return Self::new(width, width);
         #[cfg(feature = "dim2")]
@@ -177,19 +184,19 @@ impl LayerWidths {
         for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
             .zip(self.iter_axes())
         {
-            *n_cells_i += lo_hi_widths.iter().sum::<u32>();
+            *n_cells_i += lo_hi_widths.iter().sum::<Index>();
         }
         grid_index_from_array(n_cells)
     }
 
     #[inline]
-    pub fn iter_axes(&self) -> impl Iterator<Item = (SpatialAxis, &[u32; 2])> {
+    pub fn iter_axes(&self) -> impl Iterator<Item = (SpatialAxis, &[Index; 2])> {
         SpatialAxis::ALL_AXES.into_iter()
             .zip(self.widths.iter())
     }
 
     #[inline]
-    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (SpatialAxis, &mut [u32; 2])> {
+    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (SpatialAxis, &mut [Index; 2])> {
         SpatialAxis::ALL_AXES.into_iter()
             .zip(self.widths.iter_mut())
     }
@@ -230,13 +237,15 @@ impl core::ops::Sub for LayerWidths {
 }
 
 impl core::ops::Index<SpatialAxis> for LayerWidths {
-    type Output = [u32; 2];
+    type Output = [Index; 2];
+    #[inline]
     fn index(&self, index: SpatialAxis) -> &Self::Output {
         &self.widths[index as usize]
     }
 }
 
 impl core::ops::IndexMut<SpatialAxis> for LayerWidths {
+    #[inline]
     fn index_mut(&mut self, index: SpatialAxis) -> &mut Self::Output {
         &mut self.widths[index as usize]
     }

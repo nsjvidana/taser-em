@@ -2,6 +2,7 @@ pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
 
+use std::num::NonZeroI32;
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
@@ -56,19 +57,18 @@ shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 pub struct FdtdSolver {
     pub kernel: FdtdWithLoss,
     pub grid: YeeGrid,
-    pub pml_widths: LayerWidths,
-    pub pml_sig_max: Real,
+    pub pml_parameters: PmlParameters,
     pub dt: Real,
     pub buffers: Option<FdtdSolverBuffers>,
 }
 
 impl FdtdSolver {
-    pub fn new(backend: &GpuBackend, grid: YeeGrid, pml_widths: LayerWidths, dt: Real) -> GpuResult<FdtdSolver> {
+    /// Construct a solver with generally stable PML parameters.
+    pub fn new(backend: &GpuBackend, grid: YeeGrid, dt: Real) -> GpuResult<FdtdSolver> {
         Ok(Self {
             kernel: FdtdWithLoss::from_backend(backend)?,
             grid,
-            pml_widths,
-            pml_sig_max: FdtdStability::pml_sig_max(dt),
+            pml_parameters: PmlParameters::new(dt),
             dt,
             buffers: None
         })
@@ -80,7 +80,7 @@ impl FdtdSolver {
     /// - initializing buffers
     pub fn prepare_for_simulation(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
         let (n_cells, grid_coeffs) = self.grid
-            .update_coeffs_pml(self.pml_widths, self.dt, self.pml_sig_max);
+            .update_coeffs_pml(self.pml_parameters, self.dt);
 
         let cell_count = grid_index_to_array(n_cells)
             .iter()
@@ -121,6 +121,28 @@ pub struct FdtdSolverBuffers {
     pub int_terms: GpuBuffer<IntegrationTerms>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients2>,
     pub grid_params: GpuBuffer<GridParameters2>,
+}
+
+/// Parameters for how the PML will be constructed in the simulation
+#[derive(Copy, Clone)]
+pub struct PmlParameters {
+    /// Widths of PML along each axis (widths for low and high end of each axis).
+    pub widths: LayerWidths,
+    /// Maximum conductivity of the PML
+    pub sig_max: Real,
+    /// The order of the monomial that ramps PML conductivity up to `sig_max`
+    pub grading_order: NonZeroI32
+}
+
+impl PmlParameters {
+    /// A convenient constructor for a [`PmlParameters`] with some generally stable values.
+    pub fn new(dt: Real) -> Self {
+        Self {
+            widths: LayerWidths::splat(12),
+            sig_max: FdtdStability::pml_sig_max(dt),
+            grading_order: NonZeroI32::new(3).unwrap(),
+        }
+    }
 }
 
 shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
