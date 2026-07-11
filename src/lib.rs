@@ -57,6 +57,7 @@ pub struct FdtdSolver {
     pub kernel: FdtdWithLoss,
     pub grid: YeeGrid,
     pub pml_widths: LayerWidths,
+    pub pml_sig_max: Real,
     pub dt: Real,
     pub buffers: Option<FdtdSolverBuffers>,
 }
@@ -67,6 +68,7 @@ impl FdtdSolver {
             kernel: FdtdWithLoss::from_backend(backend)?,
             grid,
             pml_widths,
+            pml_sig_max: FdtdStability::pml_sig_max(dt),
             dt,
             buffers: None
         })
@@ -77,8 +79,8 @@ impl FdtdSolver {
     /// - calculating update coefficients
     /// - initializing buffers
     pub fn prepare_for_simulation(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
-        let n_cells = self.pml_widths.sum_with_n_cells(self.grid.n_cells());
-        let grid_coeffs = self.grid.update_coeffs_pml(self.pml_widths, self.dt);
+        let (n_cells, grid_coeffs) = self.grid
+            .update_coeffs_pml(self.pml_widths, self.dt, self.pml_sig_max);
 
         let cell_count = grid_index_to_array(n_cells)
             .iter()
@@ -168,6 +170,12 @@ impl FdtdStability {
     pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> Vect {
         let cells_per_crit_dim = (critical_dim / cell_size).ceil();
         critical_dim / cells_per_crit_dim
+    }
+
+    /// Computes a stable maximum conductivity for a PML
+    #[inline]
+    pub fn pml_sig_max(dt: Real) -> Real {
+        EPS_0 / (2. * dt)
     }
 
     // pub fn dt_from_source(&self, source: FdtdSource) -> f32 {}
