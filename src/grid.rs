@@ -8,33 +8,28 @@ use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_3d, 
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
-    /// Number of grid cells, in each principal direction, excluding spacer regions
-    ///
-    /// For the full dimensions of the entire computational domain, use [`YeeGrid::n_cells()`]
-    pub inner_n_cells: GridIndex,
+    /// Size of each cell (in meters)
+    pub cell_size: Vect,
+    /// Objects/devices within the simulation, stored as raw shapes.
+    /// These shapes get pixelized/voxelized before running the simulation.
+    pub material_regions: MaterialRegions,
+    /// The "default" material in grid cells whose material isn't
+    /// explicitly set by the user. (e.g. free space)
+    pub background_material: ElectricMaterial,
     /// Adds optional regions at the edges of the simulation. Good for preventing
     /// boundary conditions from affecting things like evanescent fields.
     ///
     /// The material at these regions are `background_material` no matter what.
     pub spacer_region_widths: LayerWidths,
-    /// The "default" material in grid cells whose material isn't
-    /// explicitly set by the user. (e.g. free space)
-    pub background_material: ElectricMaterial,
-    /// Size of each cell (in meters)
-    pub cell_size: Vect,
 }
 
 impl YeeGrid {
-    pub fn empty_from_regions(regions: &MaterialRegions, cell_size: Vect) -> Self {
-        let bb = regions.compute_bounding_box();
-        let n_cells_vec3 = (bb.extents() / to_3d(cell_size, Vec3::ONE)).ceil();
-        let n_cells = to_grid_index(vec3_to_vect(n_cells_vec3));
-
+    pub fn new(material_regions: MaterialRegions, cell_size: Vect) -> Self {
         Self {
-            inner_n_cells: n_cells,
+            cell_size,
+            material_regions,
             background_material: ElectricMaterial::FREE_SPACE,
             spacer_region_widths: LayerWidths::default(),
-            cell_size,
         }
     }
 
@@ -47,7 +42,11 @@ impl YeeGrid {
     /// Computes the total number of cells, in each principal direction,
     /// accounting for spacer regions as well.
     pub fn n_cells(&self) -> GridIndex {
-        let mut n_cells = grid_index_to_array(self.inner_n_cells);
+        let bb = self.material_regions.compute_bounding_box();
+        let n_cells_vec3 = (bb.extents() / to_3d(self.cell_size, Vec3::ONE)).ceil();
+        let materials_n_cells = to_grid_index(vec3_to_vect(n_cells_vec3));
+
+        let mut n_cells = grid_index_to_array(materials_n_cells);
         for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
             .zip(self.spacer_region_widths.iter_axes())
         {
@@ -60,12 +59,11 @@ impl YeeGrid {
         todo!()
     }
 
-    /// Clears all stored material properties
+    /// Resets all stored material data
     pub fn reset(&mut self) {
-        todo!()
+        self.material_regions.regions.clear();
+        self.background_material = ElectricMaterial::FREE_SPACE;
     }
-
-    // pub fn shape_in_grid(shape: SharedShape, pose: Pose, material: ElectricMaterial)
 
     // normal map creation?
 }
@@ -91,6 +89,10 @@ impl MaterialRegions {
 
         self.regions.push((shape, pose, material));
         self
+    }
+
+    pub fn import_shape_from_file(&mut self) -> &mut Self {
+        todo!()
     }
 
     pub fn compute_bounding_box(&self) -> Aabb {
