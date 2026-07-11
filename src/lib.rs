@@ -76,8 +76,39 @@ impl FdtdSolver {
     /// - discretizing shapes
     /// - calculating update coefficients
     /// - initializing buffers
-    pub fn prepare_for_simulation(&self, _backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
-        todo!()
+    pub fn prepare_for_simulation(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
+        let n_cells = self.pml_widths.sum_with_n_cells(self.grid.n_cells());
+        let grid_coeffs = self.grid.update_coeffs_pml(self.pml_widths, self.dt);
+
+        let cell_count = grid_index_to_array(n_cells)
+            .iter()
+            .product::<Index>() as usize;
+        let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
+        let flat_idx_incrs = {
+            let mut incrs = UVec3::ZERO;
+            for spatial_axis in SpatialAxis::ALL_AXES {
+                let mut grid_incr = GridIndex::default();
+                    grid_incr[spatial_axis] = 1;
+                incrs[Axis::from(spatial_axis)] = grid_index_to_flat_idx(grid_incr, n_cells);
+            }
+            incrs
+        };
+        Ok(
+            FdtdSolverBuffers {
+                h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+                dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+                en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+                int_terms: vec![IntegrationTerms::default(); cell_count].create_gpu_buffer(backend)?,
+                grid_coeffs: grid_coeffs.create_gpu_buffer(backend)?,
+                grid_params: GridParameters2 {
+                    flat_idx_incrs,
+                    polarization_mode: self.grid.polarization_mode as u32,
+                    n_cells: grid_index_to_3d(n_cells, UVec3::ONE),
+                    d: vect_to_3d(self.grid.cell_size, Vec3::ZERO),
+                    ..Default::default()
+                }.create_gpu_uniform(backend)?,
+            }
+        )
     }
 }
 

@@ -3,7 +3,6 @@ use glamx::Vec3;
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
-use taser_em_shaders::fdtd1::PmlCoefficients;
 use taser_em_shaders::fdtd::PmlCoefficients2;
 use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, vect_to_3d, to_grid_index, vec3_to_vect, GridIndex, Real, SpatialAxis, Vect, DIM};
 

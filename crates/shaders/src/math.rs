@@ -8,10 +8,12 @@ pub const MAX_DIM: usize = 3;
 
 #[cfg(feature = "dim1")]
 mod dim_types {
+    use crate::math::{Index, Real};
+
     pub const DIM: usize = 1;
     /// A shader's vector field element (a Z component in 1 dimension)
-    pub type Vect = f32;
-    pub type GridIndex = u32;
+    pub type Vect = Real;
+    pub type GridIndex = Index;
 }
 
 #[cfg(feature = "dim2")]
@@ -144,44 +146,34 @@ impl TryFrom<Axis> for SpatialAxis {
 }
 
 macro_rules! impl_vector_indexing {
-    ($v:ident, $elemty:ty) => {
-        impl core::ops::Index<Axis> for $v {
-            type Output = $elemty;
+    ($v:ident, $elem_ty:ty, $axis_ty: ty, $n_dims: expr) => {
+        impl core::ops::Index<$axis_ty> for $v {
+            type Output = $elem_ty;
             #[inline]
-            fn index(&self, index: Axis) -> &Self::Output {
-                &(unsafe { &*(self as *const $v as *const [$elemty; $v::AXES.len()]) } [index as usize])
+            fn index(&self, index: $axis_ty) -> &Self::Output {
+                &(unsafe { &*(self as *const $v as *const [$elem_ty; $n_dims]) } [index as usize])
             }
         }
 
-        impl core::ops::IndexMut<Axis> for $v {
+        impl core::ops::IndexMut<$axis_ty> for $v {
             #[inline]
-            fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
-                &mut (unsafe { &mut *(self as *mut $v as *mut [$elemty; $v::AXES.len()]) } [index as usize])
+            fn index_mut(&mut self, index: $axis_ty) -> &mut Self::Output {
+                &mut (unsafe { &mut *(self as *mut $v as *mut [$elem_ty; $n_dims]) } [index as usize])
             }
         }
     };
 }
 
-impl core::ops::Index<Axis> for Real {
-    type Output = Real;
-    #[inline]
-    fn index(&self, index: Axis) -> &Self::Output {
-        &(unsafe { &*(self as *const Real as *const [Real; 1]) } [index as usize])
-    }
-}
+impl_vector_indexing!(Index, Index, Axis, 1);
+impl_vector_indexing!(Real, Real, Axis, 1);
+impl_vector_indexing!(UVec2, Index, Axis, 2);
+impl_vector_indexing!(Vec2, Real, Axis, 2);
+impl_vector_indexing!(UVec3, Index, Axis, 3);
+impl_vector_indexing!(Vec3, Real, Axis, 3);
+impl_vector_indexing!(Vec4, Real, Axis, 4);
 
-impl core::ops::IndexMut<Axis> for Real {
-    #[inline]
-    fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
-        &mut (unsafe { &mut *(self as *mut Real as *mut [Real; 1]) } [index as usize])
-    }
-}
-
-impl_vector_indexing!(UVec2, Index);
-impl_vector_indexing!(Vec2, Real);
-impl_vector_indexing!(UVec3, Index);
-impl_vector_indexing!(Vec3, Real);
-impl_vector_indexing!(Vec4, Real);
+impl_vector_indexing!(Vect, Real, SpatialAxis, DIM);
+impl_vector_indexing!(GridIndex, Index, SpatialAxis, DIM);
 
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
