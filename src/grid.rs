@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::PmlCoefficients2;
-use taser_em_shaders::math::{grid_index_from_array, grid_index_to_array, to_grid_index, vec3_to_vect, vect_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, to_grid_index, vec3_to_vect, vect_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -55,8 +55,6 @@ impl YeeGrid {
     }
 
     /// Discretize shapes and compute PML update coefficients.
-    ///
-    /// `sig_max` is the maximum conductivity of the PML.
     pub fn update_coeffs_pml(
         &self,
         _pml_parameters: PmlParameters,
@@ -131,6 +129,45 @@ impl MaterialRegions {
             full_bb.merge(bb);
         }
         full_bb
+    }
+
+    /// Compute a material grid with the dimensions of `n_cells` where all material regions
+    /// are centered at the middle of the grid.
+    ///
+    /// `obj_offset` gets multiplied to each region individually before being voxelized.
+    /// Voxels whose origin don't intersect with any region are assigned `default_mat`
+    pub fn compute_material_grid(
+        &self,
+        n_cells: GridIndex,
+        cell_size: Vect,
+        default_mat: ElectricMaterial,
+        obj_offset: Pose,
+    ) -> Vec<ElectricMaterial> {
+        let cell_count = grid_index_to_array(n_cells).iter().product::<Index>()
+            as usize;
+        let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
+
+        let grid_center = vect_to_3d(
+            grid_index_as_vect(n_cells) * cell_size / 2., Vec3::ZERO
+        );
+        let regions_center = self.compute_bounding_box().center();
+        let offset = obj_offset.append_translation(grid_center - regions_center);
+
+        // TODO: par_iter
+        for (i, mat) in mats.iter_mut().enumerate() {
+            let grid_idx = flat_idx_to_grid_index(i as u32, n_cells);
+            let pos = vect_to_3d(
+                grid_index_as_vect(grid_idx) * cell_size, Vec3::ZERO
+            );
+            *mat = self.regions.iter()
+                .find_map(|(s, pose, m)| {
+                    let p = pose * offset;
+                    s.contains_point(&p, pos).then_some(*m)
+                })
+                .unwrap_or(default_mat);
+        }
+
+        mats
     }
 }
 
