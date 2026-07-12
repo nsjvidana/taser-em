@@ -66,9 +66,9 @@ impl YeeGrid {
     /// Voxelize material regions and compute PML update coefficients.
     pub fn update_coeffs_pml(
         &self,
-        pml_parameters: PmlParameters,
-        scene_transform: Pose3,
-        dt: Real
+        _pml_parameters: PmlParameters,
+        _scene_transform: Pose3,
+        _dt: Real
     ) -> (GridIndex, Vec<PmlCoefficients2>) {
         todo!()
     }
@@ -169,6 +169,8 @@ impl MaterialRegions {
             let pos = vect_to_3d(
                 grid_index_as_vect(grid_idx) * cell_size, Vec3::ZERO
             );
+            // TODO: account for staggered components
+
             *mat = self.regions.iter()
                 .find_map(|(s, pose, m)| {
                     let p = pose * offset;
@@ -285,13 +287,13 @@ impl LayerWidths {
 
     #[inline]
     pub fn iter_axes(&self) -> impl Iterator<Item = (SpatialAxis, &[Index; 2])> {
-        SpatialAxis::ALL_AXES.into_iter()
+        SpatialAxis::ALL_SPATIAL.into_iter()
             .zip(self.widths.iter())
     }
 
     #[inline]
     pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (SpatialAxis, &mut [Index; 2])> {
-        SpatialAxis::ALL_AXES.into_iter()
+        SpatialAxis::ALL_SPATIAL.into_iter()
             .zip(self.widths.iter_mut())
     }
 }

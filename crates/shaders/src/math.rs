@@ -110,10 +110,15 @@ pub enum SpatialAxis {
 
 impl SpatialAxis {
     /// All spatial axes in an array of [`DIM`] elements.
-    pub const ALL_AXES: [Self; DIM] = cfg_select! {
+    pub const ALL_SPATIAL: [Self; DIM] = cfg_select! {
         feature = "dim1" => [Self::Z],
         feature = "dim2" => [Self::X, Self::Y],
         feature = "dim3" => [Self::X, Self::Y, Self::Z],
+    };
+    pub const ALL_AXES: [Axis; DIM] = cfg_select! {
+        feature = "dim1" => [Axis::Z],
+        feature = "dim2" => [Axis::X, Axis::Y],
+        feature = "dim3" => [Axis::X, Axis::Y, Axis::Z],
     };
 
     /// Efficiently check if an [`Axis`] is a spatial axis.
