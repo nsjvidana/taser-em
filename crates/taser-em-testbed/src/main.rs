@@ -40,7 +40,7 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
         cell_size,
         PolarizationMode::TransverseMagnetic,
         mat_regions,
-        NonZeroU32::new(5).unwrap(),
+        NonZeroU32::new(3).unwrap(),
         LayerWidths::splat(10)
     );
     let solver = FdtdSolver::new(

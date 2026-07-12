@@ -187,6 +187,8 @@ impl YeeGrid {
                 coeff.en_coeffs[s_axis_idx] = mats[i].eps_r[axis].recip();
             }
         }
+        println!("{:?}", coeffs);
+        println!("----");
 
         (n_cells, coeffs)
     }
@@ -329,7 +331,7 @@ impl MaterialRegions {
             .product::<Index>();
         let mut grid_new = vec![ElectricMaterial::FREE_SPACE; cell_count_new as usize];
 
-        let kernel = grid_cells_iter!(grid_index_from_array([downscale_factor; DIM]))
+        let kernel_cells = grid_cells_iter!(grid_index_from_array([downscale_factor; DIM]))
             .map(|t| grid_index_from_array(t.into()))
             .collect::<Vec<_>>();
         let n_cells3 = grid_index_to_3d(n_cells, UVec3::ONE);
@@ -337,9 +339,9 @@ impl MaterialRegions {
             let idx = flat_idx_to_grid_index(i, n_cells_new) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
-            for k in kernel.iter() {
+            for k in kernel_cells.iter() {
                 let k_idx = idx + k;
-                let k_idx3 = grid_index_to_3d(k_idx, UVec3::ONE);
+                let k_idx3 = grid_index_to_3d(k_idx, UVec3::ZERO);
                 if k_idx3.cmplt(n_cells3).all() {
                     let k_i = grid_index_to_flat_idx(k_idx, n_cells) as usize;
                     mat_sum.mu_r += grid[k_i].mu_r;

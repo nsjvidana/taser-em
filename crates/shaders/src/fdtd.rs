@@ -171,7 +171,7 @@ pub struct GridParameters2 {
     pub _padding1: u32,
 }
 /// Update coefficients for H, D, and E fields with a UPML
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct PmlCoefficients2 {
     pub h_coeffs: [[f32; 2 + DIM - 1]; DIM],

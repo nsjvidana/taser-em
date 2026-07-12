@@ -99,10 +99,10 @@ impl FdtdSolver {
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
         let flat_idx_incrs = {
             let mut incrs = UVec3::ZERO;
-            for spatial_axis in SpatialAxis::ALL_SPATIAL {
+            for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter().zip(SpatialAxis::ALL_AXES) {
                 let mut grid_incr = GridIndex::default();
                     grid_incr[spatial_axis] = 1;
-                incrs[Axis::from(spatial_axis)] = grid_index_to_flat_idx(grid_incr, n_cells);
+                incrs[axis] = grid_index_to_flat_idx(grid_incr, n_cells);
             }
             incrs
         };
