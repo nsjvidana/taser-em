@@ -6,17 +6,17 @@ use std::num::NonZeroI32;
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
+use crate::grid::{LayerWidths, YeeGrid};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
 use glamx::{Pose3, UVec3, Vec3, Vec4};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
-use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::fdtd::{GridParameters2, IntegrationTerms, PmlCoefficients2};
-use taser_em_shaders::math::{grid_index_to_3d, grid_index_to_array, grid_index_to_flat_idx, vect_to_3d, vect_from_array, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::Axis;
-use crate::grid::{LayerWidths, YeeGrid};
+use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_from_array, vect_to_3d, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -116,7 +116,7 @@ impl FdtdSolver {
                 grid_params: GridParameters2 {
                     flat_idx_incrs,
                     polarization_mode: self.grid.polarization_mode as u32,
-                    n_cells: grid_index_to_3d(n_cells, UVec3::ONE),
+                    n_cells: n_cells_to_3d(n_cells),
                     d: vect_to_3d(self.grid.cell_size, Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,

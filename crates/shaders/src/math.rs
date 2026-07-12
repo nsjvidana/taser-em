@@ -236,6 +236,18 @@ pub fn vect_to_3d(v: Vect, mask: Vec3) -> Vec3 {
     v
 }
 
+/// Helper function for converting the dimensions of a grid into a 3D vector
+#[inline]
+pub fn n_cells_to_3d(n_cells: GridIndex) -> UVec3 {
+    grid_index_to_3d(n_cells, UVec3::ONE)
+}
+
+/// Helper function for converting the index of a cell in a grid into a 3D vector index
+#[inline]
+pub fn cell_idx_to_3d(cell_idx: GridIndex) -> UVec3 {
+    grid_index_to_3d(cell_idx, UVec3::ZERO)
+}
+
 #[inline]
 pub fn vect_to_array(v: Vect) -> [Real; DIM] {
     #[cfg(feature = "dim1")]
@@ -287,6 +299,8 @@ pub fn to_grid_index(v: Vect) -> GridIndex {
     v.as_uvec3()
 }
 
+/// Convert [`GridIndex`] into [`Vect`] using `as` keyword. So this effectively floors all components
+/// of `idx`.
 #[inline]
 pub fn grid_index_as_vect(idx: GridIndex) -> Vect {
     #[cfg(feature = "dim1")]

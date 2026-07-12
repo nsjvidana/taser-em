@@ -1,11 +1,11 @@
 use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
-use glamx::{Pose3, UVec3, Vec3};
+use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::PmlCoefficients2;
-use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_3d, grid_index_to_array, grid_index_to_flat_idx, to_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
+use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, to_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -88,7 +88,7 @@ impl YeeGrid {
             grading_order: pml_grading_order
         } = pml_parameters;
         let n_cells = pml_widths.sum_with_n_cells(self.n_cells());
-        let n_cells3 = grid_index_to_3d(n_cells, UVec3::ONE);
+        let n_cells3 = n_cells_to_3d(n_cells);
 
         // Voxelize material regions
         let res = self.material_resolution.get();
@@ -134,7 +134,7 @@ impl YeeGrid {
         // TODO: use par_iter here
         for (i, coeff) in coeffs.iter_mut().enumerate() {
             let idx = flat_idx_to_grid_index(i as u32, n_cells);
-            let sig_idx = grid_index_to_3d(idx * 2, UVec3::ZERO).to_array()
+            let sig_idx = cell_idx_to_3d(idx * 2).to_array()
                 .map(|i| i as usize);
 
             let dn_sigs = Vec3::from_array(
@@ -222,6 +222,7 @@ pub enum PolarizationMode {
     TransverseElectric = 1,
 }
 
+/// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
 #[derive(Default)]
 pub struct MaterialRegions {
     pub regions: Vec<(SharedShape, Pose, ElectricMaterial)>,
@@ -334,14 +335,14 @@ impl MaterialRegions {
         let kernel_cells = grid_cells_iter!(grid_index_from_array([downscale_factor; DIM]))
             .map(|t| grid_index_from_array(t.into()))
             .collect::<Vec<_>>();
-        let n_cells3 = grid_index_to_3d(n_cells, UVec3::ONE);
+        let n_cells3 = n_cells_to_3d(n_cells);
         for i in 0..cell_count_new {
             let idx = flat_idx_to_grid_index(i, n_cells_new) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
             for k in kernel_cells.iter() {
                 let k_idx = idx + k;
-                let k_idx3 = grid_index_to_3d(k_idx, UVec3::ZERO);
+                let k_idx3 = cell_idx_to_3d(k_idx);
                 if k_idx3.cmplt(n_cells3).all() {
                     let k_i = grid_index_to_flat_idx(k_idx, n_cells) as usize;
                     mat_sum.mu_r += grid[k_i].mu_r;
