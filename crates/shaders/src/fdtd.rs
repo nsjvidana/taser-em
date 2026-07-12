@@ -20,7 +20,9 @@ const FIELD_AXES2: core::ops::RangeInclusive<usize> = cfg_select! {
 
 // TODO: Docs, remove the "2" from the struct names, delete fdtd1 module, try using Vect for vector field
 #[spirv_bindgen]
-#[spirv(compute(threads(64)))]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn fdtd_lossy(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
