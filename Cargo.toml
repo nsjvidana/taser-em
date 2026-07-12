@@ -32,6 +32,7 @@ khal-builder = "0.2.0"
 khal-std = "0.2.0"
 glamx = { version = "0.3", features = ["bytemuck"] }
 bytemuck = "1"
+itertools = "0.15"
 include_dir = "0.7"
 derivative = "2"
 

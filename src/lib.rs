@@ -29,6 +29,19 @@ pub const MU_0: f32 = 1.256637e-6;
 /// Free space wave impedance
 pub const IMPEDANCE_0: f32 = 376.73032;
 
+/// Constructs an iterator of all cell positions in a grid of dimensions `$n_cells`.
+/// The cell positions are given as tuples.
+#[macro_export]
+macro_rules! grid_cells_iter {
+    ($n_cells:expr) => {
+        cfg_select! {
+            feature = "dim1" => itertools::iproduct!(0..$n_cells),
+            feature = "dim2" => itertools::iproduct!(0..$n_cells[SpatialAxis::X], 0..$n_cells[SpatialAxis::Y]),
+            feature = "dim3" => itertools::iproduct!(0..$n_cells[SpatialAxis::X], 0..$n_cells[SpatialAxis::Y], 0..$n_cells[SpatialAxis::Z]),
+        }
+    };
+}
+
 macro_rules! shader_struct {
     ($name:ident, $inner:ty) => {
         #[derive(Shader)]
@@ -214,8 +227,12 @@ pub struct ElectricMaterial {
 
 impl ElectricMaterial {
     /// A material representing free space
-    pub const FREE_SPACE: ElectricMaterial = ElectricMaterial {
+    pub const FREE_SPACE: Self = Self {
         eps_r: Vec3::ONE, mu_r: Vec3::ONE
+    };
+    /// An invalid electric material with all values set to zero
+    pub const ZERO: Self = Self {
+        eps_r: Vec3::ZERO, mu_r: Vec3::ZERO
     };
 
     /// Get refractive index in a specific axis direction.

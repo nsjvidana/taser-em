@@ -31,6 +31,7 @@ parry3d.workspace = true
 khal.workspace = true
 taser-em-shaders = { package = "taser-em-shaders2d", path = "../shaders/taser-em-shaders2d" }
 glamx.workspace = true
+itertools.workspace = true
 include_dir.workspace = true
 derivative.workspace = true
 

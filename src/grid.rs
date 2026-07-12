@@ -1,10 +1,11 @@
-use crate::{ElectricMaterial, PmlParameters};
-use glamx::Vec3;
+use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
+use glamx::{UVec3, Vec3};
+use itertools::iproduct;
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::PmlCoefficients2;
-use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, to_grid_index, vec3_to_vect, vect_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_3d, grid_index_to_array, grid_index_to_flat_idx, to_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 pub struct YeeGrid {
@@ -168,6 +169,50 @@ impl MaterialRegions {
         }
 
         mats
+    }
+
+    /// Downscale a material grid using a box filter. Out-of-bounds material cells are ignored.
+    ///
+    /// Returns the dimensions of the new grid, and the new grid's data
+    pub fn downscale_material_grid(
+        grid: &[ElectricMaterial],
+        n_cells: GridIndex,
+        convolution_diameter: u32,
+    ) -> (GridIndex, Vec<ElectricMaterial>) {
+        let n_cells_new = grid_index_from_array(
+            grid_index_to_array(n_cells)
+                .map(|dim| dim.div_ceil(convolution_diameter))
+        );
+        let cell_count_new = grid_index_to_array(n_cells_new).iter()
+            .product::<Index>();
+        let mut grid_new = vec![ElectricMaterial::FREE_SPACE; cell_count_new as usize];
+
+        let kernel = grid_cells_iter!(grid_index_from_array([convolution_diameter; DIM]))
+            .map(|t| grid_index_from_array(t.into()))
+            .collect::<Vec<_>>();
+        let n_cells3 = grid_index_to_3d(n_cells, UVec3::ONE);
+        for i in 0..cell_count_new {
+            let idx = flat_idx_to_grid_index(i, n_cells_new) * convolution_diameter;
+            let mut mat_sum = ElectricMaterial::ZERO;
+            let mut n_sums = 0;
+            for k in kernel.iter() {
+                let k_idx = idx + k;
+                let k_idx3 = grid_index_to_3d(k_idx, UVec3::ONE);
+                if k_idx3.cmplt(n_cells3).all() {
+                    let k_i = grid_index_to_flat_idx(k_idx, n_cells) as usize;
+                    mat_sum.mu_r += grid[k_i].mu_r;
+                    mat_sum.eps_r += grid[k_i].eps_r;
+                    n_sums += 1;
+                }
+            }
+            let n_sums = n_sums as f32;
+            grid_new[i as usize] = ElectricMaterial {
+                mu_r: mat_sum.mu_r / n_sums,
+                eps_r: mat_sum.eps_r / n_sums,
+            };
+        }
+
+        (n_cells_new, grid_new)
     }
 }
 
