@@ -10,3 +10,4 @@ edition.workspace = true
 taser-em1d = { path = "../taser-em1d" }
 kiss3d = "0.44.0"
 khal.workspace = true
+glamx.workspace = true

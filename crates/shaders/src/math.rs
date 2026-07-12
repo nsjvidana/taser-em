@@ -35,6 +35,33 @@ mod dim_types {
     pub type GridIndex = UVec3;
 }
 
+pub trait VectExt {
+    fn splat(value: Real) -> Self;
+    fn zero() -> Self;
+    fn one() -> Self;
+}
+
+impl VectExt for Vect {
+    /// Create a vector field element with all its components set to `value`
+    #[inline]
+    fn splat(value: Real) -> Self {
+        cfg_select! {
+            feature = "dim1" => value,
+            _ => Self::splat(value)
+        }
+    }
+    /// Create a vector field element with all its components set to `0.`
+    #[inline]
+    fn zero() -> Self {
+        Self::splat(0.)
+    }
+    /// Create a vector field element with all its components set to `1.`
+    #[inline]
+    fn one() -> Self {
+        Self::splat(1.)
+    }
+}
+
 /// A helper enum for indexing into various things (e.g. indexing into components of [`Vect`] and [`GridIndex`])
 ///
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)

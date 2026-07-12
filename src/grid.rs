@@ -44,6 +44,7 @@ impl YeeGrid {
         polarization_mode: PolarizationMode,
         material_regions: MaterialRegions,
         material_resolution: NonZeroU32,
+        spacer_region_widths: LayerWidths,
     ) -> Self {
         Self {
             cell_size,
@@ -51,7 +52,7 @@ impl YeeGrid {
             material_regions,
             material_resolution,
             background_material: ElectricMaterial::FREE_SPACE,
-            spacer_region_widths: LayerWidths::default(),
+            spacer_region_widths,
         }
     }
 
@@ -204,12 +205,13 @@ impl YeeGrid {
 ///
 /// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
 /// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[repr(u32)]
 pub enum PolarizationMode {
     /// 1D: Ey, Hx
     /// 2D: Ex, Ey, Hz
     /// 3D: All axes
+    #[default]
     TransverseMagnetic = 0,
     /// 1D: Ex, Hy
     /// 2D: Ez, Hx, Hy

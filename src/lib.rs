@@ -9,7 +9,7 @@ use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadabl
 use crate::prelude::GpuResult;
 use derivative::Derivative;
 use glamx::{Pose3, UVec3, Vec3, Vec4};
-use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
+use khal::backend::{Backend, Buffer, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
@@ -72,7 +72,6 @@ pub struct FdtdSolver {
     pub grid: YeeGrid,
     pub pml_parameters: PmlParameters,
     pub dt: Real,
-    pub buffers: Option<FdtdSolverBuffers>,
 }
 
 impl FdtdSolver {
@@ -83,15 +82,14 @@ impl FdtdSolver {
             grid,
             pml_parameters: PmlParameters::new(dt),
             dt,
-            buffers: None
         })
     }
 
-    /// Prepares for simulating by:
-    /// - discretizing shapes
-    /// - calculating update coefficients
-    /// - initializing buffers
-    pub fn prepare_for_simulation(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
+    /// Creates GPU buffers for simulating. Does the following:
+    /// - discretize shapes
+    /// - calculate update coefficients
+    /// - initialize buffers and return them
+    pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
         let (n_cells, grid_coeffs) = self.grid
             .update_coeffs_pml(self.pml_parameters, Pose3::IDENTITY, self.dt);
 
@@ -123,6 +121,28 @@ impl FdtdSolver {
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
             }
+        )
+    }
+
+    /// Submit a simulation step into `pass` using the GPU buffers `buffers`.
+    pub fn submit_step(&self, buffers: &mut FdtdSolverBuffers, pass: &mut GpuPass) -> GpuResult<()> {
+        let FdtdSolverBuffers {
+            h,
+            dn,
+            en,
+            int_terms,
+            grid_coeffs,
+            grid_params,
+        } = buffers;
+        self.kernel.call(
+            pass,
+            h.buffer.len(),
+            &mut h.buffer,
+            &mut dn.buffer,
+            &mut en.buffer,
+            int_terms,
+            grid_coeffs,
+            grid_params,
         )
     }
 }

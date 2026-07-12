@@ -1,10 +1,10 @@
+use std::num::NonZeroU32;
+use glamx::Vec3;
 use khal::backend::{Backend, Encoder, GpuBackend, WebGpu};
-use khal::Shader;
-use kiss3d::glamx::Vec4;
-use taser_em1d::gpu_util::CreateGpuBuffer;
-use taser_em1d::shaders::fdtd::{GridParameters2, IntegrationTerms, PmlCoefficients2};
-use taser_em1d::FdtdWithLoss;
+use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, C_0};
+use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
+use taser_em1d::shaders::math::{Vect, VectExt};
 
 const WARMUP_ITERS: usize = 10;
 const BENCH_ITERS: usize = 1000;
@@ -24,29 +24,37 @@ async fn main() {
 }
 
 fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
-    let n_cells = 100;
-    let mut h = vec![Vec4::default(); n_cells].create_gpu_buffer(backend)?;
-    let mut dn = vec![Vec4::default(); n_cells].create_gpu_buffer(backend)?;
-    let mut en = vec![Vec4::default(); n_cells].create_gpu_buffer(backend)?;
-    let mut int_terms = vec![IntegrationTerms::default(); n_cells].create_gpu_buffer(backend)?;
-    let grid_coeffs = vec![PmlCoefficients2::default(); n_cells].create_gpu_buffer(backend)?;
-    let grid = GridParameters2::default().create_gpu_uniform(backend)?;
-    let fdtd = FdtdWithLoss::from_backend(backend)?;
+    let stability = FdtdStability::default();
+    let f_max = 2.4e9; // 2.4 GHz
+    let cell_size = stability.cell_size_from_min_wavelength(f_max);
+
+    let mut mat_regions = MaterialRegions::new();
+    let wavelen = C_0 / f_max;
+    let mat = ElectricMaterial {
+        eps_r: Vec3::splat(7.),
+        mu_r: Vec3::splat(1.),
+        sig: Vec3::splat(1e-15),
+    };
+    mat_regions.fill_region(Vect::splat(0.), Vect::splat(wavelen * 2.), mat);
+    let grid = YeeGrid::new(
+        cell_size,
+        PolarizationMode::TransverseMagnetic,
+        mat_regions,
+        NonZeroU32::new(5).unwrap(),
+        LayerWidths::splat(10)
+    );
+    let solver = FdtdSolver::new(
+        backend,
+        grid,
+        stability.cfl_condition(cell_size),
+    )?;
 
     // Warmup
+    let mut buffers = solver.compute_and_create_buffers(backend)?;
     for _ in 0..WARMUP_ITERS {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("fdtd warmup", None);
-        fdtd.call(
-            &mut pass,
-            n_cells,
-            &mut h,
-            &mut dn,
-            &mut en,
-            &mut int_terms,
-            &grid_coeffs,
-            &grid,
-        )?;
+        solver.submit_step(&mut buffers, &mut pass)?;
         drop(pass);
         backend.submit(encoder)?;
         backend.synchronize()?;
@@ -56,17 +64,8 @@ fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     let start = std::time::Instant::now();
     for _ in 0..BENCH_ITERS {
         let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("fdtd", None);
-        fdtd.call(
-            &mut pass,
-            n_cells,
-            &mut h,
-            &mut dn,
-            &mut en,
-            &mut int_terms,
-            &grid_coeffs,
-            &grid,
-        )?;
+        let mut pass = encoder.begin_pass("fdtd bench", None);
+        solver.submit_step(&mut buffers, &mut pass)?;
         drop(pass);
         backend.submit(encoder)?;
         backend.synchronize()?;
