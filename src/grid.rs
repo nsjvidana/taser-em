@@ -30,6 +30,15 @@ pub struct YeeGrid {
 }
 
 impl YeeGrid {
+    /// Spatial offset of each component in the Dn field at each cell
+    pub const DN_OFFSETS: [Vec3; MAX_DIM] = [Vec3::X, Vec3::Y, Vec3::Z];
+    /// Spatial offset of each component in the H field at each cell
+    pub const H_OFFSETS: [Vec3; MAX_DIM] = [
+        Vec3::new(0., 1., 1.),
+        Vec3::new(1., 0., 1.),
+        Vec3::new(1., 1., 0.),
+    ];
+
     pub fn new(
         cell_size: Vect,
         polarization_mode: PolarizationMode,
@@ -146,7 +155,7 @@ impl MaterialRegions {
     ///
     /// `obj_offset` gets multiplied to each region individually before being voxelized.
     /// Voxels whose origin don't intersect with any region are assigned `default_mat`
-    pub fn compute_material_grid(
+    pub fn material_yee_grid(
         &self,
         n_cells: GridIndex,
         cell_size: Vect,
@@ -163,20 +172,31 @@ impl MaterialRegions {
         let regions_center = self.compute_bounding_box().center();
         let offset = obj_offset.append_translation(grid_center - regions_center);
 
+        let cell_size3 = vect_to_3d(cell_size, Vec3::ZERO);
+        let dn_offsets = YeeGrid::DN_OFFSETS.map(|v| v * cell_size3);
+        let h_offsets = YeeGrid::H_OFFSETS.map(|v| v * cell_size3);
+        let mat_at_pt = |pos| {
+            self.regions.iter()
+                .find_map(|(s, pose, m)| {
+                    let p = pose * offset;
+                    s.contains_point(&p, pos).then_some(m)
+                })
+                .unwrap_or(&default_mat)
+        };
+
         // TODO: par_iter
         for (i, mat) in mats.iter_mut().enumerate() {
             let grid_idx = flat_idx_to_grid_index(i as u32, n_cells);
             let pos = vect_to_3d(
                 grid_index_as_vect(grid_idx) * cell_size, Vec3::ZERO
             );
-            // TODO: account for staggered components
-
-            *mat = self.regions.iter()
-                .find_map(|(s, pose, m)| {
-                    let p = pose * offset;
-                    s.contains_point(&p, pos).then_some(*m)
-                })
-                .unwrap_or(default_mat);
+            let dn_mat = dn_offsets.map(|off| mat_at_pt(pos + off));
+            let h_mat = h_offsets.map(|off| mat_at_pt(pos + off));
+            *mat = ElectricMaterial {
+                eps_r: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].eps_r[i] })),
+                sig: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].sig[i] })),
+                mu_r: Vec3::from_array(std::array::from_fn(|i| { h_mat[i].mu_r[i] })),
+            };
         }
 
         mats
