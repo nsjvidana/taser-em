@@ -8,7 +8,7 @@ pub use taser_em_shaders as shaders;
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
-use glamx::{UVec3, Vec3, Vec4};
+use glamx::{Pose3, UVec3, Vec3, Vec4};
 use khal::backend::{Backend, Encoder, GpuBackend, GpuBuffer, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
@@ -93,7 +93,7 @@ impl FdtdSolver {
     /// - initializing buffers
     pub fn prepare_for_simulation(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
         let (n_cells, grid_coeffs) = self.grid
-            .update_coeffs_pml(self.pml_parameters, self.dt);
+            .update_coeffs_pml(self.pml_parameters, Pose3::IDENTITY, self.dt);
 
         let cell_count = grid_index_to_array(n_cells)
             .iter()
@@ -222,17 +222,19 @@ pub struct ElectricMaterial {
     /// Relative permittivity
     pub eps_r: Vec3,
     /// Relative permeability
-    pub mu_r: Vec3
+    pub mu_r: Vec3,
+    /// Conductivity of the material (S/m)
+    pub sig: Vec3,
 }
 
 impl ElectricMaterial {
     /// A material representing free space
     pub const FREE_SPACE: Self = Self {
-        eps_r: Vec3::ONE, mu_r: Vec3::ONE
+        eps_r: Vec3::ONE, mu_r: Vec3::ONE, sig: Vec3::ZERO,
     };
     /// An invalid electric material with all values set to zero
     pub const ZERO: Self = Self {
-        eps_r: Vec3::ZERO, mu_r: Vec3::ZERO
+        eps_r: Vec3::ZERO, mu_r: Vec3::ZERO, sig: Vec3::ZERO,
     };
 
     /// Get refractive index in a specific axis direction.

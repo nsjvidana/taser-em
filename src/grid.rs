@@ -1,9 +1,9 @@
 use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
-use glamx::{UVec3, Vec3};
-use itertools::iproduct;
+use glamx::{Pose3, UVec3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
+use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::PmlCoefficients2;
 use taser_em_shaders::math::{flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_3d, grid_index_to_array, grid_index_to_flat_idx, to_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
 
@@ -17,6 +17,8 @@ pub struct YeeGrid {
     /// Objects/devices within the simulation, stored as raw shapes.
     /// These shapes get pixelized/voxelized before running the simulation.
     pub material_regions: MaterialRegions,
+    /// Resolution at which material regions will be smoothed
+    pub material_resolution: NonZeroU32,
     /// The "default" material in grid cells whose material isn't
     /// explicitly set by the user. (e.g. free space)
     pub background_material: ElectricMaterial,
@@ -28,11 +30,17 @@ pub struct YeeGrid {
 }
 
 impl YeeGrid {
-    pub fn new(cell_size: Vect, polarization_mode: PolarizationMode, material_regions: MaterialRegions) -> Self {
+    pub fn new(
+        cell_size: Vect,
+        polarization_mode: PolarizationMode,
+        material_regions: MaterialRegions,
+        material_resolution: NonZeroU32,
+    ) -> Self {
         Self {
             cell_size,
             polarization_mode,
             material_regions,
+            material_resolution,
             background_material: ElectricMaterial::FREE_SPACE,
             spacer_region_widths: LayerWidths::default(),
         }
@@ -55,11 +63,12 @@ impl YeeGrid {
             .sum_with_n_cells(materials_n_cells)
     }
 
-    /// Discretize shapes and compute PML update coefficients.
+    /// Voxelize material regions and compute PML update coefficients.
     pub fn update_coeffs_pml(
         &self,
-        _pml_parameters: PmlParameters,
-        _dt: Real
+        pml_parameters: PmlParameters,
+        scene_transform: Pose3,
+        dt: Real
     ) -> (GridIndex, Vec<PmlCoefficients2>) {
         todo!()
     }
@@ -177,22 +186,23 @@ impl MaterialRegions {
     pub fn downscale_material_grid(
         grid: &[ElectricMaterial],
         n_cells: GridIndex,
-        convolution_diameter: u32,
+        downscale_factor: NonZeroU32,
     ) -> (GridIndex, Vec<ElectricMaterial>) {
+        let downscale_factor = downscale_factor.get();
         let n_cells_new = grid_index_from_array(
             grid_index_to_array(n_cells)
-                .map(|dim| dim.div_ceil(convolution_diameter))
+                .map(|dim| dim.div_ceil(downscale_factor))
         );
         let cell_count_new = grid_index_to_array(n_cells_new).iter()
             .product::<Index>();
         let mut grid_new = vec![ElectricMaterial::FREE_SPACE; cell_count_new as usize];
 
-        let kernel = grid_cells_iter!(grid_index_from_array([convolution_diameter; DIM]))
+        let kernel = grid_cells_iter!(grid_index_from_array([downscale_factor; DIM]))
             .map(|t| grid_index_from_array(t.into()))
             .collect::<Vec<_>>();
         let n_cells3 = grid_index_to_3d(n_cells, UVec3::ONE);
         for i in 0..cell_count_new {
-            let idx = flat_idx_to_grid_index(i, n_cells_new) * convolution_diameter;
+            let idx = flat_idx_to_grid_index(i, n_cells_new) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
             for k in kernel.iter() {
@@ -202,6 +212,7 @@ impl MaterialRegions {
                     let k_i = grid_index_to_flat_idx(k_idx, n_cells) as usize;
                     mat_sum.mu_r += grid[k_i].mu_r;
                     mat_sum.eps_r += grid[k_i].eps_r;
+                    mat_sum.sig += grid[k_i].sig;
                     n_sums += 1;
                 }
             }
@@ -209,6 +220,7 @@ impl MaterialRegions {
             grid_new[i as usize] = ElectricMaterial {
                 mu_r: mat_sum.mu_r / n_sums,
                 eps_r: mat_sum.eps_r / n_sums,
+                sig: mat_sum.sig / n_sums,
             };
         }
 
