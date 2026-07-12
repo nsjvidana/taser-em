@@ -229,7 +229,7 @@ use khal_std::glamx::Vec3Swizzles;
 #[allow(unused_variables)]
 pub fn vect_to_3d(v: Vect, mask: Vec3) -> Vec3 {
     #[cfg(feature = "dim1")]
-    return mask.with_x(v);
+    return mask.with_z(v);
     #[cfg(feature = "dim2")]
     return mask.with_xy(v);
     #[cfg(feature = "dim3")]
@@ -305,7 +305,7 @@ pub fn grid_index_as_vect(idx: GridIndex) -> Vect {
 #[allow(unused_variables)]
 pub fn grid_index_to_3d(idx: GridIndex, mask: UVec3) -> UVec3 {
     #[cfg(feature = "dim1")]
-    return mask.with_x(idx);
+    return mask.with_z(idx);
     #[cfg(feature = "dim2")]
     return mask.with_xy(idx);
     #[cfg(feature = "dim3")]
