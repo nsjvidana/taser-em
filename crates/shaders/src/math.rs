@@ -244,6 +244,27 @@ pub fn vec4_to_vect(v: Vec4) -> Vect {
     }
 }
 
+/// Convert [`Vect`] to [`GridIndex`] using `as` keyword
+#[inline]
+pub fn to_grid_index(v: Vect) -> GridIndex {
+    #[cfg(feature = "dim1")]
+    return v as GridIndex;
+    #[cfg(feature = "dim2")]
+    return v.as_uvec2();
+    #[cfg(feature = "dim3")]
+    v.as_uvec3()
+}
+
+#[inline]
+pub fn grid_index_as_vect(idx: GridIndex) -> Vect {
+    #[cfg(feature = "dim1")]
+    return idx as Vect;
+    #[cfg(feature = "dim2")]
+    return idx.as_vec2();
+    #[cfg(feature = "dim3")]
+    idx.as_vec3()
+}
+
 /// Converts a [`GridIndex`] to [`UVec3`]
 /// `mask` sets the components that `self` don't already have.
 ///
@@ -257,17 +278,6 @@ pub fn grid_index_to_3d(idx: GridIndex, mask: UVec3) -> UVec3 {
     return mask.with_xy(idx);
     #[cfg(feature = "dim3")]
     idx
-}
-
-/// Convert [`Vect`] to [`GridIndex`] using `as` keyword
-#[inline]
-pub fn to_grid_index(v: Vect) -> GridIndex {
-    #[cfg(feature = "dim1")]
-    return v as GridIndex;
-    #[cfg(feature = "dim2")]
-    return v.as_uvec2();
-    #[cfg(feature = "dim3")]
-    v.as_uvec3()
 }
 
 #[inline]
