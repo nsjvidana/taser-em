@@ -73,13 +73,120 @@ impl YeeGrid {
     }
 
     /// Voxelize material regions and compute PML update coefficients.
+    ///
+    /// Returns dimensions of the grid and the coefficients in a flattened [`DIM`]-dimensional array.
     pub fn update_coeffs_pml(
         &self,
-        _pml_parameters: PmlParameters,
-        _scene_transform: Pose3,
-        _dt: Real
+        pml_parameters: PmlParameters,
+        scene_transform: Pose3,
+        dt: Real
     ) -> (GridIndex, Vec<PmlCoefficients2>) {
-        todo!()
+        let PmlParameters {
+            widths: pml_widths,
+            sig_max: pml_sig_max,
+            grading_order: pml_grading_order
+        } = pml_parameters;
+        let n_cells = pml_widths.sum_with_n_cells(self.n_cells());
+        let n_cells3 = grid_index_to_3d(n_cells, UVec3::ONE);
+
+        // Voxelize material regions
+        let res = self.material_resolution.get();
+        let fine_n_cells = n_cells * res;
+        let fine_grid = self.material_regions.material_yee_grid(
+            fine_n_cells,
+            self.cell_size / res as f32,
+            self.background_material,
+            scene_transform
+        );
+        let (_n_cells, mats) = MaterialRegions::downscale_material_grid(
+            &fine_grid,
+            fine_n_cells,
+            self.material_resolution
+        );
+        debug_assert!(n_cells == _n_cells);
+
+        // PML conductivity terms on all spatial axes.
+        let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
+            if let Ok(s_axis) = SpatialAxis::try_from(axis) {
+                (0..=n_cells[s_axis]*2)
+                    .map(|i| {
+                        let lo_dist = i as Real / 2.;
+                        let hi_dist = n_cells[s_axis] as Real - lo_dist;
+                        let [pml_lo, pml_hi] = pml_widths[s_axis]
+                            .map(|l| l as Real);
+                        let lo_interp = (1. - lo_dist / pml_lo).max(0.);
+                        let hi_interp = (1. - hi_dist / pml_hi).max(0.);
+                        let sig = pml_sig_max * (lo_interp + hi_interp).powi(pml_grading_order.get());
+                        if sig.is_finite() { sig } else { 0. }
+                    })
+                    .collect()
+            } else {
+                vec![0.; n_cells3[axis] as usize * 2]
+            }
+        });
+
+        let cell_count = n_cells3.element_product() as usize;
+        let mut coeffs = vec![PmlCoefficients2::default(); cell_count];
+        let inv_dt = dt.recip();
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
+        let c0_dt = C_0 * dt;
+        // TODO: use par_iter here
+        for (i, coeff) in coeffs.iter_mut().enumerate() {
+            let idx = flat_idx_to_grid_index(i as u32, n_cells);
+            let sig_idx = grid_index_to_3d(idx * 2, UVec3::ZERO).to_array()
+                .map(|i| i as usize);
+
+            let dn_sigs = Vec3::from_array(
+                std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i]])
+            );
+            let h_sigs = Vec3::from_array(
+                std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i] + 1])
+            );
+
+            for (s_axis_idx, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
+                .map(|s_a| s_a as usize)
+                .zip(SpatialAxis::ALL_AXES)
+            {
+                let axis1 = axis.permute();
+                let axis2 = axis1.permute();
+
+                let coeff_term0 = (
+                    inv_dt + ((h_sigs[axis1] + h_sigs[axis2]) / (2. * EPS_0)) +
+                        ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                ).recip();
+                let inv_mu_r_axis = mats[i].mu_r[axis].recip();
+                coeff.h_coeffs[s_axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
+                coeff.h_coeffs[s_axis_idx][1] = -coeff_term0 * C_0 * inv_mu_r_axis;
+                #[cfg(any(feature = "dim2", feature = "dim3"))]
+                {
+                    coeff.h_coeffs[s_axis_idx][2] = -coeff_term0 * c0_dt * h_sigs[axis] / EPS_0 * inv_mu_r_axis;
+                    #[cfg(feature = "dim3")]
+                    {
+                        coeff.h_coeffs[s_axis_idx][3] = -coeff_term0 * dt * h_sigs[axis1] * h_sigs[axis2] / (EPS_0 * EPS_0);
+                    }
+                }
+
+                let coeff_term0 = (
+                    inv_dt + ((dn_sigs[axis1] + dn_sigs[axis2]) / (2. * EPS_0)) +
+                        ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                ).recip();
+                let mat_sig_axis = mats[i].sig[axis];
+                coeff.dn_coeffs[s_axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
+                coeff.dn_coeffs[s_axis_idx][1] = coeff_term0 * C_0;
+                coeff.dn_coeffs[s_axis_idx][2] = -coeff_term0 * mat_sig_axis / EPS_0;
+                coeff.dn_coeffs[s_axis_idx][3] = -coeff_term0 * dn_sigs[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
+                #[cfg(any(feature = "dim2", feature = "dim3"))]
+                {
+                    coeff.dn_coeffs[s_axis_idx][4] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
+                    #[cfg(feature = "dim3")]
+                    {
+                        coeff.dn_coeffs[s_axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2];
+                    }
+                }
+            }
+        }
+
+        (n_cells, coeffs)
     }
 
     /// Resets all stored material data
