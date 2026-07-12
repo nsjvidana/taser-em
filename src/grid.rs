@@ -184,6 +184,7 @@ impl YeeGrid {
                         coeff.dn_coeffs[s_axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2];
                     }
                 }
+                coeff.en_coeffs[s_axis_idx] = mats[i].eps_r[axis].recip();
             }
         }
 

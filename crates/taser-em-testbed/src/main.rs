@@ -1,6 +1,6 @@
 use std::num::NonZeroU32;
 use glamx::Vec3;
-use khal::backend::{Backend, Encoder, GpuBackend, WebGpu};
+use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
 use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
@@ -14,7 +14,7 @@ async fn main() {
     let webgpu = WebGpu::default().await.unwrap();
     let backend = GpuBackend::WebGpu(webgpu);
 
-    let avg_time = benchmark(&backend).unwrap();
+    let avg_time = benchmark(&backend).await.unwrap();
 
     println!("FDTD Benchmark (1D)");
     println!("------------------------------");
@@ -23,7 +23,7 @@ async fn main() {
     println!("Total iterations {}", BENCH_ITERS);
 }
 
-fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
+async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     let stability = FdtdStability::default();
     let f_max = 2.4e9; // 2.4 GHz
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -70,5 +70,9 @@ fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
         backend.submit(encoder)?;
         backend.synchronize()?;
     }
-    Ok(start.elapsed().as_secs_f32() / BENCH_ITERS as f32)
+    let time = start.elapsed().as_secs_f32() / BENCH_ITERS as f32;
+    let mut out = vec![glamx::Vec4::ZERO; buffers.h.buffer.len()];
+    backend.slow_read_buffer(&buffers.h.buffer, &mut out).await?;
+    println!("{:?}", out);
+    Ok(time)
 }
