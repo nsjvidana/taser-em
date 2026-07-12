@@ -158,18 +158,6 @@ impl PmlParameters {
     }
 }
 
-shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
-
-#[derive(Default)]
-pub struct FdtdParameters1 {
-    pub dt: f32,
-    /// Number of grid cells (in each principal direction)
-    pub n_cells: GridIndex,
-    /// Size of each cell (in meters)
-    pub cell_size: Vect,
-    // TODO: E-field (or H field for current loops) Source enum
-}
-
 /// Helper struct containing parameters and functions for ensuring simulation stability.
 #[derive(Derivative, Clone)]
 #[derivative(Default)]
@@ -214,6 +202,19 @@ impl FdtdStability {
     }
 
     // pub fn dt_from_source(&self, source: FdtdSource) -> f32 {}
+}
+
+// TODO: remove this shader after testing it against FdtdLossy
+shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
+
+#[derive(Default)]
+pub struct FdtdParameters1 {
+    pub dt: f32,
+    /// Number of grid cells (in each principal direction)
+    pub n_cells: GridIndex,
+    /// Size of each cell (in meters)
+    pub cell_size: Vect,
+    // TODO: E-field (or H field for current loops) Source enum
 }
 
 /// Relative material properties
