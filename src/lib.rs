@@ -343,16 +343,25 @@ pub struct Fdtd1Buffers {
     pub grid: GpuBuffer<GridParameters>,
 }
 
+/// Inject energy into the simulation in various ways.
 #[derive(Clone, Debug)]
 pub enum Source {
+    /// Electric Dipole
     Dipole {
+        /// The position in space where the source should be injected
         position: Vect,
-        t_offset: f32,
+        /// How long to wait until the source should enable (in seconds)
+        t_start: f32,
+        /// Signal data points
         vals: Vec<f32>
     },
+    /// A plane wave traveling along an axis (positive direction)
     PlaneWave {
+        /// The axis along which the plane wave will travel.
         axis: SpatialAxis,
-        t_offset: f32,
+        /// How long to wait until the source should enable (in seconds)
+        t_start: f32,
+        /// Signal data points
         vals: Vec<f32>
     }
 }
@@ -396,7 +405,7 @@ impl Default for Source {
     fn default() -> Self {
         Self::Dipole {
             position: Default::default(),
-            t_offset: Default::default(),
+            t_start: Default::default(),
             vals: Default::default(),
         }
     }
