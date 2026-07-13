@@ -416,12 +416,12 @@ impl Source {
     ///
     /// # Panics
     /// When `f_max <= 0.` or when `dt <= 0.`
-    pub fn gaussian_max_f(&mut self, f_max: f32, amplitude: f32, dt: f32) -> Vec<f32> {
+    pub fn gaussian_max_f(f_max: f32, amplitude: f32, dt: f32) -> Vec<f32> {
         assert!(f_max > 0.0, "f_max must be > 0");
         let tau = core::f32::consts::FRAC_1_PI / f_max;
         let t_0 = 6. * tau;
         let approx_dur = 12. * tau;
-        self.function_data_points(dt, approx_dur, |t| {
+        Self::function_data_points(dt, approx_dur, |t| {
             amplitude * core::f32::consts::E.powf(-((t - t_0) / tau).powi(2))
         })
     }
@@ -430,7 +430,7 @@ impl Source {
     ///
     /// # Panics
     /// When `dt <= 0.` or `duration <= 0.`
-    pub fn function_data_points(&mut self, dt: f32, duration: f32, mut f: impl FnMut(f32) -> f32) -> Vec<f32> {
+    pub fn function_data_points(dt: f32, duration: f32, mut f: impl FnMut(f32) -> f32) -> Vec<f32> {
         assert!(dt > 0.0, "dt must be > 0");
         assert!(duration > 0.0, "source duration must be > 0");
         let num_vals = (duration / dt) as usize;

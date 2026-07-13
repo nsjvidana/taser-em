@@ -54,10 +54,30 @@ pub fn fdtd_lossy(
     } = grid_coeffs.read(idx);
     let mut int = int_terms.read(idx);
     let en_cell = en.read(idx);
+    // TODO: make these uniforms?
+    let h_axes = if grid.polarization_mode == 0 { FIELD_AXES1 } else { FIELD_AXES2 };
+    let dn_axes = if grid.polarization_mode == 0 { FIELD_AXES2 } else { FIELD_AXES1 };
+
+    // Dipole sources
+    let steps_usize = *steps as usize;
+    let mut source_term = 0.;
+    for i in 0..dipoles.len() {
+        let GpuDipole {
+            vals_range: [start, end],
+            cell_idx,
+            t_start,
+        } = dipoles.read(i);
+        let t_start = t_start as usize;
+        let t = saturating_sub(steps_usize, t_start);
+        let [start, end] = [start as usize, end as usize];
+        let vals_i = start + t;
+        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
+        source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
+    }
+    // TODO: More source injection (plane wave, etc.)
 
     // H Update
-    let h_axes = if grid.polarization_mode == 0 { FIELD_AXES1 } else { FIELD_AXES2 };
-    let mut h_cell = {
+    let h_cell = {
         // TODO: set this to a "if cfg!()", use consts, and compare the performance.
         let not_boundary = UVec3::from(id3.cmplt(boundary_idx3)).as_vec3();
         let h_cell = h.read(idx);
@@ -94,6 +114,8 @@ pub fn fdtd_lossy(
                     new_h_cmp += coeffs[3] * int.h[axis_idx][1];
                 }
             }
+            // Source injection
+            new_h_cmp += source_term * (grid.polarization_mode == 1) as u32 as f32;
             new_h[axis] = new_h_cmp;
         }
         h.write(idx, new_h);
@@ -101,8 +123,7 @@ pub fn fdtd_lossy(
     };
 
     // Dn Update
-    let dn_axes = if grid.polarization_mode == 0 { FIELD_AXES2 } else { FIELD_AXES1 };
-    let mut dn_cell = {
+    let dn_cell = {
         // TODO: set this to a "if cfg!()", use consts, and compare the performance.
         let not_boundary = UVec3::from(id3.cmpgt(UVec3::ZERO)).as_vec3();
         let dn_cell = dn.read(idx);
@@ -142,37 +163,14 @@ pub fn fdtd_lossy(
                     new_dn_cmp += coeffs[5] * int.dn[axis_idx][2];
                 }
             }
+            // Source injection
+            new_dn_cmp += source_term * (grid.polarization_mode == 0) as u32 as f32;
             new_dn[axis] = new_dn_cmp;
         }
         dn.write(idx, new_dn);
         new_dn
     };
     int_terms.write(idx, int);
-
-    // Dipole sources
-    let steps_usize = *steps as usize;
-    for i in 0..dipoles.len() {
-        let GpuDipole {
-            vals_range: [start, end],
-            cell_idx,
-            t_start,
-        } = dipoles.read(i);
-        let t_start = t_start as usize;
-        let t = saturating_sub(steps_usize, t_start);
-        let [start, end] = [start as usize, end as usize];
-        let vals_i = start + t;
-        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
-        let val = source_vals.read(vals_i.min(end)) * enable as u32 as f32;
-        for axis in dn_axes.clone() {
-            let axis = unsafe { Axis::from_index_unchecked(axis as u32) };
-            dn_cell[axis] += val * (grid.polarization_mode == 0) as u32 as f32;
-        }
-        for axis in h_axes.clone() {
-            let axis = unsafe { Axis::from_index_unchecked(axis as u32) };
-            h_cell[axis] += val * (grid.polarization_mode == 1) as u32 as f32;
-        }
-    }
-    // TODO: More source injection (plane wave, etc.)
 
     // En Update
     let mut en_cell = en_cell;

@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 use glamx::Vec3;
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
-use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, C_0};
+use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
 use taser_em1d::shaders::math::{Vect, VectExt};
@@ -27,15 +27,23 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     let stability = FdtdStability::default();
     let f_max = 2.4e9; // 2.4 GHz
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
+    let dt = stability.cfl_condition(cell_size);
+    let wavelen = C_0 / f_max;
+
+    let slab_extents = [Vect::splat(1.), Vect::splat(1. + wavelen * 2.)];
+    let source = Source::Dipole {
+        position: 1. - wavelen,
+        t_start: 0.,
+        vals: Source::gaussian_max_f(f_max, 1., dt)
+    };
 
     let mut mat_regions = MaterialRegions::new();
-    let wavelen = C_0 / f_max;
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
         sig: Vec3::splat(1e-15),
     };
-    mat_regions.fill_region(Vect::splat(0.), Vect::splat(wavelen * 2.), mat);
+    mat_regions.fill_region(slab_extents[0], slab_extents[1], mat);
     let grid = YeeGrid::new(
         cell_size,
         PolarizationMode::TransverseMagnetic,
@@ -43,11 +51,12 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
         NonZeroU32::new(3).unwrap(),
         LayerWidths::splat(10)
     );
-    let solver = FdtdSolver::new(
+    let mut solver = FdtdSolver::new(
         backend,
         grid,
-        stability.cfl_condition(cell_size),
+        dt,
     )?;
+    solver.add_source(source);
 
     // Warmup
     let mut buffers = solver.compute_and_create_buffers(backend)?;
