@@ -17,6 +17,9 @@ pub struct YeeGrid {
     /// Objects/devices within the simulation, stored as raw shapes.
     /// These shapes get pixelized/voxelized before running the simulation.
     pub material_regions: MaterialRegions,
+    /// Extra points that should be in the simulation space.  
+    /// This can include sources like [`crate::Source::Dipole`]s.
+    pub extra_points: Vec<Vec3>,
     /// Resolution at which material regions will be smoothed
     pub material_resolution: NonZeroU32,
     /// The "default" material in grid cells whose material isn't
@@ -50,6 +53,7 @@ impl YeeGrid {
             cell_size,
             polarization_mode,
             material_regions,
+            extra_points: Vec::new(),
             material_resolution,
             background_material: ElectricMaterial::FREE_SPACE,
             spacer_region_widths,
@@ -65,8 +69,12 @@ impl YeeGrid {
     /// Computes the total number of cells, in each principal direction,
     /// accounting for spacer regions as well.
     pub fn n_cells(&self) -> GridIndex {
-        let bb = self.material_regions.compute_bounding_box();
-        let n_cells_vec3 = (bb.extents() / vect_to_3d(self.cell_size, Vec3::ONE)).ceil();
+        let mut inner_bb = self.material_regions.compute_bounding_box();
+        for pt in self.extra_points.iter() {
+            inner_bb.mins = inner_bb.mins.min(*pt);
+            inner_bb.maxs = inner_bb.maxs.max(*pt);
+        }
+        let n_cells_vec3 = (inner_bb.extents() / vect_to_3d(self.cell_size, Vec3::ONE)).ceil();
         let materials_n_cells = to_grid_index(vec3_to_vect(n_cells_vec3));
 
         self.spacer_region_widths

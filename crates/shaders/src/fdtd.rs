@@ -25,12 +25,19 @@ const FIELD_AXES2: core::ops::RangeInclusive<usize> = cfg_select! {
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn fdtd_lossy(
     #[spirv(global_invocation_id)] id: UVec3,
+    // Vector fields
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
+    // Field update terms
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] int_terms: &mut [IntegrationTerms],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients2],
-    #[spirv(uniform, descriptor_set = 0, binding = 5)] grid: &GridParameters2,
+    // Sources
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] steps: &mut u32,
+    // Uniforms
+    #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
 ) {
     let id3 = id;
     if id3.cmpge(grid.n_cells).any() { return; }
@@ -49,13 +56,13 @@ pub fn fdtd_lossy(
     let en_cell = en.read(idx);
 
     // H Update
-    let h_cell = {
+    let h_axes = if grid.polarization_mode == 0 { FIELD_AXES1 } else { FIELD_AXES2 };
+    let mut h_cell = {
         // TODO: set this to a "if cfg!()", use consts, and compare the performance.
-        let h_axes = if grid.polarization_mode == 0 { FIELD_AXES1 } else { FIELD_AXES2 };
         let not_boundary = UVec3::from(id3.cmplt(boundary_idx3)).as_vec3();
         let h_cell = h.read(idx);
         let mut new_h = Vec4::ZERO;
-        for axis_idx in h_axes {
+        for axis_idx in h_axes.clone() {
             let axis = unsafe { Axis::from_index_unchecked(axis_idx as u32) };
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
@@ -95,7 +102,7 @@ pub fn fdtd_lossy(
 
     // Dn Update
     let dn_axes = if grid.polarization_mode == 0 { FIELD_AXES2 } else { FIELD_AXES1 };
-    let dn_cell = {
+    let mut dn_cell = {
         // TODO: set this to a "if cfg!()", use consts, and compare the performance.
         let not_boundary = UVec3::from(id3.cmpgt(UVec3::ZERO)).as_vec3();
         let dn_cell = dn.read(idx);
@@ -142,7 +149,30 @@ pub fn fdtd_lossy(
     };
     int_terms.write(idx, int);
 
-    // TODO: Source injection (dipole, plane wave, etc.)
+    // Dipole sources
+    let steps_usize = *steps as usize;
+    for i in 0..dipoles.len() {
+        let GpuDipole {
+            vals_range: [start, end],
+            cell_idx,
+            t_start,
+        } = dipoles.read(i);
+        let t_start = t_start as usize;
+        let t = saturating_sub(steps_usize, t_start);
+        let [start, end] = [start as usize, end as usize];
+        let vals_i = start + t;
+        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
+        let val = source_vals.read(vals_i.min(end)) * enable as u32 as f32;
+        for axis in dn_axes.clone() {
+            let axis = unsafe { Axis::from_index_unchecked(axis as u32) };
+            dn_cell[axis] += val * (grid.polarization_mode == 0) as u32 as f32;
+        }
+        for axis in h_axes.clone() {
+            let axis = unsafe { Axis::from_index_unchecked(axis as u32) };
+            h_cell[axis] += val * (grid.polarization_mode == 1) as u32 as f32;
+        }
+    }
+    // TODO: More source injection (plane wave, etc.)
 
     // En Update
     let mut en_cell = en_cell;
@@ -151,6 +181,10 @@ pub fn fdtd_lossy(
         en_cell[axis] = en_coeffs[axis_idx] * dn_cell[axis];
     }
     en.write(idx, en_cell);
+    
+    if id3 == UVec3::ZERO {
+        *steps += 1;
+    }
 
     // TODO: make another update here for TE mode?
 }
@@ -170,6 +204,7 @@ pub struct GridParameters2 {
     pub d: Vec3,
     pub _padding1: u32,
 }
+
 /// Update coefficients for H, D, and E fields with a UPML
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
@@ -177,6 +212,16 @@ pub struct PmlCoefficients2 {
     pub h_coeffs: [[f32; 2 + DIM - 1]; DIM],
     pub dn_coeffs: [[f32; 4 + DIM - 1]; DIM],
     pub en_coeffs: [f32; DIM],
+}
+
+/// An electric dipole source
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct GpuDipole {
+    pub cell_idx: u32,
+    pub vals_range: [u32; 2],
+    pub t_start: u32,
+    // TODO: pub repeat_count: u32,
 }
 
 /// Integration terms used in updating H and D fields

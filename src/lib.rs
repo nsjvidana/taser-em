@@ -13,7 +13,7 @@ use glamx::{Pose3, UVec3, Vec3, Vec4};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
-use taser_em_shaders::fdtd::{GridParameters2, IntegrationTerms, PmlCoefficients2};
+use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::Axis;
 use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_from_array, vect_to_3d, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
@@ -72,6 +72,7 @@ pub struct FdtdSolver {
     pub grid: YeeGrid,
     pub pml_parameters: PmlParameters,
     pub dt: Real,
+    pub sources: Vec<Source>
 }
 
 impl FdtdSolver {
@@ -82,7 +83,14 @@ impl FdtdSolver {
             grid,
             pml_parameters: PmlParameters::new(dt),
             dt,
+            sources: Vec::new()
         })
+    }
+
+    #[inline]
+    pub fn add_source(&mut self, source: Source) -> &mut Self {
+        self.sources.push(source);
+        self
     }
 
     /// Creates GPU buffers for simulating. Does the following:
@@ -92,6 +100,15 @@ impl FdtdSolver {
     pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
         let (n_cells, grid_coeffs) = self.grid
             .update_coeffs_pml(self.pml_parameters, Pose3::IDENTITY, self.dt);
+
+        let mut source_vals: Vec<f32> = vec![];
+        let mut dipoles = self.sources.iter()
+            .filter_map(|source| {
+                todo!("convert dipoles for GPU use, and populate source_vals")
+            })
+            .collect::<Vec<GpuDipole>>();
+        if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
+        if source_vals.is_empty() { source_vals.push(0.0); }
 
         let cell_count = grid_index_to_array(n_cells)
             .iter()
@@ -113,6 +130,9 @@ impl FdtdSolver {
                 en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 int_terms: vec![IntegrationTerms::default(); cell_count].create_gpu_buffer(backend)?,
                 grid_coeffs: grid_coeffs.create_gpu_buffer(backend)?,
+                dipoles: dipoles.create_gpu_buffer(backend)?,
+                source_vals: source_vals.create_gpu_buffer(backend)?,
+                steps: 0.create_gpu_buffer(backend)?,
                 grid_params: GridParameters2 {
                     flat_idx_incrs,
                     polarization_mode: self.grid.polarization_mode as u32,
@@ -132,6 +152,9 @@ impl FdtdSolver {
             en,
             int_terms,
             grid_coeffs,
+            dipoles,
+            source_vals,
+            steps,
             grid_params,
         } = buffers;
         self.kernel.call(
@@ -142,6 +165,9 @@ impl FdtdSolver {
             &mut en.buffer,
             int_terms,
             grid_coeffs,
+            dipoles,
+            source_vals,
+            steps,
             grid_params,
         )
     }
@@ -153,6 +179,9 @@ pub struct FdtdSolverBuffers {
     pub en: GpuBufferReadable<Vec4>,
     pub int_terms: GpuBuffer<IntegrationTerms>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients2>,
+    pub dipoles: GpuBuffer<GpuDipole>,
+    pub source_vals: GpuBuffer<f32>,
+    pub steps: GpuBuffer<u32>,
     pub grid_params: GpuBuffer<GridParameters2>,
 }
 
