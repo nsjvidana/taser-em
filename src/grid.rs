@@ -7,6 +7,7 @@ use taser_em_shaders::fdtd::PmlCoefficients2;
 use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, to_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
+#[derive(Clone, Debug)]
 pub struct YeeGrid {
     /// Size of each cell (in meters)
     pub cell_size: Vect,
@@ -80,35 +81,132 @@ impl YeeGrid {
             .sum_with_n_cells(materials_n_cells)
     }
 
+    /// Resets all stored material data
+    pub fn reset(&mut self) {
+        self.material_regions.regions.clear();
+        self.background_material = ElectricMaterial::FREE_SPACE;
+    }
+
+    // normal map creation?
+}
+
+/// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
+/// In 3D, all axes are computed for all fields.
+/// See the docs of this enum's variants to know which axes are enabled for each mode.
+///
+/// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
+/// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(u32)]
+pub enum PolarizationMode {
+    /// 1D: Ey, Hx
+    /// 2D: Ex, Ey, Hz
+    /// 3D: All axes
+    #[default]
+    TransverseMagnetic = 0,
+    /// 1D: Ex, Hy
+    /// 2D: Ez, Hx, Hy
+    /// 3D: All axes
+    TransverseElectric = 1,
+}
+
+/// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
+#[derive(Clone, Debug)]
+pub struct MaterialRegions {
+    pub regions: Vec<(SharedShape, Pose3, ElectricMaterial)>,
+    /// A transformation applied to all regions as an entire scene.
+    pub scene_pose: Pose3
+}
+
+impl MaterialRegions {
+    pub fn new() -> Self {
+        Self {
+            regions: vec![],
+            scene_pose: Pose3::IDENTITY
+        }
+    }
+
+    pub fn fill_region(
+        &mut self,
+        start: Vect,
+        end: Vect,
+        material: ElectricMaterial
+    ) -> &mut Self {
+        let half_extents = vect_to_3d(end - start, Vec3::ONE);
+        let shape = SharedShape::new(Cuboid::new(half_extents));
+        let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
+        let pose = Pose3::from_translation(middle);
+
+        self.regions.push((shape, pose, material));
+        self
+    }
+
+    pub fn import_shape_from_file(&mut self) -> &mut Self {
+        todo!()
+    }
+
+    pub fn compute_bounding_box(&self) -> Aabb {
+        let aabbs = self.regions
+            .iter()
+            .map(|(s, pose, _)| s.compute_aabb(&(self.scene_pose * pose)))
+            .collect::<Vec<_>>();
+
+        let mut full_bb = Aabb::new_invalid();
+        for bb in aabbs.iter() {
+            full_bb.merge(bb);
+        }
+        full_bb
+    }
+}
+
+/// The materials in a Yee Grid. It's the output of functions like [`MaterialRegions::material_yee_grid`].
+#[derive(Clone, Debug)]
+pub struct YeeGridMaterials {
+    pub n_cells: GridIndex,
+    pub cell_size: Vect,
+    pub materials: Vec<ElectricMaterial>,
+    /// The material applied to cells that don't intersect with any material regions.
+    pub default_mat: ElectricMaterial,
+    /// The translation applied to all objects in a [`MaterialRegions`] to center them on this grid.
+    pub regions_offset: Vec3,
+}
+
+/// Grid of PML update coefficients for FDTD using Yee Grid
+#[derive(Clone, Debug)]
+pub struct PmlCoefficientsGrid {
+    /// Dimensions of grid
+    pub n_cells: GridIndex,
+    /// Grid's update coefficients in a flattened array.
+    pub coeffs: Vec<PmlCoefficients2>,
+}
+
+impl PmlCoefficientsGrid {
     /// Voxelize material regions and compute PML update coefficients.
-    ///
-    /// Returns dimensions of the grid and the coefficients in a flattened [`DIM`]-dimensional array.
-    pub fn update_coeffs_pml(
-        &self,
+    pub fn new(
+        yee_grid: &YeeGrid,
         pml_parameters: PmlParameters,
         dt: Real
-    ) -> (GridIndex, Vec<PmlCoefficients2>) {
+    ) -> Self {
         let PmlParameters {
             widths: pml_widths,
             sig_max: pml_sig_max,
             grading_order: pml_grading_order
         } = pml_parameters;
-        let n_cells = pml_widths.sum_with_n_cells(self.n_cells());
+        let n_cells = pml_widths.sum_with_n_cells(yee_grid.n_cells());
         let n_cells3 = n_cells_to_3d(n_cells);
 
-        // Voxelize material regions
-        let res = self.material_resolution.get();
-        let fine_n_cells = n_cells * res;
-        let fine_grid = self.material_regions.material_yee_grid(
-            fine_n_cells,
-            self.cell_size / res as f32,
-            self.background_material,
-        );
-        let (_n_cells, mats) = MaterialRegions::downscale_material_grid(
-            &fine_grid,
-            fine_n_cells,
-            self.material_resolution
-        );
+        // Voxelize material regions w/ smoothing
+        let res = yee_grid.material_resolution.get();
+        let YeeGridMaterials {
+            n_cells: _n_cells,
+            materials: mats,
+            ..
+        } = YeeGridMaterials::new(
+            n_cells * res,
+            yee_grid.cell_size / res as f32,
+            &yee_grid.material_regions,
+            yee_grid.background_material,
+        ).downscaled(yee_grid.material_resolution);
         debug_assert!(n_cells == _n_cells);
 
         // PML conductivity terms on all spatial axes.
@@ -195,96 +293,25 @@ impl YeeGrid {
         println!("{:?}", coeffs);
         println!("----");
 
-        (n_cells, coeffs)
-    }
-
-    /// Resets all stored material data
-    pub fn reset(&mut self) {
-        self.material_regions.regions.clear();
-        self.background_material = ElectricMaterial::FREE_SPACE;
-    }
-
-    // normal map creation?
-}
-
-/// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
-/// In 3D, all axes are computed for all fields.
-/// See the docs of this enum's variants to know which axes are enabled for each mode.
-///
-/// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
-/// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(u32)]
-pub enum PolarizationMode {
-    /// 1D: Ey, Hx
-    /// 2D: Ex, Ey, Hz
-    /// 3D: All axes
-    #[default]
-    TransverseMagnetic = 0,
-    /// 1D: Ex, Hy
-    /// 2D: Ez, Hx, Hy
-    /// 3D: All axes
-    TransverseElectric = 1,
-}
-
-/// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
-pub struct MaterialRegions {
-    pub regions: Vec<(SharedShape, Pose3, ElectricMaterial)>,
-    /// A transformation applied to all regions as an entire scene.
-    pub scene_pose: Pose3
-}
-
-impl MaterialRegions {
-    pub fn new() -> Self {
         Self {
-            regions: vec![],
-            scene_pose: Pose3::IDENTITY
+            n_cells,
+            coeffs,
         }
     }
+}
 
-    pub fn fill_region(
-        &mut self,
-        start: Vect,
-        end: Vect,
-        material: ElectricMaterial
-    ) -> &mut Self {
-        let half_extents = vect_to_3d(end - start, Vec3::ONE);
-        let shape = SharedShape::new(Cuboid::new(half_extents));
-        let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
-        let pose = Pose3::from_translation(middle);
-
-        self.regions.push((shape, pose, material));
-        self
-    }
-
-    pub fn import_shape_from_file(&mut self) -> &mut Self {
-        todo!()
-    }
-
-    pub fn compute_bounding_box(&self) -> Aabb {
-        let aabbs = self.regions
-            .iter()
-            .map(|(s, pose, _)| s.compute_aabb(&(self.scene_pose * pose)))
-            .collect::<Vec<_>>();
-
-        let mut full_bb = Aabb::new_invalid();
-        for bb in aabbs.iter() {
-            full_bb.merge(bb);
-        }
-        full_bb
-    }
-
+impl YeeGridMaterials {
     /// Compute a material grid with the dimensions of `n_cells` where all material regions
     /// are centered at the middle of the grid.
     ///
     /// `obj_offset` gets multiplied to each region individually before being voxelized.
     /// Voxels whose origin don't intersect with any region are assigned `default_mat`
-    pub fn material_yee_grid(
-        &self,
+    pub fn new(
         n_cells: GridIndex,
         cell_size: Vect,
+        regions: &MaterialRegions,
         default_mat: ElectricMaterial,
-    ) -> Vec<ElectricMaterial> {
+    ) -> Self {
         let cell_count = grid_index_to_array(n_cells).iter().product::<Index>()
             as usize;
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
@@ -292,13 +319,14 @@ impl MaterialRegions {
         let grid_center = vect_to_3d(
             grid_index_as_vect(n_cells) * cell_size / 2., Vec3::ZERO
         );
-        let regions_center = self.compute_bounding_box().center();
-        let centered_scene_pose = self.scene_pose.append_translation(grid_center - regions_center);
+        let regions_center = regions.compute_bounding_box().center();
+        let regions_offset = grid_center - regions_center;
+        let centered_scene_pose = regions.scene_pose.append_translation(regions_offset);
 
         let cell_size3 = vect_to_3d(cell_size, Vec3::ZERO);
         let dn_offsets = YeeGrid::DN_OFFSETS.map(|v| v * cell_size3);
         let h_offsets = YeeGrid::H_OFFSETS.map(|v| v * cell_size3);
-        let regions_transformed = self.regions.iter()
+        let regions_transformed = regions.regions.iter()
             .map(|(s, p, m)| (s, centered_scene_pose * p,  m))
             .collect::<Vec<_>>();
         let mat_at_pt = |pt| {
@@ -324,61 +352,72 @@ impl MaterialRegions {
             };
         }
 
-        mats
+        Self {
+            n_cells,
+            cell_size,
+            materials: mats,
+            default_mat,
+            regions_offset,
+        }
     }
 
-    /// Downscale a material grid using a box filter. Out-of-bounds material cells are ignored.
-    ///
-    /// Returns the dimensions of the new grid, and the new grid's data
-    pub fn downscale_material_grid(
-        grid: &[ElectricMaterial],
-        n_cells: GridIndex,
+    /// Constructs a lower-resolution version of this grid. Resolution is reduced by a factor of `downscale_factor`
+    /// using a box filter to smooth out values.
+    pub fn downscaled(
+        &self,
         downscale_factor: NonZeroU32,
-    ) -> (GridIndex, Vec<ElectricMaterial>) {
+    ) -> YeeGridMaterials {
         let downscale_factor = downscale_factor.get();
-        let n_cells_new = grid_index_from_array(
-            grid_index_to_array(n_cells)
+        let n_cells = grid_index_from_array(
+            grid_index_to_array(self.n_cells)
                 .map(|dim| dim.div_ceil(downscale_factor))
         );
-        let cell_count_new = grid_index_to_array(n_cells_new).iter()
+        let cell_size = self.cell_size * downscale_factor as f32;
+        let cell_count = grid_index_to_array(n_cells).iter()
             .product::<Index>();
-        let mut grid_new = vec![ElectricMaterial::FREE_SPACE; cell_count_new as usize];
+        let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count as usize];
 
         let kernel_cells = grid_cells_iter!(grid_index_from_array([downscale_factor; DIM]))
             .map(|t| grid_index_from_array(t.into()))
             .collect::<Vec<_>>();
-        let n_cells3 = n_cells_to_3d(n_cells);
-        for i in 0..cell_count_new {
-            let idx = flat_idx_to_grid_index(i, n_cells_new) * downscale_factor;
+        let old_n_cells3 = n_cells_to_3d(self.n_cells);
+        for i in 0..cell_count {
+            let idx = flat_idx_to_grid_index(i, n_cells) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
             for k in kernel_cells.iter() {
                 let k_idx = idx + k;
                 let k_idx3 = cell_idx_to_3d(k_idx);
-                if k_idx3.cmplt(n_cells3).all() {
-                    let k_i = grid_index_to_flat_idx(k_idx, n_cells) as usize;
-                    mat_sum.mu_r += grid[k_i].mu_r;
-                    mat_sum.eps_r += grid[k_i].eps_r;
-                    mat_sum.sig += grid[k_i].sig;
+                if k_idx3.cmplt(old_n_cells3).all() {
+                    let k_i = grid_index_to_flat_idx(k_idx, self.n_cells) as usize;
+                    mat_sum.mu_r += self.materials[k_i].mu_r;
+                    mat_sum.eps_r += self.materials[k_i].eps_r;
+                    mat_sum.sig += self.materials[k_i].sig;
                     n_sums += 1;
                 }
             }
             let n_sums = n_sums as f32;
-            grid_new[i as usize] = ElectricMaterial {
+            materials[i as usize] = ElectricMaterial {
                 mu_r: mat_sum.mu_r / n_sums,
                 eps_r: mat_sum.eps_r / n_sums,
                 sig: mat_sum.sig / n_sums,
             };
         }
 
-        (n_cells_new, grid_new)
+        YeeGridMaterials {
+            n_cells,
+            cell_size,
+            materials,
+            default_mat: self.default_mat,
+            regions_offset: self.regions_offset,
+        }
     }
 }
 
 /// The widths of layers of cells at the boundary of the simulation. (e.g. PMLs)
 ///
 /// Stores the "low" and "high" widths on each axis.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct LayerWidths {
     pub widths: [[Index; 2]; DIM],
 }

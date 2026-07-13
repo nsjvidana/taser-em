@@ -6,10 +6,10 @@ use std::num::NonZeroI32;
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
-use crate::grid::{LayerWidths, YeeGrid};
+use crate::grid::{LayerWidths, PmlCoefficientsGrid, YeeGrid};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
-use glamx::{Pose3, UVec3, Vec3, Vec4};
+use glamx::{UVec3, Vec3, Vec4};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
@@ -98,8 +98,9 @@ impl FdtdSolver {
     /// - calculate update coefficients
     /// - initialize buffers and return them
     pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
-        let (n_cells, grid_coeffs) = self.grid
-            .update_coeffs_pml(self.pml_parameters, self.dt);
+        let PmlCoefficientsGrid {
+            n_cells, coeffs: grid_coeffs
+        } = PmlCoefficientsGrid::new(&self.grid, self.pml_parameters, self.dt);
 
         let mut source_vals: Vec<f32> = vec![];
         let mut dipoles = self.sources.iter()
