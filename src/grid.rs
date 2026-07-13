@@ -1,7 +1,6 @@
 use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
-use parry3d::math::Pose;
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::PmlCoefficients2;
@@ -87,7 +86,6 @@ impl YeeGrid {
     pub fn update_coeffs_pml(
         &self,
         pml_parameters: PmlParameters,
-        scene_transform: Pose3,
         dt: Real
     ) -> (GridIndex, Vec<PmlCoefficients2>) {
         let PmlParameters {
@@ -105,7 +103,6 @@ impl YeeGrid {
             fine_n_cells,
             self.cell_size / res as f32,
             self.background_material,
-            scene_transform
         );
         let (_n_cells, mats) = MaterialRegions::downscale_material_grid(
             &fine_grid,
@@ -231,13 +228,19 @@ pub enum PolarizationMode {
 }
 
 /// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
-#[derive(Default)]
 pub struct MaterialRegions {
-    pub regions: Vec<(SharedShape, Pose, ElectricMaterial)>,
+    pub regions: Vec<(SharedShape, Pose3, ElectricMaterial)>,
+    /// A transformation applied to all regions as an entire scene.
+    pub scene_pose: Pose3
 }
 
 impl MaterialRegions {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self {
+            regions: vec![],
+            scene_pose: Pose3::IDENTITY
+        }
+    }
 
     pub fn fill_region(
         &mut self,
@@ -248,7 +251,7 @@ impl MaterialRegions {
         let half_extents = vect_to_3d(end - start, Vec3::ONE);
         let shape = SharedShape::new(Cuboid::new(half_extents));
         let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
-        let pose = Pose::from_translation(middle);
+        let pose = Pose3::from_translation(middle);
 
         self.regions.push((shape, pose, material));
         self
@@ -261,7 +264,7 @@ impl MaterialRegions {
     pub fn compute_bounding_box(&self) -> Aabb {
         let aabbs = self.regions
             .iter()
-            .map(|(s, pose, _)| s.compute_aabb(pose))
+            .map(|(s, pose, _)| s.compute_aabb(&(self.scene_pose * pose)))
             .collect::<Vec<_>>();
 
         let mut full_bb = Aabb::new_invalid();
@@ -281,7 +284,6 @@ impl MaterialRegions {
         n_cells: GridIndex,
         cell_size: Vect,
         default_mat: ElectricMaterial,
-        obj_offset: Pose,
     ) -> Vec<ElectricMaterial> {
         let cell_count = grid_index_to_array(n_cells).iter().product::<Index>()
             as usize;
@@ -291,17 +293,19 @@ impl MaterialRegions {
             grid_index_as_vect(n_cells) * cell_size / 2., Vec3::ZERO
         );
         let regions_center = self.compute_bounding_box().center();
-        let offset = obj_offset.append_translation(grid_center - regions_center);
+        let centered_scene_pose = self.scene_pose.append_translation(grid_center - regions_center);
 
         let cell_size3 = vect_to_3d(cell_size, Vec3::ZERO);
         let dn_offsets = YeeGrid::DN_OFFSETS.map(|v| v * cell_size3);
         let h_offsets = YeeGrid::H_OFFSETS.map(|v| v * cell_size3);
-        let mat_at_pt = |pos| {
-            self.regions.iter()
-                .find_map(|(s, pose, m)| {
-                    let p = pose * offset;
-                    s.contains_point(&p, pos).then_some(m)
-                })
+        let regions_transformed = self.regions.iter()
+            .map(|(s, p, m)| (s, centered_scene_pose * p,  m))
+            .collect::<Vec<_>>();
+        let mat_at_pt = |pt| {
+            regions_transformed.iter()
+                .find_map(|(s, p, m)|
+                    s.contains_point(p, pt).then_some(*m)
+                )
                 .unwrap_or(&default_mat)
         };
 

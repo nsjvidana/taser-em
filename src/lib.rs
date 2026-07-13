@@ -99,7 +99,7 @@ impl FdtdSolver {
     /// - initialize buffers and return them
     pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
         let (n_cells, grid_coeffs) = self.grid
-            .update_coeffs_pml(self.pml_parameters, Pose3::IDENTITY, self.dt);
+            .update_coeffs_pml(self.pml_parameters, self.dt);
 
         let mut source_vals: Vec<f32> = vec![];
         let mut dipoles = self.sources.iter()
