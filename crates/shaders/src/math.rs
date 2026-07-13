@@ -288,9 +288,10 @@ pub fn vec4_to_vect(v: Vec4) -> Vect {
     }
 }
 
-/// Convert [`Vect`] to [`GridIndex`] using `as` keyword
+/// Convert [`Vect`] to [`GridIndex`] using `as` keyword. So this effectively floors all components
+/// of `v`.
 #[inline]
-pub fn to_grid_index(v: Vect) -> GridIndex {
+pub fn vect_as_grid_index(v: Vect) -> GridIndex {
     #[cfg(feature = "dim1")]
     return v as GridIndex;
     #[cfg(feature = "dim2")]
@@ -299,8 +300,7 @@ pub fn to_grid_index(v: Vect) -> GridIndex {
     v.as_uvec3()
 }
 
-/// Convert [`GridIndex`] into [`Vect`] using `as` keyword. So this effectively floors all components
-/// of `idx`.
+/// Convert [`GridIndex`] into [`Vect`] using `as` keyword.
 #[inline]
 pub fn grid_index_as_vect(idx: GridIndex) -> Vect {
     #[cfg(feature = "dim1")]

@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::PmlCoefficients2;
-use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, to_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
+use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_as_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 #[derive(Clone, Debug)]
@@ -75,7 +75,7 @@ impl YeeGrid {
             inner_bb.maxs = inner_bb.maxs.max(*pt);
         }
         let n_cells_vec3 = (inner_bb.extents() / vect_to_3d(self.cell_size, Vec3::ONE)).ceil();
-        let materials_n_cells = to_grid_index(vec3_to_vect(n_cells_vec3));
+        let materials_n_cells = vect_as_grid_index(vec3_to_vect(n_cells_vec3));
 
         self.spacer_region_widths
             .sum_with_n_cells(materials_n_cells)
@@ -111,7 +111,7 @@ pub enum PolarizationMode {
 }
 
 /// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MaterialRegions {
     pub regions: Vec<(SharedShape, Pose3, ElectricMaterial)>,
     /// A transformation applied to all regions as an entire scene.
@@ -119,12 +119,7 @@ pub struct MaterialRegions {
 }
 
 impl MaterialRegions {
-    pub fn new() -> Self {
-        Self {
-            regions: vec![],
-            scene_pose: Pose3::IDENTITY
-        }
-    }
+    pub fn new() -> Self { Self::default() }
 
     pub fn fill_region(
         &mut self,
@@ -178,6 +173,7 @@ pub struct PmlCoefficientsGrid {
     pub n_cells: GridIndex,
     /// Grid's update coefficients in a flattened array.
     pub coeffs: Vec<PmlCoefficients2>,
+    pub regions_offset: Vec3,
 }
 
 impl PmlCoefficientsGrid {
@@ -200,6 +196,7 @@ impl PmlCoefficientsGrid {
         let YeeGridMaterials {
             n_cells: _n_cells,
             materials: mats,
+            regions_offset,
             ..
         } = YeeGridMaterials::new(
             n_cells * res,
@@ -296,6 +293,7 @@ impl PmlCoefficientsGrid {
         Self {
             n_cells,
             coeffs,
+            regions_offset
         }
     }
 }

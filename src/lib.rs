@@ -15,7 +15,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::Axis;
+use taser_em_shaders::math::{vec3_to_vect, vect_as_grid_index, Axis};
 use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_from_array, vect_to_3d, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -99,15 +99,29 @@ impl FdtdSolver {
     /// - initialize buffers and return them
     pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
         let PmlCoefficientsGrid {
-            n_cells, coeffs: grid_coeffs
+            n_cells, coeffs: grid_coeffs, regions_offset
         } = PmlCoefficientsGrid::new(&self.grid, self.pml_parameters, self.dt);
 
         let mut source_vals: Vec<f32> = vec![];
+        let regions_offset = vec3_to_vect(regions_offset);
         let mut dipoles = self.sources.iter()
             .filter_map(|source| {
-                todo!("convert dipoles for GPU use, and populate source_vals")
+                // todo!("convert dipoles for GPU use, and populate source_vals")
+                match source {
+                    Source::Dipole { position, t_start, vals } => {
+                        let pos = (regions_offset + position) / self.grid.cell_size;
+                        let start = source_vals.len();
+                        source_vals.extend_from_slice(vals);
+                        Some(GpuDipole {
+                            cell_idx: grid_index_to_flat_idx(vect_as_grid_index(pos), n_cells),
+                            vals_range: [start as u32, source_vals.len() as u32 - 1],
+                            t_start: (t_start / self.dt) as u32,
+                        })
+                    }
+                    _ => None
+                }
             })
-            .collect::<Vec<GpuDipole>>();
+            .collect::<Vec<_>>();
         if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
         if source_vals.is_empty() { source_vals.push(0.0); }
 
