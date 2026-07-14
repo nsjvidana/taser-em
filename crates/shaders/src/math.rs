@@ -1,3 +1,4 @@
+use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec2, UVec3, Vec2, Vec3, Vec4};
 pub use dim_types::*;
 
@@ -65,12 +66,13 @@ impl VectExt for Vect {
 /// A helper enum for indexing into various things (e.g. indexing into components of [`Vect`] and [`GridIndex`])
 ///
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u32)]
 pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
+    INVALID = u32::MAX
 }
 
 impl Axis {
@@ -84,6 +86,7 @@ impl Axis {
             Axis::X => Axis::Y,
             Axis::Y => Axis::Z,
             Axis::Z => Axis::X,
+            _ => Axis::INVALID
         }
     }
 
@@ -121,6 +124,11 @@ impl From<SpatialAxis> for Axis {
         unsafe { core::mem::transmute::<SpatialAxis, Axis>(value) }
     }
 }
+
+// SAFETY: Axis has a zero variant.
+unsafe impl Zeroable for Axis {}
+// SAFETY: Axis has u32 representation, and u32 is also POD.
+unsafe impl Pod for Axis {}
 
 /// The axes that are in the computational domain. EM waves only propagate in spaces that these axes
 /// form (Z axis in 1D; X-Y plane in 2D; X-Y-Z space in 3D).

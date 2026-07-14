@@ -1,23 +1,9 @@
 use bytemuck::{Pod, Zeroable};
-use khal_std::glamx::{UVec3, UVec4, Vec3, Vec4};
+use khal_std::glamx::{UVec3, UVec4, Vec3, Vec4, Vec4Swizzles};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM};
 use crate::thread_id_to_3d_grid_index;
-
-/// The axes in which "field 1" exist in, depending on the dimension & polarization mode.
-/// For example, in 1D with TM polarization
-const FIELD_AXES1: core::ops::RangeInclusive<usize> = cfg_select! {
-    feature = "dim1" => (Axis::X as usize)..=(Axis::X as usize),
-    feature = "dim2" => (Axis::X as usize)..=(Axis::Y as usize),
-    feature = "dim3" => (Axis::X as usize)..=(Axis::Z as usize),
-};
-
-const FIELD_AXES2: core::ops::RangeInclusive<usize> = cfg_select! {
-    feature = "dim1" => (Axis::Y as usize)..=(Axis::Y as usize),
-    feature = "dim2" => (Axis::Z as usize)..=(Axis::Z as usize),
-    feature = "dim3" => FIELD_AXES1,
-};
 
 // TODO: Docs, remove the "2" from the struct names, delete fdtd1 module, try using Vect for vector field
 #[spirv_bindgen]
@@ -54,9 +40,8 @@ pub fn fdtd_lossy(
     } = grid_coeffs.read(idx);
     let mut int = int_terms.read(idx);
     let en_cell = en.read(idx);
-    // TODO: make these uniforms?
-    let h_axes = if grid.polarization_mode.is_tm() { FIELD_AXES1 } else { FIELD_AXES2 };
-    let dn_axes = if grid.polarization_mode.is_tm() { FIELD_AXES2 } else { FIELD_AXES1 };
+    let h_axes = grid.polarization_mode.get_h_axes();
+    let dn_axes = grid.polarization_mode.get_dn_axes();
 
     // Dipole sources (working)
     let steps_usize = *steps as usize;
@@ -81,8 +66,10 @@ pub fn fdtd_lossy(
         let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
         let h_cell = h.read(idx);
         let mut new_h = Vec4::ZERO;
-        for axis_idx in h_axes.clone() {
-            let axis = unsafe { Axis::from_index_unchecked(axis_idx as u32) };
+        for i in 0..MAX_DIM {
+            let axis = h_axes[i];
+            if axis == Axis::INVALID { break; }
+            let axis_idx = AxisIndex::from_axis(axis);
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
             let de2_d1 = if SpatialAxis::is_spatial_axis(axis1) {
@@ -126,8 +113,10 @@ pub fn fdtd_lossy(
         let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
         let dn_cell = dn.read(idx);
         let mut new_dn = Vec4::ZERO;
-        for axis_idx in dn_axes.clone() {
-            let axis = unsafe { Axis::from_index_unchecked(axis_idx as u32) };
+        for i in 0..MAX_DIM {
+            let axis = dn_axes[i];
+            if axis == Axis::INVALID { break; }
+            let axis_idx = AxisIndex::from_axis(axis);
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
             let de2_d1 = if SpatialAxis::is_spatial_axis(axis1) {
@@ -172,8 +161,10 @@ pub fn fdtd_lossy(
 
     // En Update
     let mut en_cell = en_cell;
-    for axis_idx in dn_axes {
-        let axis = unsafe { Axis::from_index_unchecked(axis_idx as u32) };
+    for i in 0..MAX_DIM {
+        let axis = dn_axes[i];
+        if axis == Axis::INVALID { break; }
+        let axis_idx = AxisIndex::from_axis(axis);
         en_cell[axis] = en_coeffs[axis_idx] * dn_cell[axis];
     }
     en.write(idx, en_cell);
@@ -196,28 +187,91 @@ pub struct GridParameters2 {
     /// Spatial differentials (cell size)
     pub d: Vec3,
     pub _padding2: u32,
-    pub polarization_mode: PolarizationModeIndex,
+    pub polarization_mode: GpuPolarizationMode,
 }
 
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[derive(Copy, Clone, Pod, Zeroable, Eq, PartialEq)]
 #[repr(C)]
-pub struct PolarizationModeIndex(UVec4);
+pub struct GpuPolarizationMode {
+    h_axes: UVec3,
+    mode: u32,
+    dn_axes: UVec3,
+    _p0: u32,
+}
 
-impl PolarizationModeIndex {
+impl GpuPolarizationMode {
+    const FIELD_AXES1: [Axis; MAX_DIM] = cfg_select! {
+        feature = "dim1" => [Axis::X, Axis::INVALID, Axis::INVALID],
+        feature = "dim2" => [Axis::X, Axis::Y, Axis::INVALID],
+        feature = "dim3" => [Axis::X, Axis::Y, Axis::Z],
+    };
+    const FIELD_AXES2: [Axis; MAX_DIM] = cfg_select! {
+        feature = "dim1" => [Axis::Y, Axis::INVALID, Axis::INVALID],
+        feature = "dim2" => [Axis::Z, Axis::INVALID, Axis::INVALID],
+        feature = "dim3" => FIELD_AXES1,
+    };
+    pub const TM: Self = Self {
+        h_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES1) },
+        dn_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES2) },
+        mode: 0,
+        _p0: 0,
+    };
+    pub const TE: Self = Self {
+        h_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES2) },
+        dn_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES1) },
+        mode: 1,
+        _p0: 0
+    };
+
     /// Is Transverse Magnetic
     #[inline]
-    pub fn is_tm(&self) -> bool { self.0.x == 0 }
+    pub fn is_tm(&self) -> bool {
+        self.mode == 0
+    }
+    
     /// Is Transverse Electric
     #[inline]
-    pub fn is_te(&self) -> bool { self.0.x == 1 }
+    pub fn is_te(&self) -> bool {
+        self.mode == 1
+    }
 
     #[inline]
-    pub unsafe fn from_idx_unchecked(idx: u32) -> Self { Self(UVec4::splat(idx)) }
+    pub fn get_h_axes(&self) -> [Axis; MAX_DIM] {
+        unsafe { core::mem::transmute::<[u32; MAX_DIM], [Axis; MAX_DIM]>(self.h_axes.to_array()) }
+    }
+
+    #[inline]
+    pub fn get_dn_axes(&self) -> [Axis; MAX_DIM] {
+        unsafe { core::mem::transmute::<[u32; MAX_DIM], [Axis; MAX_DIM]>(self.dn_axes.to_array()) }
+    }
 }
 
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
+impl Default for GpuPolarizationMode {
+    fn default() -> Self {
+        Self::TM
+    }
+}
+
+#[derive(Copy, Clone, Pod, Zeroable, Default, Eq, PartialEq)]
 #[repr(C)]
 pub struct AxisIndex(u32);
+
+impl AxisIndex {
+    pub const INVALID: AxisIndex = AxisIndex(u32::MAX);
+    #[inline]
+    pub const fn from_axis(axis: Axis) -> Self {
+        AxisIndex(axis as u32)
+    }
+    #[inline]
+    pub const fn into_axis(self) -> Axis {
+        unsafe { core::mem::transmute::<u32, Axis>(self.0) }
+    }
+
+    #[inline]
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
 
 impl core::ops::Deref for AxisIndex {
     type Target = u32;
@@ -225,10 +279,16 @@ impl core::ops::Deref for AxisIndex {
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
-impl From<Axis> for AxisIndex {
-    #[inline]
-    fn from(axis: Axis) -> AxisIndex {
-        AxisIndex(axis as u32)
+impl<T, const N: usize> core::ops::Index<AxisIndex> for [T; N] {
+    type Output = T;
+    fn index(&self, index: AxisIndex) -> &Self::Output {
+        &self[index.as_usize()]
+    }
+}
+
+impl<T, const N: usize> core::ops::IndexMut<AxisIndex> for [T; N] {
+    fn index_mut(&mut self, index: AxisIndex) -> &mut Self::Output {
+        &mut self[index.as_usize()]
     }
 }
 
