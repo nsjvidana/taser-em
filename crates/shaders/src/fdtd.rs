@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use khal_std::glamx::{UVec3, Vec3, Vec4};
+use khal_std::glamx::{UVec3, UVec4, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM};
@@ -41,9 +41,9 @@ pub fn fdtd_lossy(
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
 ) {
     let idx3 = thread_id_to_3d_grid_index(id3);
-    if idx3.cmpge(grid.n_cells).any() { return; }
-    let n_cells = uvec3_to_grid_index(grid.n_cells);
-    let boundary_idx3 = grid.n_cells - 1;
+    if idx3.cmpge(grid.n_cells3).any() { return; }
+    let n_cells = uvec3_to_grid_index(grid.n_cells3);
+    let boundary_idx3 = grid.n_cells3 - 1;
     // TODO: use usize indexing once indexing glam vectors is fixed? (see https://github.com/Rust-GPU/rust-gpu/issues/432)
 
     let idx = grid_index_to_flat_idx(uvec3_to_grid_index(idx3), n_cells) as usize;
@@ -55,8 +55,8 @@ pub fn fdtd_lossy(
     let mut int = int_terms.read(idx);
     let en_cell = en.read(idx);
     // TODO: make these uniforms?
-    let h_axes = if grid.polarization_mode == 0 { FIELD_AXES1 } else { FIELD_AXES2 };
-    let dn_axes = if grid.polarization_mode == 0 { FIELD_AXES2 } else { FIELD_AXES1 };
+    let h_axes = if grid.polarization_mode.is_tm() { FIELD_AXES1 } else { FIELD_AXES2 };
+    let dn_axes = if grid.polarization_mode.is_tm() { FIELD_AXES2 } else { FIELD_AXES1 };
 
     // Dipole sources (working)
     let steps_usize = *steps as usize;
@@ -78,7 +78,6 @@ pub fn fdtd_lossy(
 
     // H Update
     let h_cell = {
-        // TODO: set this to a "if cfg!()", use consts, and compare the performance.
         let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
         let h_cell = h.read(idx);
         let mut new_h = Vec4::ZERO;
@@ -115,7 +114,7 @@ pub fn fdtd_lossy(
                 }
             }
             // Source injection
-            new_h_cmp += source_term * (grid.polarization_mode == 1) as u32 as f32;
+            new_h_cmp += source_term * grid.polarization_mode.is_te() as u32 as f32;
             new_h[axis] = new_h_cmp;
         }
         h.write(idx, new_h);
@@ -124,7 +123,6 @@ pub fn fdtd_lossy(
 
     // Dn Update
     let dn_cell = {
-        // TODO: set this to a "if cfg!()", use consts, and compare the performance.
         let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
         let dn_cell = dn.read(idx);
         let mut new_dn = Vec4::ZERO;
@@ -164,7 +162,7 @@ pub fn fdtd_lossy(
                 }
             }
             // Source injection
-            new_dn_cmp += source_term * (grid.polarization_mode == 0) as u32 as f32;
+            new_dn_cmp += source_term * grid.polarization_mode.is_tm() as u32 as f32;
             new_dn[axis] = new_dn_cmp;
         }
         dn.write(idx, new_dn);
@@ -183,8 +181,6 @@ pub fn fdtd_lossy(
     if idx3 == UVec3::ZERO {
         *steps += 1;
     }
-
-    // TODO: make another update here for TE mode?
 }
 
 /// Information describing the grid
@@ -194,13 +190,46 @@ pub struct GridParameters2 {
     /// Increments by 1 in i/j/k indices for flat indexing. Used for accessing
     /// data from neighboring cells.
     pub flat_idx_incrs: UVec3,
-    // TODO: make this use a newtype that ensures the u32 is valid.
-    pub polarization_mode: u32,
-    pub n_cells: UVec3,
     pub _padding0: u32,
+    pub n_cells3: UVec3,
+    pub _padding1: u32,
     /// Spatial differentials (cell size)
     pub d: Vec3,
-    pub _padding1: u32,
+    pub _padding2: u32,
+    pub polarization_mode: PolarizationModeIndex,
+}
+
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct PolarizationModeIndex(UVec4);
+
+impl PolarizationModeIndex {
+    /// Is Transverse Magnetic
+    #[inline]
+    pub fn is_tm(&self) -> bool { self.0.x == 0 }
+    /// Is Transverse Electric
+    #[inline]
+    pub fn is_te(&self) -> bool { self.0.x == 1 }
+
+    #[inline]
+    pub unsafe fn from_idx_unchecked(idx: u32) -> Self { Self(UVec4::splat(idx)) }
+}
+
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct AxisIndex(u32);
+
+impl core::ops::Deref for AxisIndex {
+    type Target = u32;
+
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+impl From<Axis> for AxisIndex {
+    #[inline]
+    fn from(axis: Axis) -> AxisIndex {
+        AxisIndex(axis as u32)
+    }
 }
 
 /// Update coefficients for H, D, and E fields with a UPML

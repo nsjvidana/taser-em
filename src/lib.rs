@@ -166,8 +166,8 @@ impl FdtdSolver {
                 steps: 0.create_gpu_buffer(backend)?,
                 grid_params: GridParameters2 {
                     flat_idx_incrs,
-                    polarization_mode: self.grid.polarization_mode as u32,
-                    n_cells: n_cells_to_3d(n_cells),
+                    polarization_mode: self.grid.polarization_mode.into(),
+                    n_cells3: n_cells_to_3d(n_cells),
                     d: vect_to_3d(self.grid.cell_size, Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
