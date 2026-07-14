@@ -253,6 +253,8 @@ pub struct FdtdStability {
     /// `dt_safety_factor > 1.` to improve stability.
     #[derivative(Default(value = "2."))]
     pub dt_safety_factor: Real,
+    #[derivative(Default(value = "10"))]
+    pub source_resolution: Index,
 }
 
 impl FdtdStability {
@@ -285,7 +287,12 @@ impl FdtdStability {
         EPS_0 / (2. * dt)
     }
 
-    // pub fn dt_from_source(&self, source: FdtdSource) -> f32 {}
+    /// Compute a stable dt from a gaussian curve maximum frequency
+    #[inline]
+    pub fn dt_from_gaussian_freq(&self, f_max: Real) -> f32 {
+        let tau = core::f32::consts::FRAC_1_PI / f_max;
+        tau / self.source_resolution as f32
+    }
 }
 
 // TODO: remove this shader after testing it against FdtdLossy

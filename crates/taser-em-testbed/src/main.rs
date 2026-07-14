@@ -88,10 +88,14 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
 }
 
 async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
-    let stability = FdtdStability::default();
+    let stability = FdtdStability {
+        dt_safety_factor: 6.,
+        ..Default::default()
+    };
     let f_max = 2.4e9; // 2.4 GHz
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
-    let dt = stability.cfl_condition(cell_size);
+    let dt = stability.cfl_condition(cell_size)
+        .min(stability.dt_from_gaussian_freq(f_max));
     let wavelen = C_0 / f_max;
 
     let slab_extents = [Vect::splat(1.), Vect::splat(1. + wavelen * 2.)];
@@ -127,7 +131,8 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
         core::f32::consts::PI / 4.0,
         cell_size / 3.,
         grid_extents * 3.,
-        Vec3::X * grid_extents, Vec3::Z * grid_extents / 2.
+        Vec3::new(-grid_extents, 0., grid_extents / 2.),
+        Vec3::Z * grid_extents / 2.
     );
     let mut scene = SceneNode3d::empty();
 
@@ -152,10 +157,10 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
         }
 
         let mut prev_pos = 0.;
-        let mut prev_val = dn[0].length();
+        let mut prev_val = dn[0].y * cell_size;
         for (i,) in grid_cells_iter(n_cells).skip(1) {
             let pos = grid_index_as_vect(i) * cell_size;
-            let val = dn[i as usize].length();
+            let val = dn[i as usize].y * cell_size;
             window.draw_line(
                 Vec3::new(0., prev_val, prev_pos), Vec3::new(0., val, pos),
                 RED, 2., false
