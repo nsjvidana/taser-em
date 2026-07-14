@@ -9,6 +9,7 @@ pub struct GpuBufferReadable<T: DeviceValue + NoUninit + AnyBitPattern> {
 }
 
 impl<T: DeviceValue + NoUninit + AnyBitPattern> GpuBufferReadable<T> {
+    /// Encode a copy command to copy this buffer's data into its readback buffer.
     pub fn encode_copy_cmd(&mut self, encoder: &mut GpuEncoder) -> GpuResult<()> {
         encoder.copy_buffer_to_buffer(
             &self.buffer,
@@ -19,6 +20,7 @@ impl<T: DeviceValue + NoUninit + AnyBitPattern> GpuBufferReadable<T> {
         )
     }
 
+    /// Read the readback buffer (use after calling [`GpuBufferReadable::encode_copy_cmd`])
     pub async fn read(&self, backend: &GpuBackend, out: &mut [T]) -> GpuResult<()> {
         backend.read_buffer(&self.readback, out).await
     }

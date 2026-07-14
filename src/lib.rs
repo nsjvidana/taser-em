@@ -93,6 +93,11 @@ impl FdtdSolver {
         self
     }
 
+    /// Returns dimensions of grid
+    pub fn grid_n_cells(&self) -> GridIndex {
+        self.pml_parameters.widths.sum_with_n_cells(self.grid.n_cells())
+    }
+
     /// Creates GPU buffers for simulating. Does the following:
     /// - discretize shapes
     /// - calculate update coefficients

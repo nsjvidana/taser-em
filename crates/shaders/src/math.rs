@@ -156,6 +156,17 @@ impl SpatialAxis {
         #[cfg(not(feature = "dim1"))]
         { (axis as usize) < DIM }
     }
+
+    /// # Safety
+    /// User must ensure `SpatialAxis::is_spatial_axis(axis) == true`.
+    #[inline]
+    #[allow(unused_variables)]
+    pub unsafe fn from_axis_unchecked(axis: Axis) -> Self {
+        #[cfg(feature = "dim1")]
+        { Self::Z }
+        #[cfg(not(feature = "dim1"))]
+        unsafe { core::mem::transmute::<Axis, Self>(axis) }
+    }
 }
 
 impl TryFrom<Axis> for SpatialAxis {
