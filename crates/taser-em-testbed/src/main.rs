@@ -1,11 +1,11 @@
 use std::num::NonZeroU32;
 use glamx::{Vec3, Vec4};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
-use kiss3d::prelude::{OrbitCamera3d, SceneNode3d, Window};
+use kiss3d::prelude::{OrbitCamera3d, SceneNode3d, Window, RED};
 use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{Vect, VectExt};
+use taser_em1d::shaders::math::{grid_index_as_vect, vect_to_3d, Vect, VectExt};
 
 const WARMUP_ITERS: usize = 10;
 const BENCH_ITERS: usize = 1000;
@@ -15,13 +15,14 @@ async fn main() {
     let webgpu = WebGpu::default().await.unwrap();
     let backend = GpuBackend::WebGpu(webgpu);
 
-    let avg_time = benchmark(&backend).await.unwrap();
-
-    println!("FDTD Benchmark (1D)");
-    println!("------------------------------");
-    println!("Average execution time: {}ms", avg_time * 1000.);
-    println!("Warmup iterations {}", WARMUP_ITERS);
-    println!("Total iterations {}", BENCH_ITERS);
+    // let avg_time = benchmark(&backend).await.unwrap();
+    //
+    // println!("FDTD Benchmark (1D)");
+    // println!("------------------------------");
+    // println!("Average execution time: {}ms", avg_time * 1000.);
+    // println!("Warmup iterations {}", WARMUP_ITERS);
+    // println!("Total iterations {}", BENCH_ITERS);
+    visualize(&backend).await.unwrap();
 }
 
 async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
@@ -119,8 +120,14 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let n_cells = solver.grid_n_cells();
     let mut buffers = solver.compute_and_create_buffers(backend)?;
 
+    let grid_extents = grid_index_as_vect(n_cells) * cell_size;
     let mut window = Window::new("Kiss3d: cube").await;
-    let mut camera = OrbitCamera3d::default();
+    let mut camera = OrbitCamera3d::new_with_frustum(
+        core::f32::consts::PI / 4.0,
+        cell_size / 3.,
+        grid_extents * 3.,
+        Vec3::X * grid_extents, Vec3::Z * grid_extents / 2.
+    );
     let mut scene = SceneNode3d::empty();
 
     let mut dn = vec![Vec4::ZERO; buffers.dn.buffer.len()];
@@ -136,6 +143,19 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
             backend.submit(encoder)?;
         }
         buffers.dn.read(backend, &mut dn).await?;
+
+        let mut prev_pos = 0.;
+        let mut prev_val = dn[0].length();
+        for (i,) in grid_cells_iter(n_cells).skip(1) {
+            let pos = grid_index_as_vect(i) * cell_size;
+            let val = dn[i as usize].length();
+            window.draw_line(
+                Vec3::new(0., prev_val, prev_pos), Vec3::new(0., val, pos),
+                RED, 2., false
+            );
+            prev_pos = pos;
+            prev_val = val;
+        }
     }
 
     Ok(())

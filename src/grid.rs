@@ -285,8 +285,6 @@ impl PmlCoefficientsGrid {
                 coeff.en_coeffs[axis_idx] = mats[i].eps_r[axis].recip();
             }
         }
-        println!("{:?}", coeffs);
-        println!("----");
 
         Self {
             n_cells,
@@ -373,7 +371,7 @@ impl YeeGridMaterials {
             .product::<Index>();
         let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count as usize];
 
-        let kernel_cells = grid_cells_iter!(grid_index_from_array([downscale_factor; DIM]))
+        let kernel_cells = grid_cells_iter(grid_index_from_array([downscale_factor; DIM]))
             .map(|t| grid_index_from_array(t.into()))
             .collect::<Vec<_>>();
         let old_n_cells3 = n_cells_to_3d(self.n_cells);

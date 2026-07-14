@@ -29,17 +29,28 @@ pub const MU_0: f32 = 1.256637e-6;
 /// Free space wave impedance
 pub const IMPEDANCE_0: f32 = 376.73032;
 
-/// Constructs an iterator of all cell positions in a grid of dimensions `$n_cells`.
+#[cfg(feature = "dim1")]
+pub trait GridCellsIter: Iterator<Item = (Index,)> {}
+#[cfg(feature = "dim2")]
+pub trait GridCellsIter: Iterator<Item = (Index, Index,)> {}
+#[cfg(feature = "dim3")]
+pub trait GridCellsIter: Iterator<Item = (Index, Index, Index,)> {}
+#[cfg(feature = "dim1")]
+impl<T> GridCellsIter for T where T: Iterator<Item = (Index,)> {}
+#[cfg(feature = "dim2")]
+impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index,)> {}
+#[cfg(feature = "dim3")]
+impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index, Index,)> {}
+
+
+/// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
 /// The cell positions are given as tuples.
-#[macro_export]
-macro_rules! grid_cells_iter {
-    ($n_cells:expr) => {
-        cfg_select! {
-            feature = "dim1" => itertools::iproduct!(0..$n_cells),
-            feature = "dim2" => itertools::iproduct!(0..$n_cells[SpatialAxis::X], 0..$n_cells[SpatialAxis::Y]),
-            feature = "dim3" => itertools::iproduct!(0..$n_cells[SpatialAxis::X], 0..$n_cells[SpatialAxis::Y], 0..$n_cells[SpatialAxis::Z]),
-        }
-    };
+pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
+    cfg_select! {
+        feature = "dim1" => itertools::iproduct!(0..n_cells),
+        feature = "dim2" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y]),
+        feature = "dim3" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y], 0..n_cells[SpatialAxis::Z]),
+    }
 }
 
 macro_rules! shader_struct {
