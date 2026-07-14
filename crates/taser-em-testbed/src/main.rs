@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 use glamx::{Vec3, Vec4};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
-use kiss3d::prelude::{OrbitCamera3d, SceneNode3d, Window, RED};
+use kiss3d::prelude::{Action, Key, OrbitCamera3d, SceneNode3d, Window, RED};
 use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
@@ -132,18 +132,24 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let mut scene = SceneNode3d::empty();
 
     let mut dn = vec![Vec4::ZERO; buffers.dn.buffer.len()];
+    let mut n_iters = 0;
     while window.render_3d(&mut scene, &mut camera).await {
+        backend.synchronize()?;
+        buffers.dn.read(backend, &mut dn).await?;
+        if n_iters == 1 || window.get_key(Key::P) == Action::Press {
+            println!("{:?}", dn);
+            println!("===============");
+        }
         // Submit simulation step
         {
-            backend.synchronize()?;
             let mut encoder = backend.begin_encoding();
             let mut pass = encoder.begin_pass("fdtd vis", None);
                 solver.submit_step(&mut buffers, &mut pass)?;
             drop(pass);
             buffers.dn.encode_copy_cmd(&mut encoder)?;
             backend.submit(encoder)?;
+            n_iters += 1;
         }
-        buffers.dn.read(backend, &mut dn).await?;
 
         let mut prev_pos = 0.;
         let mut prev_val = dn[0].length();

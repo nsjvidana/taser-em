@@ -225,23 +225,23 @@ impl GpuPolarizationMode {
 
     /// Is Transverse Magnetic
     #[inline]
-    pub fn is_tm(&self) -> bool {
+    pub const fn is_tm(&self) -> bool {
         self.mode == 0
     }
 
     /// Is Transverse Electric
     #[inline]
-    pub fn is_te(&self) -> bool {
+    pub const fn is_te(&self) -> bool {
         self.mode == 1
     }
 
     #[inline]
-    pub fn get_h_axes(&self) -> [Axis; MAX_DIM] {
+    pub const fn get_h_axes(&self) -> [Axis; MAX_DIM] {
         unsafe { core::mem::transmute::<[u32; MAX_DIM], [Axis; MAX_DIM]>(self.h_axes.to_array()) }
     }
 
     #[inline]
-    pub fn get_dn_axes(&self) -> [Axis; MAX_DIM] {
+    pub const fn get_dn_axes(&self) -> [Axis; MAX_DIM] {
         unsafe { core::mem::transmute::<[u32; MAX_DIM], [Axis; MAX_DIM]>(self.dn_axes.to_array()) }
     }
 }
