@@ -5,7 +5,7 @@ use kiss3d::prelude::{OrbitCamera3d, SceneNode3d, Window, RED};
 use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{grid_index_as_vect, vect_to_3d, Vect, VectExt};
+use taser_em1d::shaders::math::{grid_index_as_vect, Vect, VectExt};
 
 const WARMUP_ITERS: usize = 10;
 const BENCH_ITERS: usize = 1000;
@@ -22,6 +22,7 @@ async fn main() {
     // println!("Average execution time: {}ms", avg_time * 1000.);
     // println!("Warmup iterations {}", WARMUP_ITERS);
     // println!("Total iterations {}", BENCH_ITERS);
+
     visualize(&backend).await.unwrap();
 }
 

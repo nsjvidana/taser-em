@@ -1,5 +1,5 @@
 use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
-use glamx::{Pose3, UVec4, Vec3};
+use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
@@ -110,9 +110,9 @@ pub enum PolarizationMode {
     TransverseElectric = 1,
 }
 
-impl Into<GpuPolarizationMode> for PolarizationMode {
-    fn into(self) -> GpuPolarizationMode {
-        match self {
+impl From<PolarizationMode> for GpuPolarizationMode {
+    fn from(value: PolarizationMode) -> Self {
+        match value {
             PolarizationMode::TransverseMagnetic => GpuPolarizationMode::TM,
             PolarizationMode::TransverseElectric => GpuPolarizationMode::TE,
         }

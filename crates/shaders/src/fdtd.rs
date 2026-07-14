@@ -1,5 +1,7 @@
+#![allow(clippy::needless_range_loop)]
+
 use bytemuck::{Pod, Zeroable};
-use khal_std::glamx::{UVec3, UVec4, Vec3, Vec4, Vec4Swizzles};
+use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM};
@@ -208,7 +210,7 @@ impl GpuPolarizationMode {
     const FIELD_AXES2: [Axis; MAX_DIM] = cfg_select! {
         feature = "dim1" => [Axis::Y, Axis::INVALID, Axis::INVALID],
         feature = "dim2" => [Axis::Z, Axis::INVALID, Axis::INVALID],
-        feature = "dim3" => FIELD_AXES1,
+        feature = "dim3" => Self::FIELD_AXES1,
     };
     pub const TM: Self = Self {
         h_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES1) },
@@ -228,7 +230,7 @@ impl GpuPolarizationMode {
     pub fn is_tm(&self) -> bool {
         self.mode == 0
     }
-    
+
     /// Is Transverse Electric
     #[inline]
     pub fn is_te(&self) -> bool {
