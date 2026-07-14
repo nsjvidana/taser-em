@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis};
+use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM};
 use crate::thread_id_to_3d_grid_index;
 
 /// The axes in which "field 1" exist in, depending on the dimension & polarization mode.
@@ -121,7 +121,6 @@ pub fn fdtd_lossy(
         h.write(idx, new_h);
         new_h
     };
-    dn.write(idx, Vec4::ONE);
 
     // Dn Update
     let dn_cell = {
@@ -208,10 +207,9 @@ pub struct GridParameters2 {
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct PmlCoefficients2 {
-    // TODO: make these have all three dimensions
-    pub h_coeffs: [[f32; 2 + DIM - 1]; DIM],
-    pub dn_coeffs: [[f32; 4 + DIM - 1]; DIM],
-    pub en_coeffs: [f32; DIM],
+    pub h_coeffs: [[f32; 2 + DIM - 1]; MAX_DIM],
+    pub dn_coeffs: [[f32; 4 + DIM - 1]; MAX_DIM],
+    pub en_coeffs: [f32; MAX_DIM],
 }
 
 /// An electric dipole source
@@ -231,6 +229,6 @@ pub struct GpuDipole {
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct IntegrationTerms {
-    pub h: [[f32; if DIM == 1 { 1 } else { DIM - 1 }]; DIM],
-    pub dn: [[f32; DIM]; DIM],
+    pub h: [[f32; if DIM == 1 { 1 } else { DIM - 1 }]; MAX_DIM],
+    pub dn: [[f32; DIM]; MAX_DIM],
 }

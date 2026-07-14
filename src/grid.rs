@@ -244,10 +244,8 @@ impl PmlCoefficientsGrid {
                 std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i] + 1])
             );
 
-            for (s_axis_idx, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
-                .map(|s_a| s_a as usize)
-                .zip(SpatialAxis::ALL_AXES)
-            {
+            for axis in Axis::ALL_AXES {
+                let axis_idx = axis as usize;
                 let axis1 = axis.permute();
                 let axis2 = axis1.permute();
 
@@ -256,14 +254,14 @@ impl PmlCoefficientsGrid {
                         ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
                 ).recip();
                 let inv_mu_r_axis = mats[i].mu_r[axis].recip();
-                coeff.h_coeffs[s_axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
-                coeff.h_coeffs[s_axis_idx][1] = -coeff_term0 * C_0 * inv_mu_r_axis;
+                coeff.h_coeffs[axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
+                coeff.h_coeffs[axis_idx][1] = -coeff_term0 * C_0 * inv_mu_r_axis;
                 #[cfg(any(feature = "dim2", feature = "dim3"))]
                 {
-                    coeff.h_coeffs[s_axis_idx][2] = -coeff_term0 * c0_dt * h_sigs[axis] / EPS_0 * inv_mu_r_axis;
+                    coeff.h_coeffs[axis_idx][2] = -coeff_term0 * c0_dt * h_sigs[axis] / EPS_0 * inv_mu_r_axis;
                     #[cfg(feature = "dim3")]
                     {
-                        coeff.h_coeffs[s_axis_idx][3] = -coeff_term0 * dt * h_sigs[axis1] * h_sigs[axis2] / (EPS_0 * EPS_0);
+                        coeff.h_coeffs[axis_idx][3] = -coeff_term0 * dt * h_sigs[axis1] * h_sigs[axis2] / (EPS_0 * EPS_0);
                     }
                 }
 
@@ -272,19 +270,19 @@ impl PmlCoefficientsGrid {
                         ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
                 ).recip();
                 let mat_sig_axis = mats[i].sig[axis];
-                coeff.dn_coeffs[s_axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
-                coeff.dn_coeffs[s_axis_idx][1] = coeff_term0 * C_0;
-                coeff.dn_coeffs[s_axis_idx][2] = -coeff_term0 * mat_sig_axis / EPS_0;
-                coeff.dn_coeffs[s_axis_idx][3] = -coeff_term0 * dn_sigs[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
+                coeff.dn_coeffs[axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
+                coeff.dn_coeffs[axis_idx][1] = coeff_term0 * C_0;
+                coeff.dn_coeffs[axis_idx][2] = -coeff_term0 * mat_sig_axis / EPS_0;
+                coeff.dn_coeffs[axis_idx][3] = -coeff_term0 * dn_sigs[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
                 #[cfg(any(feature = "dim2", feature = "dim3"))]
                 {
-                    coeff.dn_coeffs[s_axis_idx][4] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
+                    coeff.dn_coeffs[axis_idx][4] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
                     #[cfg(feature = "dim3")]
                     {
-                        coeff.dn_coeffs[s_axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2];
+                        coeff.dn_coeffs[axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2];
                     }
                 }
-                coeff.en_coeffs[s_axis_idx] = mats[i].eps_r[axis].recip();
+                coeff.en_coeffs[axis_idx] = mats[i].eps_r[axis].recip();
             }
         }
         println!("{:?}", coeffs);

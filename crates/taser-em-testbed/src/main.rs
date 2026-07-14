@@ -81,4 +81,5 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     backend.slow_read_buffer(&buffers.dn.buffer, &mut out).await?;
     println!("{:?}", out);
     Ok(time)
+    // TODO: visualize the shader
 }
