@@ -189,19 +189,19 @@ impl TryFrom<u32> for SpatialAxis {
 }
 
 macro_rules! impl_vector_indexing {
-    ($v:ident, $elem_ty:ty, $axis_ty: ty, $n_dims: expr) => {
+    ($v:ident, $elem_ty:ty, $axis_ty:ty, $dims: expr) => {
         impl core::ops::Index<$axis_ty> for $v {
             type Output = $elem_ty;
             #[inline]
             fn index(&self, index: $axis_ty) -> &Self::Output {
-                &(unsafe { &*(self as *const $v as *const [$elem_ty; $n_dims]) } [index as usize])
+                &(unsafe { &*(self as *const $v as *const [$elem_ty; $dims]) } [index as usize])
             }
         }
 
         impl core::ops::IndexMut<$axis_ty> for $v {
             #[inline]
             fn index_mut(&mut self, index: $axis_ty) -> &mut Self::Output {
-                &mut (unsafe { &mut *(self as *mut $v as *mut [$elem_ty; $n_dims]) } [index as usize])
+                &mut (unsafe { &mut *(self as *mut $v as *mut [$elem_ty; $dims]) } [index as usize])
             }
         }
     };
@@ -209,11 +209,11 @@ macro_rules! impl_vector_indexing {
 
 impl_vector_indexing!(Index, Index, Axis, 1);
 impl_vector_indexing!(Real, Real, Axis, 1);
-impl_vector_indexing!(UVec2, Index, Axis, 2);
-impl_vector_indexing!(Vec2, Real, Axis, 2);
-impl_vector_indexing!(UVec3, Index, Axis, 3);
-impl_vector_indexing!(Vec3, Real, Axis, 3);
-impl_vector_indexing!(Vec4, Real, Axis, 4);
+impl_vector_indexing!(UVec2, Index, Axis, UVec2::AXES.len());
+impl_vector_indexing!(Vec2, Real, Axis, Vec2::AXES.len());
+impl_vector_indexing!(UVec3, Index, Axis, UVec3::AXES.len());
+impl_vector_indexing!(Vec3, Real, Axis, Vec3::AXES.len());
+impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 
 impl_vector_indexing!(Vect, Real, SpatialAxis, DIM);
 impl_vector_indexing!(GridIndex, Index, SpatialAxis, DIM);

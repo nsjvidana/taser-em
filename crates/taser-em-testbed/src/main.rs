@@ -47,15 +47,12 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     let grid = YeeGrid::new(
         cell_size,
         PolarizationMode::TransverseMagnetic,
+        // PolarizationMode::TransverseElectric,
         mat_regions,
         NonZeroU32::new(3).unwrap(),
         LayerWidths::splat(10)
     );
-    let mut solver = FdtdSolver::new(
-        backend,
-        grid,
-        dt,
-    )?;
+    let mut solver = FdtdSolver::new(backend, grid, dt)?;
     solver.add_source(source);
 
     // Warmup
@@ -81,7 +78,7 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     }
     let time = start.elapsed().as_secs_f32() / BENCH_ITERS as f32;
     let mut out = vec![glamx::Vec4::ZERO; buffers.h.buffer.len()];
-    backend.slow_read_buffer(&buffers.h.buffer, &mut out).await?;
+    backend.slow_read_buffer(&buffers.dn.buffer, &mut out).await?;
     println!("{:?}", out);
     Ok(time)
 }

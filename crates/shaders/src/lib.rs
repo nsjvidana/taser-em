@@ -22,3 +22,11 @@ pub fn add_assign(
         *a.at_mut(thread_id) += b.read(thread_id);
     }
 }
+
+#[inline]
+pub fn thread_id_to_3d_grid_index(id3: UVec3) -> UVec3 {
+    #[cfg(feature = "dim1")]
+    { UVec3::new(0, 0, id3.x) }
+    #[cfg(not(feature = "dim1"))]
+    id3
+}

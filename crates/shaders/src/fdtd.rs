@@ -3,6 +3,7 @@ use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis};
+use crate::thread_id_to_3d_grid_index;
 
 /// The axes in which "field 1" exist in, depending on the dimension & polarization mode.
 /// For example, in 1D with TM polarization
@@ -24,7 +25,7 @@ const FIELD_AXES2: core::ops::RangeInclusive<usize> = cfg_select! {
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn fdtd_lossy(
-    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(global_invocation_id)] id3: UVec3,
     // Vector fields
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
@@ -39,14 +40,13 @@ pub fn fdtd_lossy(
     // Uniforms
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
 ) {
-    let id3 = id;
-    if id3.cmpge(grid.n_cells).any() { return; }
+    let idx3 = thread_id_to_3d_grid_index(id3);
+    if idx3.cmpge(grid.n_cells).any() { return; }
     let n_cells = uvec3_to_grid_index(grid.n_cells);
     let boundary_idx3 = grid.n_cells - 1;
     // TODO: use usize indexing once indexing glam vectors is fixed? (see https://github.com/Rust-GPU/rust-gpu/issues/432)
 
-    let id = uvec3_to_grid_index(id3);
-    let idx = grid_index_to_flat_idx(id, n_cells) as usize;
+    let idx = grid_index_to_flat_idx(uvec3_to_grid_index(idx3), n_cells) as usize;
     let PmlCoefficients2 {
         h_coeffs,
         dn_coeffs,
@@ -58,7 +58,7 @@ pub fn fdtd_lossy(
     let h_axes = if grid.polarization_mode == 0 { FIELD_AXES1 } else { FIELD_AXES2 };
     let dn_axes = if grid.polarization_mode == 0 { FIELD_AXES2 } else { FIELD_AXES1 };
 
-    // Dipole sources
+    // Dipole sources (working)
     let steps_usize = *steps as usize;
     let mut source_term = 0.;
     for i in 0..dipoles.len() {
@@ -79,7 +79,7 @@ pub fn fdtd_lossy(
     // H Update
     let h_cell = {
         // TODO: set this to a "if cfg!()", use consts, and compare the performance.
-        let not_boundary = UVec3::from(id3.cmplt(boundary_idx3)).as_vec3();
+        let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
         let h_cell = h.read(idx);
         let mut new_h = Vec4::ZERO;
         for axis_idx in h_axes.clone() {
@@ -97,7 +97,7 @@ pub fn fdtd_lossy(
                 (en_neighbor[axis1] - en_cell[axis1]) / grid.d[axis2]
             } else { 0. };
             let en_curl_axis = de2_d1 - de1_d2;
-            
+
             // Update Equations
             let coeffs = h_coeffs[axis_idx];
             #[allow(unused_mut)]
@@ -121,11 +121,12 @@ pub fn fdtd_lossy(
         h.write(idx, new_h);
         new_h
     };
+    dn.write(idx, Vec4::ONE);
 
     // Dn Update
     let dn_cell = {
         // TODO: set this to a "if cfg!()", use consts, and compare the performance.
-        let not_boundary = UVec3::from(id3.cmpgt(UVec3::ZERO)).as_vec3();
+        let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
         let dn_cell = dn.read(idx);
         let mut new_dn = Vec4::ZERO;
         for axis_idx in dn_axes.clone() {
@@ -179,8 +180,8 @@ pub fn fdtd_lossy(
         en_cell[axis] = en_coeffs[axis_idx] * dn_cell[axis];
     }
     en.write(idx, en_cell);
-    
-    if id3 == UVec3::ZERO {
+
+    if idx3 == UVec3::ZERO {
         *steps += 1;
     }
 
@@ -207,6 +208,7 @@ pub struct GridParameters2 {
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct PmlCoefficients2 {
+    // TODO: make these have all three dimensions
     pub h_coeffs: [[f32; 2 + DIM - 1]; DIM],
     pub dn_coeffs: [[f32; 4 + DIM - 1]; DIM],
     pub en_coeffs: [f32; DIM],
