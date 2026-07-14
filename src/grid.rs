@@ -206,7 +206,7 @@ impl PmlCoefficientsGrid {
         ).downscaled(yee_grid.material_resolution);
         debug_assert!(n_cells == _n_cells);
 
-        // PML conductivity terms on all spatial axes.
+        // PML conductivity terms on all axes.
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
             if let Ok(s_axis) = SpatialAxis::try_from(axis) {
                 (0..=n_cells[s_axis]*2)
@@ -215,8 +215,8 @@ impl PmlCoefficientsGrid {
                         let hi_dist = n_cells[s_axis] as Real - lo_dist;
                         let [pml_lo, pml_hi] = pml_widths[s_axis]
                             .map(|l| l as Real);
-                        let lo_interp = (1. - lo_dist / pml_lo).max(0.);
-                        let hi_interp = (1. - hi_dist / pml_hi).max(0.);
+                        let lo_interp = (1. - lo_dist / pml_lo).clamp(0., 1.);
+                        let hi_interp = (1. - hi_dist / pml_hi).clamp(0., 1.);
                         let sig = pml_sig_max * (lo_interp + hi_interp).powi(pml_grading_order.get());
                         if sig.is_finite() { sig } else { 0. }
                     })
