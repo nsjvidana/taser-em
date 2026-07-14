@@ -5,15 +5,14 @@ use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM};
-use crate::thread_id_to_3d_grid_index;
 
 // TODO: Docs, remove the "2" from the struct names, delete fdtd1 module, try using Vect for vector field
 #[spirv_bindgen]
-#[cfg_attr(feature = "dim1", spirv(compute(threads(64))))]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn fdtd_lossy(
-    #[spirv(global_invocation_id)] id3: UVec3,
+    #[spirv(global_invocation_id)] idx3: UVec3,
     // Vector fields
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
@@ -28,7 +27,6 @@ pub fn fdtd_lossy(
     // Uniforms
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
 ) {
-    let idx3 = thread_id_to_3d_grid_index(id3);
     if idx3.cmpge(grid.n_cells3).any() { return; }
     let n_cells = uvec3_to_grid_index(grid.n_cells3);
     let boundary_idx3 = grid.n_cells3 - 1;

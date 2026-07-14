@@ -10,7 +10,7 @@ use crate::grid::{LayerWidths, PmlCoefficientsGrid, YeeGrid};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, Buffer, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
+use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
@@ -113,7 +113,7 @@ impl FdtdSolver {
     /// - discretize shapes
     /// - calculate update coefficients
     /// - initialize buffers and return them
-    pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverBuffers> {
+    pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverGpuData> {
         let PmlCoefficientsGrid {
             n_cells, coeffs: grid_coeffs, regions_offset
         } = PmlCoefficientsGrid::new(&self.grid, self.pml_parameters, self.dt);
@@ -155,7 +155,7 @@ impl FdtdSolver {
             incrs
         };
         Ok(
-            FdtdSolverBuffers {
+            FdtdSolverGpuData {
                 h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
@@ -171,13 +171,14 @@ impl FdtdSolver {
                     d: vect_to_3d(self.grid.cell_size, Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
+                thread_count: n_cells_to_3d(n_cells).to_array()
             }
         )
     }
 
     /// Submit a simulation step into `pass` using the GPU buffers `buffers`.
-    pub fn submit_step(&self, buffers: &mut FdtdSolverBuffers, pass: &mut GpuPass) -> GpuResult<()> {
-        let FdtdSolverBuffers {
+    pub fn submit_step(&self, buffers: &mut FdtdSolverGpuData, pass: &mut GpuPass) -> GpuResult<()> {
+        let FdtdSolverGpuData {
             h,
             dn,
             en,
@@ -187,10 +188,11 @@ impl FdtdSolver {
             source_vals,
             steps,
             grid_params,
+            thread_count,
         } = buffers;
         self.kernel.call(
             pass,
-            h.buffer.len(),
+            DispatchGrid::ThreadCount(*thread_count),
             &mut h.buffer,
             &mut dn.buffer,
             &mut en.buffer,
@@ -204,7 +206,8 @@ impl FdtdSolver {
     }
 }
 
-pub struct FdtdSolverBuffers {
+/// Buffers and data needed for running the shader
+pub struct FdtdSolverGpuData {
     pub h: GpuBufferReadable<Vec4>,
     pub dn: GpuBufferReadable<Vec4>,
     pub en: GpuBufferReadable<Vec4>,
@@ -214,6 +217,7 @@ pub struct FdtdSolverBuffers {
     pub source_vals: GpuBuffer<f32>,
     pub steps: GpuBuffer<u32>,
     pub grid_params: GpuBuffer<GridParameters2>,
+    pub thread_count: [u32; 3]
 }
 
 /// Parameters for how the PML will be constructed in the simulation
