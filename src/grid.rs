@@ -164,6 +164,13 @@ impl MaterialRegions {
     }
 }
 
+#[cfg(feature = "render")]
+pub struct RegionMesh {
+    pub vertices: Vec<Vec3>,
+    pub indices: Vec<[u32; 3]>,
+    pub pose: Pose3
+}
+
 /// The materials in a Yee Grid. It's the output of functions like [`MaterialRegions::material_yee_grid`].
 #[derive(Clone, Debug)]
 pub struct YeeGridMaterials {

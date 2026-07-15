@@ -1,6 +1,7 @@
 pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
+pub mod util;
 
 use std::num::NonZeroI32;
 pub use taser_em_shaders as shaders;
