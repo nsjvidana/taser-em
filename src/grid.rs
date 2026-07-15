@@ -82,6 +82,19 @@ impl YeeGrid {
             .sum_with_n_cells(materials_n_cells)
     }
 
+    /// Compute material grid of dimensions `n_cells` with smoothing via box filter.
+    ///
+    /// Smoothing resolution is `self.material_resolution`.
+    pub fn compute_materials_smoothed(&self, n_cells: GridIndex) -> YeeGridMaterials {
+        let res = self.material_resolution.get();
+        YeeGridMaterials::new(
+            n_cells * res,
+            self.cell_size / res as f32,
+            &self.material_regions,
+            self.background_material,
+        ).downscaled(self.material_resolution)
+    }
+    
     /// Resets all stored material data
     pub fn reset(&mut self) {
         self.material_regions.regions.clear();
@@ -131,6 +144,7 @@ pub struct MaterialRegions {
 impl MaterialRegions {
     pub fn new() -> Self { Self::default() }
 
+    /// Fill a box-shaped region from `start` to `end`
     pub fn fill_region(
         &mut self,
         start: Vect,
@@ -223,8 +237,7 @@ impl PmlCoefficientsGrid {
     ///
     /// `n_cells_inner` is the dimensions of the sub-grid that is encapsulated by the PML.
     pub fn new(
-        n_cells_inner: GridIndex,
-        yee_grid: &YeeGrid,
+        grid_mats: YeeGridMaterials,
         pml_parameters: PmlParameters,
         dt: Real
     ) -> (Vec3, Self) {
@@ -233,23 +246,15 @@ impl PmlCoefficientsGrid {
             sig_max: pml_sig_max,
             grading_order: pml_grading_order
         } = pml_parameters;
-        let n_cells = pml_widths.sum_with_n_cells(n_cells_inner);
+        let n_cells = grid_mats.n_cells;
         let n_cells3 = n_cells_to_3d(n_cells);
 
-        // Voxelize material regions w/ smoothing
-        let res = yee_grid.material_resolution.get();
         let YeeGridMaterials {
             n_cells: _n_cells,
             materials: mats,
             regions_offset,
             ..
-        } = YeeGridMaterials::new(
-            n_cells * res,
-            yee_grid.cell_size / res as f32,
-            &yee_grid.material_regions,
-            yee_grid.background_material,
-        ).downscaled(yee_grid.material_resolution);
-        debug_assert!(n_cells == _n_cells);
+        } = grid_mats;
 
         // PML conductivity terms on all axes.
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
@@ -337,7 +342,7 @@ impl PmlCoefficientsGrid {
             }
         }
 
-        (regions_offset, Self { n_cells, coeffs, })
+        (*regions_offset, Self { n_cells, coeffs, })
     }
 }
 

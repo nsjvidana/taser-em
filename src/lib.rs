@@ -124,8 +124,11 @@ impl FdtdSolver {
     }
 
     pub fn compute_pml_coeffs(&self) -> (Vec3, PmlCoefficientsGrid) {
-        let n_cells_inner = self.n_cells_inner();
-        PmlCoefficientsGrid::new(n_cells_inner, &self.grid, self.pml_parameters, self.dt)
+        let n_cells = self.pml_parameters.widths.sum_with_n_cells(
+            self.n_cells_inner()
+        );
+        let grid_mats = self.grid.compute_materials_smoothed(n_cells);
+        PmlCoefficientsGrid::new(grid_mats, self.pml_parameters, self.dt)
     }
 
     /// Creates GPU buffers for simulating. Does the following:
