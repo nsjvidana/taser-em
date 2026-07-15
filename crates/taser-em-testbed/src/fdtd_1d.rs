@@ -47,7 +47,8 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let mut solver = FdtdSolver::new(backend, grid, dt)?;
     solver.add_source(source);
     let n_cells = solver.grid_n_cells();
-    let mut buffers = solver.compute_and_create_buffers(backend)?;
+    let coeffs = solver.compute_pml_coeffs();
+    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs)?;
 
     let grid_extents = grid_index_as_vect(n_cells) * cell_size;
     let mut window = Window::new("Kiss3d: cube").await;

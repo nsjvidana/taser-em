@@ -125,7 +125,7 @@ impl From<PolarizationMode> for GpuPolarizationMode {
 pub struct MaterialRegions {
     pub regions: Vec<(SharedShape, Pose3, ElectricMaterial)>,
     /// A transformation applied to all regions as an entire scene.
-    pub scene_pose: Pose3
+    pub scene_pose: Pose3,
 }
 
 impl MaterialRegions {
