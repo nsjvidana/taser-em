@@ -123,7 +123,7 @@ impl From<PolarizationMode> for GpuPolarizationMode {
 /// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
 #[derive(Clone, Debug, Default)]
 pub struct MaterialRegions {
-    pub regions: Vec<(SharedShape, Pose3, ElectricMaterial)>,
+    pub regions: Vec<MaterialRegion>,
     /// A transformation applied to all regions as an entire scene.
     pub scene_pose: Pose3,
 }
@@ -142,7 +142,9 @@ impl MaterialRegions {
         let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
         let pose = Pose3::from_translation(middle);
 
-        self.regions.push((shape, pose, material));
+        self.regions.push(MaterialRegion {
+            shape, pose, material
+        });
         self
     }
 
@@ -153,7 +155,7 @@ impl MaterialRegions {
     pub fn compute_bounding_box(&self) -> Aabb {
         let aabbs = self.regions
             .iter()
-            .map(|(s, pose, _)| s.compute_aabb(&(self.scene_pose * pose)))
+            .map(|r | r.shape.compute_aabb(&(self.scene_pose * r.pose)))
             .collect::<Vec<_>>();
 
         let mut full_bb = Aabb::new_invalid();
@@ -162,6 +164,13 @@ impl MaterialRegions {
         }
         full_bb
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct MaterialRegion {
+    pub shape: SharedShape,
+    pub pose: Pose3,
+    pub material: ElectricMaterial,
 }
 
 #[cfg(feature = "render")]
@@ -344,12 +353,12 @@ impl YeeGridMaterials {
         let dn_offsets = YeeGrid::DN_OFFSETS.map(|v| v * cell_size3);
         let h_offsets = YeeGrid::H_OFFSETS.map(|v| v * cell_size3);
         let regions_transformed = regions.regions.iter()
-            .map(|(s, p, m)| (s, centered_scene_pose * p,  m))
+            .map(|r| (&r.shape, centered_scene_pose * r.pose, r.material))
             .collect::<Vec<_>>();
         let mat_at_pt = |pt| {
             regions_transformed.iter()
                 .find_map(|(s, p, m)|
-                    s.contains_point(p, pt).then_some(*m)
+                    s.contains_point(p, pt).then_some(m)
                 )
                 .unwrap_or(&default_mat)
         };
