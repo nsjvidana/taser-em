@@ -321,3 +321,131 @@ pub struct IntegrationTerms {
     pub h: [[f32; if DIM == 1 { 1 } else { DIM - 1 }]; MAX_DIM],
     pub dn: [[f32; DIM]; MAX_DIM],
 }
+
+/// ===========================================================================================================================
+#[spirv_bindgen]
+#[spirv(compute(threads(1, 1, 64)))]
+pub fn fdtd_lossy_v2(
+    #[spirv(global_invocation_id)] idx3: UVec3,
+    // Vector fields
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
+    // Field update terms
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [IntegrationTerms],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients2],
+    // Sources
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] steps: &mut u32,
+    // Uniforms
+    #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
+) {
+    if idx3.cmpge(grid.n_cells3).any() { return; }
+    let idx = grid_index_to_flat_idx(uvec3_to_grid_index(idx3), uvec3_to_grid_index(grid.n_cells3))
+        as usize;
+    let boundary_idx3 = grid.n_cells3 - 1;
+
+    // Get the source value at this timestep (working)
+    let steps_usize = *steps as usize;
+    let mut source_term = 0.;
+    for i in 0..dipoles.len() {
+        let GpuDipole {
+            vals_range: [start, end],
+            cell_idx,
+            t_start,
+        } = dipoles.read(i);
+        let t_start = t_start as usize;
+        let t = saturating_sub(steps_usize, t_start);
+        let [start, end] = [start as usize, end as usize];
+        let vals_i = start + t;
+        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
+        source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
+    }
+
+    let PmlCoefficients2 {
+        h_coeffs, dn_coeffs, en_coeffs
+    } = grid_coeffs.read(idx);
+    let mut int_terms = integrals.read(idx);
+
+    let h_axes = grid.polarization_mode.get_h_axes();
+    let dn_axes = grid.polarization_mode.get_dn_axes();
+
+    let en_self = en.read(idx);
+
+    // H update
+    let h_self = {
+        let mut h_self = h.read(idx);
+        let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
+        for i in 0..MAX_DIM {
+            let h_axis = h_axes[i];
+            if h_axis == Axis::INVALID { break; }
+            let axis1 = h_axis.permute();
+            let axis2 = axis1.permute();
+
+            let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
+                let neighbor_idx = (idx + grid.flat_idx_incrs[axis1] as usize).min(en.len() - 1);
+                let en_neighbor = en.read(neighbor_idx) * not_boundary[axis1];
+                (en_neighbor[axis2] - en_self[axis2]) / grid.d[axis1]
+            } else { 0. };
+            let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
+                let neighbor_idx = (idx + grid.flat_idx_incrs[axis2] as usize).min(en.len() - 1);
+                let en_neighbor = en.read(neighbor_idx) * not_boundary[axis2];
+                (en_neighbor[axis1] - en_self[axis1]) / grid.d[axis2]
+            } else { 0. };
+            let en_curl = curl_term1 - curl_term2;
+
+            let [m1, m2, ..] = h_coeffs[h_axis as usize];
+            h_self[h_axis] = m1 * h_self[h_axis] + m2 * en_curl +
+                source_term * grid.polarization_mode.is_te() as u32 as f32;
+        }
+        h_self
+    };
+    h.write(idx, h_self);
+
+    let dn_self = {
+        let mut dn_self = dn.read(idx);
+        let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
+        for i in 0..MAX_DIM {
+            let dn_axis = dn_axes[i];
+            if dn_axis == Axis::INVALID { break; }
+            let axis1 = dn_axis.permute();
+            let axis2 = axis1.permute();
+
+            let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
+                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis1] as usize).min(h.len() - 1);
+                let h_neighbor = h.read(neighbor_idx);
+                (h_self[axis2] - h_neighbor[axis2] * not_boundary[axis1]) / grid.d[axis1]
+            } else { 0. };
+            let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
+                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis2] as usize).min(h.len() - 1);
+                let h_neighbor = h.read(neighbor_idx);
+                (h_self[axis1] - h_neighbor[axis1] * not_boundary[axis2]) / grid.d[axis2]
+            } else { 0. };
+            let h_curl = curl_term1 - curl_term2;
+
+            let dn_axis_i = dn_axis as usize;
+            int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
+            let [m1, m2, m3, m4, ..] = dn_coeffs[dn_axis as usize];
+            dn_self[dn_axis] = m1 * dn_self[dn_axis] + m2 * h_curl + // regular update terms
+                m3 * en_self[dn_axis] + m4 * int_terms.dn[dn_axis_i][0] + // loss terms
+                source_term * grid.polarization_mode.is_tm() as u32 as f32;
+        }
+        dn_self
+    };
+    dn.write(idx, dn_self);
+
+    let mut en_self = en_self;
+    for i in 0..MAX_DIM {
+        let dn_axis = dn_axes[i];
+        if dn_axis == Axis::INVALID { break; }
+        en_self[dn_axis] = en_coeffs[dn_axis as usize] * dn_self[dn_axis];
+        en.write(idx, en_self);
+    }
+
+    integrals.write(idx, int_terms);
+
+    if idx3 == UVec3::ZERO {
+        *steps += 1;
+    }
+}

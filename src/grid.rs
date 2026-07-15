@@ -17,9 +17,6 @@ pub struct YeeGrid {
     /// Objects/devices within the simulation, stored as raw shapes.
     /// These shapes get pixelized/voxelized before running the simulation.
     pub material_regions: MaterialRegions,
-    /// Extra points that should be in the simulation space.  
-    /// This can include sources like [`crate::Source::Dipole`]s.
-    pub extra_points: Vec<Vec3>,
     /// Resolution at which material regions will be smoothed
     pub material_resolution: NonZeroU32,
     /// The "default" material in grid cells whose material isn't
@@ -53,7 +50,6 @@ impl YeeGrid {
             cell_size,
             polarization_mode,
             material_regions,
-            extra_points: Vec::new(),
             material_resolution,
             background_material: ElectricMaterial::FREE_SPACE,
             spacer_region_widths,
@@ -68,11 +64,16 @@ impl YeeGrid {
 
     /// Computes the total number of cells, in each principal direction,
     /// accounting for spacer regions as well.
-    pub fn n_cells(&self) -> GridIndex {
+    ///
+    /// `extra_points` include points that the user wants in the simulation space (not in spacer regions).
+    /// This can include things like sources (e.g. [`crate::Source::Dipole`]s).
+    pub fn n_cells(&self, extra_points: Option<&[Vec3]>) -> GridIndex {
         let mut inner_bb = self.material_regions.compute_bounding_box();
-        for pt in self.extra_points.iter() {
-            inner_bb.mins = inner_bb.mins.min(*pt);
-            inner_bb.maxs = inner_bb.maxs.max(*pt);
+        if let Some(pts) = extra_points {
+            for pt in pts.iter() {
+                inner_bb.mins = inner_bb.mins.min(*pt);
+                inner_bb.maxs = inner_bb.maxs.max(*pt);
+            }
         }
         let n_cells_vec3 = (inner_bb.extents() / vect_to_3d(self.cell_size, Vec3::ONE)).ceil();
         let materials_n_cells = vect_as_grid_index(vec3_to_vect(n_cells_vec3));
@@ -187,7 +188,10 @@ pub struct PmlCoefficientsGrid {
 
 impl PmlCoefficientsGrid {
     /// Voxelize material regions and compute PML update coefficients.
+    ///
+    /// `n_cells_inner` is the dimensions of the sub-grid that is encapsulated by the PML.
     pub fn new(
+        n_cells_inner: GridIndex,
         yee_grid: &YeeGrid,
         pml_parameters: PmlParameters,
         dt: Real
@@ -197,7 +201,7 @@ impl PmlCoefficientsGrid {
             sig_max: pml_sig_max,
             grading_order: pml_grading_order
         } = pml_parameters;
-        let n_cells = pml_widths.sum_with_n_cells(yee_grid.n_cells());
+        let n_cells = pml_widths.sum_with_n_cells(n_cells_inner);
         let n_cells3 = n_cells_to_3d(n_cells);
 
         // Voxelize material regions w/ smoothing
@@ -263,7 +267,10 @@ impl PmlCoefficientsGrid {
                         ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
                 ).recip();
                 let inv_mu_r_axis = mats[i].mu_r[axis].recip();
-                coeff.h_coeffs[axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
+                coeff.h_coeffs[axis_idx][0] = coeff_term0 * (
+                    inv_dt - ((h_sigs[axis1] + h_sigs[axis2]) / (2. * EPS_0)) -
+                        ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                    );
                 coeff.h_coeffs[axis_idx][1] = -coeff_term0 * C_0 * inv_mu_r_axis;
                 #[cfg(any(feature = "dim2", feature = "dim3"))]
                 {
@@ -279,7 +286,10 @@ impl PmlCoefficientsGrid {
                         ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
                 ).recip();
                 let mat_sig_axis = mats[i].sig[axis];
-                coeff.dn_coeffs[axis_idx][0] = coeff_term0 * (inv_dt * 2. - coeff_term0);
+                coeff.dn_coeffs[axis_idx][0] = coeff_term0 * (
+                    inv_dt - ((dn_sigs[axis1] + dn_sigs[axis2]) / (2. * EPS_0)) -
+                        ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                    );
                 coeff.dn_coeffs[axis_idx][1] = coeff_term0 * C_0;
                 coeff.dn_coeffs[axis_idx][2] = -coeff_term0 * mat_sig_axis / EPS_0;
                 coeff.dn_coeffs[axis_idx][3] = -coeff_term0 * dn_sigs[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
@@ -288,7 +298,7 @@ impl PmlCoefficientsGrid {
                     coeff.dn_coeffs[axis_idx][4] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
                     #[cfg(feature = "dim3")]
                     {
-                        coeff.dn_coeffs[axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2];
+                        coeff.dn_coeffs[axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2] / (EPS_0 * EPS_0);
                     }
                 }
                 coeff.en_coeffs[axis_idx] = mats[i].eps_r[axis].recip();
@@ -315,15 +325,12 @@ impl YeeGridMaterials {
         regions: &MaterialRegions,
         default_mat: ElectricMaterial,
     ) -> Self {
-        let cell_count = grid_index_to_array(n_cells).iter().product::<Index>()
-            as usize;
+        let cell_count = n_cells_to_3d(n_cells).element_product() as usize;
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
-        let grid_center = vect_to_3d(
-            grid_index_as_vect(n_cells) * cell_size / 2., Vec3::ZERO
-        );
-        let regions_center = regions.compute_bounding_box().center();
-        let regions_offset = grid_center - regions_center;
+        let grid_center = grid_index_as_vect(n_cells) * cell_size / 2.;
+        let regions_center = vec3_to_vect(regions.compute_bounding_box().center());
+        let regions_offset = vect_to_3d(grid_center - regions_center, Vec3::ZERO);
         let centered_scene_pose = regions.scene_pose.append_translation(regions_offset);
 
         let cell_size3 = vect_to_3d(cell_size, Vec3::ZERO);

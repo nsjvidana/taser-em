@@ -100,7 +100,7 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
 
     let slab_extents = [Vect::splat(1.), Vect::splat(1. + wavelen * 2.)];
     let source = Source::Dipole {
-        position: 1. - wavelen,
+        position: slab_extents[0] - wavelen * 3.,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
@@ -109,7 +109,8 @@ async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
-        sig: Vec3::splat(1e-15),
+        // sig: Vec3::splat(1e-15),
+        sig: Vec3::splat(0.3),
     };
     mat_regions.fill_region(slab_extents[0], slab_extents[1], mat);
     let grid = YeeGrid::new(

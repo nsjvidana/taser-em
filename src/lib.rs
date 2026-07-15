@@ -10,7 +10,7 @@ use crate::grid::{LayerWidths, PmlCoefficientsGrid, YeeGrid};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
+use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
@@ -76,7 +76,7 @@ macro_rules! shader_struct {
     };
 }
 
-shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
+shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossyV2);
 
 pub struct FdtdSolver {
     pub kernel: FdtdWithLoss,
@@ -104,9 +104,22 @@ impl FdtdSolver {
         self
     }
 
-    /// Returns dimensions of grid
+    /// Computes dimensions of entire Yee grid, including PML
     pub fn grid_n_cells(&self) -> GridIndex {
-        self.pml_parameters.widths.sum_with_n_cells(self.grid.n_cells())
+        self.pml_parameters.widths.sum_with_n_cells(self.n_cells_inner())
+    }
+
+    /// Computes dimensions of the grid, excluding PML
+    pub fn n_cells_inner(&self) -> GridIndex {
+        let source_pts = self.sources.iter()
+            .filter_map(|src| {
+                match src {
+                    Source::Dipole { position, .. } => Some(vect_to_3d(*position, Vec3::ZERO)),
+                    _ => None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.grid.n_cells(Some(&source_pts))
     }
 
     /// Creates GPU buffers for simulating. Does the following:
@@ -114,9 +127,10 @@ impl FdtdSolver {
     /// - calculate update coefficients
     /// - initialize buffers and return them
     pub fn compute_and_create_buffers(&self, backend: &GpuBackend) -> GpuResult<FdtdSolverGpuData> {
+        let n_cells_inner = self.n_cells_inner();
         let PmlCoefficientsGrid {
             n_cells, coeffs: grid_coeffs, regions_offset
-        } = PmlCoefficientsGrid::new(&self.grid, self.pml_parameters, self.dt);
+        } = PmlCoefficientsGrid::new(n_cells_inner, &self.grid, self.pml_parameters, self.dt);
 
         let mut source_vals: Vec<f32> = vec![];
         let regions_offset = vec3_to_vect(regions_offset);
@@ -220,7 +234,7 @@ pub struct FdtdSolverGpuData {
     pub thread_count: [u32; 3]
 }
 
-/// Parameters for how the PML will be constructed in the simulation
+/// Parameters judging how the PML will be constructed in the simulation
 #[derive(Copy, Clone)]
 pub struct PmlParameters {
     /// Widths of PML along each axis (widths for low and high end of each axis).
