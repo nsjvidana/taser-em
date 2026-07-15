@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM};
+use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real};
 
 // TODO: Docs, remove the "2" from the struct names, delete fdtd1 module, try using Vect for vector field
 #[spirv_bindgen]
@@ -380,20 +380,16 @@ pub fn fdtd_lossy_v2(
         for i in 0..MAX_DIM {
             let h_axis = h_axes[i];
             if h_axis == Axis::INVALID { break; }
-            let axis1 = h_axis.permute();
-            let axis2 = axis1.permute();
 
-            let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
-                let neighbor_idx = (idx + grid.flat_idx_incrs[axis1] as usize).min(en.len() - 1);
-                let en_neighbor = en.read(neighbor_idx) * not_boundary[axis1];
-                (en_neighbor[axis2] - en_self[axis2]) / grid.d[axis1]
-            } else { 0. };
-            let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
-                let neighbor_idx = (idx + grid.flat_idx_incrs[axis2] as usize).min(en.len() - 1);
-                let en_neighbor = en.read(neighbor_idx) * not_boundary[axis2];
-                (en_neighbor[axis1] - en_self[axis1]) / grid.d[axis2]
-            } else { 0. };
-            let en_curl = curl_term1 - curl_term2;
+            let en_curl = compute_curl::<true>(
+                h_axis,
+                grid.d,
+                idx,
+                not_boundary,
+                grid.flat_idx_incrs,
+                en_self,
+                en
+            );
 
             let [m1, m2, ..] = h_coeffs[h_axis as usize];
             h_self[h_axis] = m1 * h_self[h_axis] + m2 * en_curl +
@@ -409,20 +405,16 @@ pub fn fdtd_lossy_v2(
         for i in 0..MAX_DIM {
             let dn_axis = dn_axes[i];
             if dn_axis == Axis::INVALID { break; }
-            let axis1 = dn_axis.permute();
-            let axis2 = axis1.permute();
 
-            let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
-                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis1] as usize).min(h.len() - 1);
-                let h_neighbor = h.read(neighbor_idx);
-                (h_self[axis2] - h_neighbor[axis2] * not_boundary[axis1]) / grid.d[axis1]
-            } else { 0. };
-            let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
-                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis2] as usize).min(h.len() - 1);
-                let h_neighbor = h.read(neighbor_idx);
-                (h_self[axis1] - h_neighbor[axis1] * not_boundary[axis2]) / grid.d[axis2]
-            } else { 0. };
-            let h_curl = curl_term1 - curl_term2;
+            let h_curl = compute_curl::<false>(
+                dn_axis,
+                grid.d,
+                idx,
+                not_boundary,
+                grid.flat_idx_incrs,
+                h_self,
+                h
+            );
 
             let dn_axis_i = dn_axis as usize;
             int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
@@ -448,4 +440,40 @@ pub fn fdtd_lossy_v2(
     if idx3 == UVec3::ZERO {
         *steps += 1;
     }
+}
+
+/// Forwards & backwards component-wise curl operator
+#[inline]
+fn compute_curl<const FORWARDS: bool>(
+    axis: Axis,
+    d: Vec3,
+    idx: usize,
+    not_boundary: Vec3,
+    flat_idx_incrs: UVec3,
+    vect_self: Vec4,
+    vect_field: &[Vec4],
+) -> Real {
+    let axis1 = axis.permute();
+    let axis2 = axis1.permute();
+    let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
+        let neighbor_idx = 
+            if FORWARDS { idx + flat_idx_incrs[axis1] as usize }
+            else { idx.wrapping_sub(flat_idx_incrs[axis1] as usize) }
+                .min(vect_field.len() - 1);
+        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis1];
+
+        if FORWARDS { (vect_neighbor[axis2] - vect_self[axis2]) / d[axis1] }
+        else { (vect_self[axis2] - vect_neighbor[axis2]) / d[axis1] }
+    } else { 0. };
+    let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
+        let neighbor_idx =
+            if FORWARDS { idx + flat_idx_incrs[axis2] as usize }
+            else { idx.wrapping_sub(flat_idx_incrs[axis2] as usize) }
+                .min(vect_field.len() - 1);
+        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis2];
+
+        if FORWARDS { (vect_neighbor[axis1] - vect_self[axis1]) / d[axis2] }
+        else { (vect_self[axis1] - vect_neighbor[axis1]) / d[axis2] }
+    } else { 0. };
+    curl_term1 - curl_term2
 }
