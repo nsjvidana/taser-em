@@ -1,11 +1,12 @@
-use std::num::NonZeroU32;
-use glamx::{Vec3, Vec4};
+mod fdtd_1d;
+
+use glamx::Vec3;
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
-use kiss3d::prelude::{Action, Key, OrbitCamera3d, SceneNode3d, Window, RED};
-use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
+use std::num::NonZeroU32;
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{grid_index_as_vect, Vect, VectExt};
+use taser_em1d::shaders::math::{Vect, VectExt};
+use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 
 const WARMUP_ITERS: usize = 10;
 const BENCH_ITERS: usize = 1000;
@@ -23,8 +24,8 @@ async fn main() {
     // println!("Warmup iterations {}", WARMUP_ITERS);
     // println!("Total iterations {}", BENCH_ITERS);
 
-    visualize(&backend).await.unwrap();
-    // TODO: run & visualize 2d/3d. maybe have different functions do it their own taser-em imports?
+    fdtd_1d::visualize(&backend).await.unwrap();
+    // TODO: run & visualize 2d/3d. maybe have different functions do it with their own taser-em imports?
 }
 
 async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
@@ -86,91 +87,4 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     println!("{:?}", out);
     Ok(time)
     // TODO: visualize the shader
-}
-
-async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
-    let stability = FdtdStability {
-        dt_safety_factor: 6.,
-        ..Default::default()
-    };
-    let f_max = 2.4e9; // 2.4 GHz
-    let cell_size = stability.cell_size_from_min_wavelength(f_max);
-    let dt = stability.cfl_condition(cell_size)
-        .min(stability.dt_from_gaussian_freq(f_max));
-    let wavelen = C_0 / f_max;
-
-    let slab_extents = [Vect::splat(1.), Vect::splat(1. + wavelen * 2.)];
-    let source = Source::Dipole {
-        position: slab_extents[0] - wavelen * 3.,
-        t_start: 0.,
-        vals: Source::gaussian_max_f(f_max, 1., dt)
-    };
-
-    let mut mat_regions = MaterialRegions::new();
-    let mat = ElectricMaterial {
-        eps_r: Vec3::splat(7.),
-        mu_r: Vec3::splat(1.),
-        // sig: Vec3::splat(1e-15),
-        sig: Vec3::splat(0.3),
-    };
-    mat_regions.fill_region(slab_extents[0], slab_extents[1], mat);
-    let grid = YeeGrid::new(
-        cell_size,
-        PolarizationMode::TransverseMagnetic,
-        // PolarizationMode::TransverseElectric,
-        mat_regions,
-        NonZeroU32::new(3).unwrap(),
-        LayerWidths::splat(10)
-    );
-    let mut solver = FdtdSolver::new(backend, grid, dt)?;
-    solver.add_source(source);
-    let n_cells = solver.grid_n_cells();
-    let mut buffers = solver.compute_and_create_buffers(backend)?;
-
-    let grid_extents = grid_index_as_vect(n_cells) * cell_size;
-    let mut window = Window::new("Kiss3d: cube").await;
-    let mut camera = OrbitCamera3d::new_with_frustum(
-        core::f32::consts::PI / 4.0,
-        cell_size / 3.,
-        grid_extents * 3.,
-        Vec3::new(-grid_extents, 0., grid_extents / 2.),
-        Vec3::Z * grid_extents / 2.
-    );
-    let mut scene = SceneNode3d::empty();
-
-    let mut dn = vec![Vec4::ZERO; buffers.dn.buffer.len()];
-    let mut n_iters = 0;
-    while window.render_3d(&mut scene, &mut camera).await {
-        backend.synchronize()?;
-        buffers.dn.read(backend, &mut dn).await?;
-        if n_iters == 1 || window.get_key(Key::P) == Action::Press {
-            println!("{:?}", dn);
-            println!("===============");
-        }
-        // Submit simulation step
-        {
-            let mut encoder = backend.begin_encoding();
-            let mut pass = encoder.begin_pass("fdtd vis", None);
-                solver.submit_step(&mut buffers, &mut pass)?;
-            drop(pass);
-            buffers.dn.encode_copy_cmd(&mut encoder)?;
-            backend.submit(encoder)?;
-            n_iters += 1;
-        }
-
-        let mut prev_pos = 0.;
-        let mut prev_val = dn[0].y * cell_size;
-        for (i,) in grid_cells_iter(n_cells).skip(1) {
-            let pos = grid_index_as_vect(i) * cell_size;
-            let val = dn[i as usize].y * cell_size;
-            window.draw_line(
-                Vec3::new(0., prev_val, prev_pos), Vec3::new(0., val, pos),
-                RED, 2., false
-            );
-            prev_pos = pos;
-            prev_val = val;
-        }
-    }
-
-    Ok(())
 }
