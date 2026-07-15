@@ -1,14 +1,17 @@
+use std::cell::RefCell;
 use std::num::NonZeroU32;
+use std::rc::Rc;
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend};
 use glamx::{Vec3, Vec4};
-use kiss3d::prelude::{SceneNode3d, Window};
-use kiss3d::camera::OrbitCamera3d;
+use kiss3d::prelude::{GpuMesh3d, SceneNode3d, Window, GRAY};
+use kiss3d::camera::{OrbitCamera3d, Projection};
 use kiss3d::event::{Action, Key};
 use kiss3d::color::RED;
 use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
 use taser_em1d::shaders::math::{grid_index_as_vect, Vect, VectExt};
+use crate::MAT_REGION_ALPHA;
 
 pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let stability = FdtdStability {
@@ -47,8 +50,8 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let mut solver = FdtdSolver::new(backend, grid, dt)?;
     solver.add_source(source);
     let n_cells = solver.grid_n_cells();
-    let coeffs = solver.compute_pml_coeffs();
-    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs)?;
+    let (regions_offset, coeffs) = solver.compute_pml_coeffs();
+    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs, regions_offset)?;
 
     let grid_extents = grid_index_as_vect(n_cells) * cell_size;
     let mut window = Window::new("Kiss3d: cube").await;
@@ -59,7 +62,20 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
         Vec3::new(-grid_extents, 0., grid_extents / 2.),
         Vec3::Z * grid_extents / 2.
     );
+    camera.set_projection(Projection::Orthographic);
+
+
     let mut scene = SceneNode3d::empty();
+    for (mesh, pose) in solver.grid.material_regions.regions.iter()
+        .filter_map(|r| r.mesh.as_ref().map(|mesh| (mesh, r.pose)))
+    {
+        let kiss3d_mesh = Rc::new(RefCell::new(GpuMesh3d::new(
+            mesh.vertices.clone(), mesh.indices.clone(), None, None, false
+        )));
+        scene.add_mesh(kiss3d_mesh, Vec3::ONE)
+            .set_pose(pose.append_translation(regions_offset))
+            .set_color(GRAY.with_alpha(MAT_REGION_ALPHA));
+    }
 
     let mut dn = vec![Vec4::ZERO; buffers.dn.buffer.len()];
     let mut n_iters = 0;

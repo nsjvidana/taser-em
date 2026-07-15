@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::{PmlCoefficients2, GpuPolarizationMode};
-use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_as_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM};
+use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_as_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 #[derive(Clone, Debug)]
@@ -137,7 +137,9 @@ impl MaterialRegions {
         end: Vect,
         material: ElectricMaterial
     ) -> &mut Self {
-        let half_extents = vect_to_3d(end - start, Vec3::ONE);
+        let region_dims = end - start;
+        let half_extents = vect_to_3d(region_dims, Vec3::splat(region_dims.max_element()));
+
         let shape = SharedShape::new(Cuboid::new(half_extents));
         let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
         let pose = Pose3::from_translation(middle);
@@ -176,7 +178,7 @@ pub struct MaterialRegion {
 impl MaterialRegion {
     pub fn new(shape: SharedShape, pose: Pose3, material: ElectricMaterial) -> Self {
         #[cfg(feature = "render")]
-        let mesh = crate::util::generate_mesh(&shape)
+        let mesh = crate::util::generate_mesh(&*shape.0)
             .map(|(vertices, indices)| RegionMesh { vertices, indices });
         Self {
             shape,
@@ -214,7 +216,6 @@ pub struct PmlCoefficientsGrid {
     pub n_cells: GridIndex,
     /// Grid's update coefficients in a flattened array.
     pub coeffs: Vec<PmlCoefficients2>,
-    pub regions_offset: Vec3,
 }
 
 impl PmlCoefficientsGrid {
@@ -226,7 +227,7 @@ impl PmlCoefficientsGrid {
         yee_grid: &YeeGrid,
         pml_parameters: PmlParameters,
         dt: Real
-    ) -> Self {
+    ) -> (Vec3, Self) {
         let PmlParameters {
             widths: pml_widths,
             sig_max: pml_sig_max,
@@ -336,11 +337,7 @@ impl PmlCoefficientsGrid {
             }
         }
 
-        Self {
-            n_cells,
-            coeffs,
-            regions_offset
-        }
+        (regions_offset, Self { n_cells, coeffs, })
     }
 }
 

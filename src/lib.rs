@@ -123,7 +123,7 @@ impl FdtdSolver {
         self.grid.n_cells(Some(&source_pts))
     }
 
-    pub fn compute_pml_coeffs(&self) -> PmlCoefficientsGrid {
+    pub fn compute_pml_coeffs(&self) -> (Vec3, PmlCoefficientsGrid) {
         let n_cells_inner = self.n_cells_inner();
         PmlCoefficientsGrid::new(n_cells_inner, &self.grid, self.pml_parameters, self.dt)
     }
@@ -132,9 +132,13 @@ impl FdtdSolver {
     /// - discretize shapes
     /// - calculate update coefficients
     /// - initialize buffers and return them
-    pub fn compute_and_create_buffers(&self, backend: &GpuBackend, coeffs_grid: &PmlCoefficientsGrid) -> GpuResult<FdtdSolverGpuData> {
+    pub fn compute_and_create_buffers(
+        &self,
+        backend: &GpuBackend,
+        coeffs_grid: &PmlCoefficientsGrid,
+        regions_offset: Vec3
+    ) -> GpuResult<FdtdSolverGpuData> {
         let n_cells = coeffs_grid.n_cells;
-        let regions_offset = coeffs_grid.regions_offset;
         let grid_coeffs = &coeffs_grid.coeffs;
 
         let mut source_vals: Vec<Real> = vec![];

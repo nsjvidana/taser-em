@@ -37,15 +37,18 @@ mod dim_types {
 }
 
 pub trait VectExt {
-    fn splat(value: Real) -> Self;
+    type Element;
+    fn splat(value: Self::Element) -> Self;
     fn zero() -> Self;
     fn one() -> Self;
+    fn max_element(self) -> Self::Element;
 }
 
 impl VectExt for Vect {
+    type Element = Real;
     /// Create a vector field element with all its components set to `value`
     #[inline]
-    fn splat(value: Real) -> Self {
+    fn splat(value: Self::Element) -> Self {
         cfg_select! {
             feature = "dim1" => value,
             _ => Self::splat(value)
@@ -60,6 +63,13 @@ impl VectExt for Vect {
     #[inline]
     fn one() -> Self {
         Self::splat(1.)
+    }
+    #[inline]
+    fn max_element(self) -> Self::Element {
+        #[cfg(feature = "dim1")]
+        { self }
+        #[cfg(not(feature = "dim1"))]
+        self.max_element()
     }
 }
 

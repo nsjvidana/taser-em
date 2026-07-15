@@ -8,6 +8,7 @@ use taser_em1d::prelude::GpuResult;
 use taser_em1d::shaders::math::{Vect, VectExt};
 use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 
+pub const MAT_REGION_ALPHA: f32 = 0.9;
 const WARMUP_ITERS: usize = 10;
 const BENCH_ITERS: usize = 1000;
 
@@ -61,8 +62,8 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     solver.add_source(source);
 
     // Warmup
-    let coeffs = solver.compute_pml_coeffs();
-    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs)?;
+    let (regions_offset, coeffs) = solver.compute_pml_coeffs();
+    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs, regions_offset)?;
     for _ in 0..WARMUP_ITERS {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("fdtd warmup", None);
