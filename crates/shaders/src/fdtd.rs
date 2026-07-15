@@ -73,12 +73,12 @@ pub fn fdtd_lossy(
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
             let de2_d1 = if SpatialAxis::is_spatial_axis(axis1) {
-                let neighbor_idx = (idx + grid.flat_idx_incrs[axis1] as usize).max(en.len() - 1);
+                let neighbor_idx = (idx + grid.flat_idx_incrs[axis1] as usize).min(en.len() - 1);
                 let en_neighbor = en.read(neighbor_idx) * not_boundary[axis1];
                 (en_neighbor[axis2] - en_cell[axis2]) / grid.d[axis1]
             } else { 0. };
             let de1_d2 = if SpatialAxis::is_spatial_axis(axis2) {
-                let neighbor_idx = (idx + grid.flat_idx_incrs[axis2] as usize).max(en.len() - 1);
+                let neighbor_idx = (idx + grid.flat_idx_incrs[axis2] as usize).min(en.len() - 1);
                 let en_neighbor = en.read(neighbor_idx) * not_boundary[axis2];
                 (en_neighbor[axis1] - en_cell[axis1]) / grid.d[axis2]
             } else { 0. };
@@ -120,12 +120,12 @@ pub fn fdtd_lossy(
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
             let de2_d1 = if SpatialAxis::is_spatial_axis(axis1) {
-                let neighbor_idx = saturating_sub(idx, grid.flat_idx_incrs[axis1] as usize);
+                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis1] as usize).min(h.len() - 1);
                 let h_neighbor = h.read(neighbor_idx) * not_boundary[axis1];
                 (h_cell[axis2] - h_neighbor[axis2]) / grid.d[axis1]
             } else { 0. };
             let de1_d2 = if SpatialAxis::is_spatial_axis(axis2) {
-                let neighbor_idx = saturating_sub(idx, grid.flat_idx_incrs[axis2] as usize);
+                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis2] as usize).min(h.len() - 1);
                 let en_neighbor = h.read(neighbor_idx) * not_boundary[axis2];
                 (h_cell[axis1] - en_neighbor[axis1]) / grid.d[axis2]
             } else { 0. };
