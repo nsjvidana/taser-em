@@ -51,7 +51,7 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     solver.add_source(source);
     let n_cells = solver.grid_n_cells();
     let (regions_offset, coeffs) = solver.compute_pml_coeffs();
-    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs, regions_offset)?;
+    let mut buffers = solver.create_shader_data(backend, &coeffs, regions_offset)?;
 
     let grid_extents = grid_index_as_vect(n_cells) * cell_size;
     let mut window = Window::new("Kiss3d: cube").await;

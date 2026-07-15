@@ -237,7 +237,7 @@ impl PmlCoefficientsGrid {
     ///
     /// `n_cells_inner` is the dimensions of the sub-grid that is encapsulated by the PML.
     pub fn new(
-        grid_mats: YeeGridMaterials,
+        grid_mats: &YeeGridMaterials,
         pml_parameters: PmlParameters,
         dt: Real
     ) -> (Vec3, Self) {

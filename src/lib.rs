@@ -123,19 +123,20 @@ impl FdtdSolver {
         self.grid.n_cells(Some(&source_pts))
     }
 
+    /// Calculate PML coefficients.
+    ///
+    /// Returns the coefficients and the offset applied to each [`grid::MaterialRegion`] to align them with
+    /// the grid.
     pub fn compute_pml_coeffs(&self) -> (Vec3, PmlCoefficientsGrid) {
         let n_cells = self.pml_parameters.widths.sum_with_n_cells(
             self.n_cells_inner()
         );
         let grid_mats = self.grid.compute_materials_smoothed(n_cells);
-        PmlCoefficientsGrid::new(grid_mats, self.pml_parameters, self.dt)
+        PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, self.dt)
     }
 
-    /// Creates GPU buffers for simulating. Does the following:
-    /// - discretize shapes
-    /// - calculate update coefficients
-    /// - initialize buffers and return them
-    pub fn compute_and_create_buffers(
+    /// Creates GPU buffers and dispatch parameters for simulating.
+    pub fn create_shader_data(
         &self,
         backend: &GpuBackend,
         coeffs_grid: &PmlCoefficientsGrid,

@@ -63,7 +63,7 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
 
     // Warmup
     let (regions_offset, coeffs) = solver.compute_pml_coeffs();
-    let mut buffers = solver.compute_and_create_buffers(backend, &coeffs, regions_offset)?;
+    let mut buffers = solver.create_shader_data(backend, &coeffs, regions_offset)?;
     for _ in 0..WARMUP_ITERS {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("fdtd warmup", None);
