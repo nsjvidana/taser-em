@@ -77,17 +77,17 @@ pub enum Axis {
 
 impl Axis {
     pub const ALL_AXES: [Self; MAX_DIM] = [Axis::X, Axis::Y, Axis::Z];
+    pub const PERMUTATION: [Self; MAX_DIM] = [Axis::Y, Axis::Z, Axis::X];
+
     /// Circular permutation of `self` in the following sequence:
     ///
     /// [`Axis::X`] -> [`Axis::Y`] -> [`Axis::Z`] -> [`Axis::X`] -> ...
+    ///
+    /// # Panics
+    /// Out of bounds access when `self == Axis::INVALID`
     #[inline]
     pub fn permute(&self) -> Self {
-        match self {
-            Axis::X => Axis::Y,
-            Axis::Y => Axis::Z,
-            Axis::Z => Axis::X,
-            _ => Axis::INVALID
-        }
+        Self::PERMUTATION[*self as usize]
     }
 
     /// Transmutes `idx` into an [`Axis`]
@@ -158,7 +158,7 @@ impl SpatialAxis {
 
     /// Efficiently check if an [`Axis`] is a spatial axis.
     #[inline]
-    pub fn is_spatial_axis(axis: Axis) -> bool {
+    pub const fn is_spatial_axis(axis: Axis) -> bool {
         #[cfg(feature = "dim1")]
         { matches!(axis, Axis::Z) }
         #[cfg(not(feature = "dim1"))]
