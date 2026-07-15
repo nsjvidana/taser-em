@@ -123,7 +123,7 @@ impl FdtdSolver {
         self.grid.n_cells(Some(&source_pts))
     }
 
-    /// Calculate PML coefficients.
+    /// Calculates materials (see [YeeGrid::compute_materials_smoothed]) PML coefficients.
     ///
     /// Returns the coefficients and the offset applied to each [`grid::MaterialRegion`] to align them with
     /// the grid.

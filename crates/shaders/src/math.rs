@@ -154,7 +154,11 @@ pub enum SpatialAxis {
 }
 
 impl SpatialAxis {
-    /// All spatial axes in an array of [`DIM`] elements.
+    /// All spatial axes in an array of [`DIM`] elements, depending on how many dimensions there are:
+    ///
+    /// - 1D: Z axis
+    /// - 2D: X and Y axes
+    /// - 3D: X, Y, and Z axes
     pub const ALL_SPATIAL: [Self; DIM] = cfg_select! {
         feature = "dim1" => [Self::Z],
         feature = "dim2" => [Self::X, Self::Y],

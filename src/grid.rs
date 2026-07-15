@@ -83,11 +83,12 @@ impl YeeGrid {
     }
 
     /// Compute material grid of dimensions `n_cells` with smoothing via box filter.
-    ///
     /// Smoothing resolution is `self.material_resolution`.
+    ///
+    /// For how the material at each vector component is determined, see [`YeeGridMaterials::new_material_grid`]
     pub fn compute_materials_smoothed(&self, n_cells: GridIndex) -> YeeGridMaterials {
         let res = self.material_resolution.get();
-        YeeGridMaterials::new(
+        YeeGridMaterials::new_material_grid(
             n_cells * res,
             self.cell_size / res as f32,
             &self.material_regions,
@@ -133,8 +134,8 @@ impl From<PolarizationMode> for GpuPolarizationMode {
     }
 }
 
-/// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
 #[derive(Clone, Debug, Default)]
+/// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
 pub struct MaterialRegions {
     pub regions: Vec<MaterialRegion>,
     /// A transformation applied to all regions as an entire scene.
@@ -350,9 +351,19 @@ impl YeeGridMaterials {
     /// Compute a material grid with the dimensions of `n_cells` where all material regions
     /// are centered at the middle of the grid.
     ///
-    /// `obj_offset` gets multiplied to each region individually before being voxelized.
-    /// Voxels whose origin don't intersect with any region are assigned `default_mat`
-    pub fn new(
+    /// # How it Works
+    /// First, the grid is moved **only along the spatial axes** (see [`SpatialAxis::ALL_SPATIAL`]) in a way
+    /// that puts its center at the middle of all regions.
+    /// Then point-intersection tests are done for each vector component's physical position using [`SharedShape::contains_point`]
+    /// on each region. Components that don't intersect with any regions are assigned `default_mat`.
+    ///
+    /// Since grid centering only happens along spatial axes, whether a region is in the grid will
+    /// depend on the dimension:
+    /// - 1D: Only when intersecting w/ Z axis
+    /// - 2D: Only when intersecting w/ X-Y plane
+    /// - 3D: Grid of size `n_cells` is centered at the middle of a bounding box encapsulating all regions.
+    ///       Whatever parts of regions that are inside the grid at this location are included.
+    pub fn new_material_grid(
         n_cells: GridIndex,
         cell_size: Vect,
         regions: &MaterialRegions,
