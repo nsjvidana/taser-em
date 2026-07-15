@@ -391,9 +391,22 @@ pub fn fdtd_lossy_v2(
                 en
             );
 
-            let [m1, m2, ..] = h_coeffs[h_axis as usize];
-            h_self[h_axis] = m1 * h_self[h_axis] + m2 * en_curl +
+            let h_axis_i = h_axis as usize;
+            let [m0, m1, ..] = h_coeffs[h_axis_i];
+            #[allow(unused_mut)]
+            let mut h_cmp_new = m0 * h_self[h_axis] + m1 * en_curl +
                 source_term * grid.polarization_mode.is_te() as u32 as f32;
+            #[cfg(any(feature = "dim2", feature = "dim3"))]
+            {
+                int_terms.h[h_axis_i][0] += en_curl;
+                h_cmp_new += h_coeffs[h_axis_i][2] * int_terms.h[h_axis_i][0];
+                #[cfg(feature = "dim3")]
+                {
+                    int_terms.h[h_axis_i][1] += h_self[h_axis];
+                    h_cmp_new += h_coeffs[h_axis_i][3] * int_terms.h[h_axis_i][1];
+                }
+            }
+            h_self[h_axis] = h_cmp_new;
         }
         h_self
     };
@@ -418,10 +431,22 @@ pub fn fdtd_lossy_v2(
 
             let dn_axis_i = dn_axis as usize;
             int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
-            let [m1, m2, m3, m4, ..] = dn_coeffs[dn_axis as usize];
-            dn_self[dn_axis] = m1 * dn_self[dn_axis] + m2 * h_curl + // regular update terms
-                m3 * en_self[dn_axis] + m4 * int_terms.dn[dn_axis_i][0] + // loss terms
+            let [m0, m1, m2, m3, ..] = dn_coeffs[dn_axis_i];
+            #[allow(unused_mut)]
+            let mut dn_cmp_new = m0 * dn_self[dn_axis] + m1 * h_curl + // regular update terms
+                m2 * en_self[dn_axis] + m3 * int_terms.dn[dn_axis_i][0] + // loss terms
                 source_term * grid.polarization_mode.is_tm() as u32 as f32;
+            #[cfg(any(feature = "dim2", feature = "dim3"))]
+            {
+                int_terms.dn[dn_axis_i][1] += h_curl;
+                dn_cmp_new += dn_coeffs[dn_axis_i][4] * int_terms.dn[dn_axis_i][1];
+                #[cfg(feature = "dim3")]
+                {
+                    int_terms.dn[dn_axis_i][2] += dn_self[dn_axis];
+                    dn_cmp_new += dn_coeffs[dn_axis_i][5] * int_terms.dn[dn_axis_i][2];
+                }
+            }
+            dn_self[dn_axis] = dn_cmp_new;
         }
         dn_self
     };

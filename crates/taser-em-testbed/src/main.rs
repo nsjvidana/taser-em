@@ -24,6 +24,7 @@ async fn main() {
     // println!("Total iterations {}", BENCH_ITERS);
 
     visualize(&backend).await.unwrap();
+    // TODO: run & visualize 2d/3d. maybe have different functions do it their own taser-em imports?
 }
 
 async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
