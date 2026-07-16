@@ -3,33 +3,60 @@ mod fdtd_1d;
 use glamx::Vec3;
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
 use std::num::NonZeroU32;
+use kiss3d::camera::Projection;
+use kiss3d::prelude::{OrbitCamera3d, SceneNode3d, Window};
 use taser_em::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em::prelude::GpuResult;
-use taser_em::shaders::math::{Vect, VectorValueExt};
+use taser_em::shaders::math::{Real, Vect, VectorValueExt};
 use taser_em::{ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 
 pub const MAT_REGION_ALPHA: f32 = 0.9;
+
+pub struct FdtdTestbedViewer {
+    pub window: Window,
+    pub camera: OrbitCamera3d,
+    pub scene: SceneNode3d,
+}
+
+impl FdtdTestbedViewer {
+    pub async fn new() -> anyhow::Result<Self> {
+        #[cfg(feature = "dim1")]
+        let title = "1D FDTD Testbed";
+        #[cfg(feature = "dim2")]
+        let title = "2D FDTD Testbed";
+        #[cfg(feature = "dim3")]
+        let title = "3D FDTD Testbed";
+        let window = Window::new(title).await;
+        let mut camera = OrbitCamera3d::default();
+        camera.set_projection(Projection::Orthographic);
+        let scene = SceneNode3d::default();
+
+        Ok(
+            Self {
+                window,
+                camera,
+                scene,
+            }
+        )
+    }
+
+    pub fn set_clipping_planes(&mut self, znear: f32, zfar: f32) {
+        todo!()
+    }
+
+    /// Add material regions as meshes rendered in the scene.
+    pub fn add_region_meshes(&mut self, regions: &MaterialRegions) {
+        todo!()
+    }
+
+    /// Renders one frame
+    pub fn render_frame(&mut self) {
+        todo!()
+    }
+}
+
 const WARMUP_ITERS: usize = 10;
 const BENCH_ITERS: usize = 1000;
-
-#[kiss3d::main]
-async fn main() {
-    let webgpu = WebGpu::default().await.unwrap();
-    let backend = GpuBackend::WebGpu(webgpu);
-
-    // let avg_time = benchmark(&backend).await.unwrap();
-    //
-    // println!("FDTD Benchmark (1D)");
-    // println!("------------------------------");
-    // println!("Average execution time: {}ms", avg_time * 1000.);
-    // println!("Warmup iterations {}", WARMUP_ITERS);
-    // println!("Total iterations {}", BENCH_ITERS);
-
-    fdtd_1d::visualize(&backend).await.unwrap();
-    // TODO: run & visualize 2d/3d. maybe have different functions do it with their own taser-em imports?
-    // TODO: maybe use rapier's debug shape rendering?
-    //       (See https://github.com/dimforge/rapier/blob/c13133ad293ee70c7f9cec9e498eac016c362169/src/pipeline/debug_render_pipeline/debug_render_pipeline.rs#L471)
-}
 
 async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     let stability = FdtdStability::default();

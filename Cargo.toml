@@ -36,6 +36,7 @@ bytemuck = "1"
 itertools = "0.15"
 include_dir = "0.7"
 derivative = "2"
+anyhow = "1"
 
 # Internal crates
 taser-em1d = { version = "0.1.0", path = "crates/taser-em1d" }

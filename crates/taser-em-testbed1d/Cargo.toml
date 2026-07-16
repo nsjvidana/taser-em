@@ -6,15 +6,19 @@ categories.workspace = true
 keywords.workspace = true
 edition.workspace = true
 
+[features]
+dim1 = []
 
 [lib]
 name = "taser_em_testbed1d"
 path = "../../src_testbed/src/lib.rs"
+required-features = ["dim1"]
 
 [dependencies]
 kiss3d = "0.44.0"
 khal.workspace = true
 glamx.workspace = true
+anyhow.workspace = true
 
 [dependencies.taser_em]
 package = "taser-em1d"
