@@ -1422,9 +1422,9 @@ dependencies = [
 
 [[package]]
 name = "khal"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e7c9abced8998c133f96abe76e74ec4fe38e7b351aef1029e8f9bba3e368828"
+checksum = "34cc34900d781530820f9aaea2607fe4bef1c4427f7dd8bd2deba72b93f60e83"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -1442,9 +1442,9 @@ dependencies = [
 
 [[package]]
 name = "khal-builder"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9491d5526cb7a18e4e8db50c6707cf107d83bb5be9f17494be30dfcac165438"
+checksum = "d56c2147f3025ff4f3fc02ba8453f37a8181c879a2c36089aa744635a02e9939"
 dependencies = [
  "anyhow",
  "walkdir",
@@ -1464,9 +1464,9 @@ dependencies = [
 
 [[package]]
 name = "khal-std"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bcc4427a5e481b3c47294cc8e70c8d993de54efc25a5cc14ca2fb6e36ed61fa"
+checksum = "c730a7e7aec6c24f38cb098c1d1449f14a5bf0995da59e30597c8ab18ec66c15"
 dependencies = [
  "corosensei",
  "glamx",
