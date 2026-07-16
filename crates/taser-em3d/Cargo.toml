@@ -30,7 +30,7 @@ required-features = ["dim3"]
 [dependencies]
 parry3d.workspace = true
 khal.workspace = true
-taser-em-shaders = { package = "taser-em-shaders3d", path = "../shaders/taser-em-shaders3d" }
+taser-em-shaders = { package = "taser-em-shaders3d", path = "../taser-em-shaders3d" }
 glamx.workspace = true
 itertools.workspace = true
 include_dir.workspace = true
@@ -39,4 +39,4 @@ derivative.workspace = true
 [build-dependencies]
 khal-builder.workspace = true
 taser-em-build.workspace = true
-taser-em-shaders = { package = "taser-em-shaders3d", path = "../shaders/taser-em-shaders3d" }
+taser-em-shaders = { package = "taser-em-shaders3d", path = "../taser-em-shaders3d" }

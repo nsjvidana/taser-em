@@ -1,11 +1,11 @@
 [workspace]
 members = [
     "crates/taser-em1d",
-    "crates/shaders/taser-em-shaders1d",
+    "crates/taser-em-shaders1d",
     "crates/taser-em2d",
-    "crates/shaders/taser-em-shaders2d",
+    "crates/taser-em-shaders2d",
     "crates/taser-em3d",
-    "crates/shaders/taser-em-shaders3d",
+    "crates/taser-em-shaders3d",
     "crates/taser-em-testbed",
     "crates/taser-em-build",
 ]
@@ -38,11 +38,11 @@ derivative = "2"
 
 # Internal crates
 taser-em1d = { version = "0.1.0", path = "crates/taser-em1d" }
-taser-em-shaders1d = { version = "0.1.0", path = "crates/shaders/taser-em-shaders1d" }
+taser-em-shaders1d = { version = "0.1.0", path = "crates/taser-em-shaders1d" }
 taser-em2d = { version = "0.1.0", path = "crates/taser-em2d" }
-taser-em-shaders2d = { version = "0.1.0", path = "crates/shaders/taser-em-shaders2d" }
+taser-em-shaders2d = { version = "0.1.0", path = "crates/taser-em-shaders2d" }
 taser-em3d = { version = "0.1.0", path = "crates/taser-em3d" }
-taser-em-shaders3d = { version = "0.1.0", path = "crates/shaders/taser-em-shaders3d" }
+taser-em-shaders3d = { version = "0.1.0", path = "crates/taser-em-shaders3d" }
 taser-em-testbed = { version = "0.1.0", path = "crates/taser-em-testbed" }
 taser-em-build = { version = "0.1.0", path = "crates/taser-em-build" }
 
