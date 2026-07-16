@@ -7,7 +7,7 @@ keywords.workspace = true
 edition.workspace = true
 
 [dependencies]
-taser-em1d = { path = "../taser-em1d", features = ["render"] }
+taser-em1d = { workspace = true, features = ["render"] }
 kiss3d = "0.44.0"
 khal.workspace = true
 glamx.workspace = true

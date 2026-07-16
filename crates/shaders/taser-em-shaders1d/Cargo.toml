@@ -35,4 +35,4 @@ khal.workspace = true
 
 [build-dependencies]
 khal-std.workspace = true
-taser-em-build = { path = "../../taser-em-build" }
+taser-em-build.workspace = true
