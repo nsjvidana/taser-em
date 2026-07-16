@@ -831,6 +831,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "examples1d"
+version = "0.1.0"
+dependencies = [
+ "taser-em-testbed1d",
+ "taser-em1d",
+]
+
+[[package]]
 name = "exr"
 version = "1.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

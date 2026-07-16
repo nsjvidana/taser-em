@@ -1,0 +1,15 @@
+[package]
+name = "examples1d"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+
+[dependencies]
+taser-em1d.workspace = true
+taser-em-testbed1d.workspace = true
+
+[[bin]]
+name = "examples1d"
+path = "main.rs"
