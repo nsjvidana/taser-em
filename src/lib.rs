@@ -11,8 +11,8 @@ use std::num::{NonZeroI32, NonZeroU32};
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
-use crate::grid::{LayerWidths, PmlCoefficientsGrid, YeeGrid};
-use crate::prelude::GpuResult;
+use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGrid, YeeGridMaterials};
+use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
 use khal::backend::{DispatchGrid, GpuBackend, GpuBuffer, GpuPass};
@@ -46,7 +46,6 @@ impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index,)> {}
 #[cfg(feature = "dim3")]
 impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index, Index,)> {}
 
-
 /// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
 /// The cell positions are given as tuples.
 pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
@@ -55,6 +54,174 @@ pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
         feature = "dim2" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y]),
         feature = "dim3" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y], 0..n_cells[SpatialAxis::Z]),
     }
+}
+
+// TODO: use some "FdtdSolver" generics here?
+
+// TODO: Docs.
+pub struct FdtdLossySimulation {
+    pub material_regions: MaterialRegions,
+    pub background_material: ElectricMaterial,
+    pub sources: Vec<Source>,
+    pub fdtd_parameters: FdtdParameters,
+    pub pml_parameters: PmlParameters,
+}
+
+impl FdtdLossySimulation {
+    pub fn new(fdtd_parameters: FdtdParameters, pml_parameters: PmlParameters) -> Self {
+        Self {
+            material_regions: MaterialRegions::new(),
+            background_material: ElectricMaterial::FREE_SPACE,
+            sources: vec![],
+            fdtd_parameters,
+            pml_parameters,
+        }
+    }
+
+    pub fn add_source(&mut self, source: Source) -> &mut Self {
+        self.sources.push(source);
+        self
+    }
+    
+    pub fn finalize(
+        self,
+        backend: &GpuBackend,
+        stability: &FdtdStability,
+    ) -> GpuResult<FdtdLossyGpuData> {
+        let FdtdParameters {
+            cell_size, dt, polarization_mode, ..
+        } = self.fdtd_parameters;
+
+        let n_cells = self.compute_n_cells(stability);
+        
+        let grid_mats = self.discretize_material_regions(n_cells);
+        let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+
+        let buffers = {
+            let mut source_vals: Vec<Real> = vec![];
+            let regions_offset = Vect::from_vec3(regions_offset);
+            let mut dipoles = self.sources.iter()
+                .filter_map(|source| {
+                    // todo!("convert dipoles for GPU use, and populate source_vals")
+                    match source {
+                        Source::Dipole { position, t_start, vals } => {
+                            let pos = (regions_offset + position) / cell_size;
+                            debug_assert!(!pos.smallest_element().is_sign_negative());
+                            let start = source_vals.len();
+                            source_vals.extend_from_slice(vals);
+                            Some(GpuDipole {
+                                cell_idx: pos.as_grid_index().to_flat_idx(n_cells),
+                                vals_range: [start as u32, source_vals.len() as u32 - 1],
+                                t_start: (t_start / dt) as u32,
+                            })
+                        }
+                        _ => None
+                    }
+                })
+                .collect::<Vec<_>>();
+            if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
+            if source_vals.is_empty() { source_vals.push(0.0); }
+
+            let flat_idx_incrs = {
+                let mut incrs = UVec3::ZERO;
+                for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
+                    .zip(SpatialAxis::ALL_AXES)
+                {
+                    let mut grid_incr = GridIndex::default();
+                    grid_incr[spatial_axis] = 1;
+                    incrs[axis] = grid_incr.to_flat_idx(n_cells);
+                }
+                incrs
+            };
+
+            let cell_count = n_cells.into_array()
+                .iter()
+                .product::<Index>() as usize;
+            let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
+            FdtdLossyGpuData {
+                h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+                dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+                en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+                int_terms: vec![IntegrationTerms::default(); cell_count].create_gpu_buffer(backend)?,
+                grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
+                dipoles: dipoles.create_gpu_buffer(backend)?,
+                source_vals: source_vals.create_gpu_buffer(backend)?,
+                steps: 0.create_gpu_buffer(backend)?,
+                grid_params: GridParameters {
+                    flat_idx_incrs,
+                    polarization_mode: polarization_mode.into(),
+                    n_cells3: n_cells.n_cells_to_3d(),
+                    d: cell_size.to_3d(Vec3::ZERO),
+                    ..Default::default()
+                }.create_gpu_uniform(backend)?,
+                thread_count: n_cells.n_cells_to_3d().to_array()
+            }
+        };
+
+        Ok(buffers)
+    }
+
+    pub fn discretize_material_regions(&self, n_cells: GridIndex) -> YeeGridMaterials {
+        let FdtdParameters { material_discretization, cell_size, .. } =
+            &self.fdtd_parameters;
+        match material_discretization {
+            MaterialDiscretization::Rough =>
+                YeeGridMaterials::new_material_grid(
+                    n_cells,
+                    *cell_size,
+                    &self.material_regions,
+                    self.background_material,
+                ),
+            MaterialDiscretization::Smooth { resolution } => {
+                let res = resolution.get();
+                YeeGridMaterials::new_material_grid(
+                    n_cells * res,
+                    cell_size / res as f32,
+                    &self.material_regions,
+                    self.background_material,
+                ).downscaled(*resolution)
+            }
+        }
+    }
+
+    pub fn compute_n_cells(&self, stability: &FdtdStability) -> GridIndex {
+        let mut inner_bb = self.material_regions.compute_bounding_box();
+
+        let source_pts = self.sources.iter()
+            .filter_map(|src| {
+                match src {
+                    Source::Dipole { position, .. } => Some(position.to_3d(Vec3::ZERO)),
+                    _ => None
+                }
+            })
+            .collect::<Vec<_>>();
+        for pt in source_pts.iter() {
+            inner_bb.mins = inner_bb.mins.min(*pt);
+            inner_bb.maxs = inner_bb.maxs.max(*pt);
+        }
+
+        let cell_size = self.fdtd_parameters.cell_size;
+        let n_cells_vec3 = (inner_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
+        let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
+
+        let n_cells_spacer = stability.spacer_region_widths
+            .sum_with_n_cells(materials_n_cells);
+        self.pml_parameters.widths.sum_with_n_cells(n_cells_spacer)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FdtdParameters {
+    pub cell_size: Vect,
+    pub dt: Real,
+    pub polarization_mode: PolarizationMode,
+    pub material_discretization: MaterialDiscretization
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum MaterialDiscretization {
+    Rough,
+    Smooth { resolution: NonZeroU32 }
 }
 
 // TODO: make a FdtdSolver trait?
