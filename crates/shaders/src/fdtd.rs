@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::math::{grid_index_to_flat_idx, uvec3_to_grid_index, DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real};
+use crate::math::{DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real, GridIndex, GridIndexExt};
 
 // TODO: Docs, remove the "2" from the struct names, delete fdtd1 module, try using Vect for vector field
 #[spirv_bindgen]
@@ -28,11 +28,11 @@ pub fn fdtd_lossy(
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
 ) {
     if idx3.cmpge(grid.n_cells3).any() { return; }
-    let n_cells = uvec3_to_grid_index(grid.n_cells3);
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let boundary_idx3 = grid.n_cells3 - 1;
     // TODO: use usize indexing once indexing glam vectors is fixed? (see https://github.com/Rust-GPU/rust-gpu/issues/432)
 
-    let idx = grid_index_to_flat_idx(uvec3_to_grid_index(idx3), n_cells) as usize;
+    let idx = GridIndex::from_uvec3(idx3).to_flat_idx(n_cells) as usize;
     let PmlCoefficients2 {
         h_coeffs,
         dn_coeffs,
@@ -342,7 +342,7 @@ pub fn fdtd_lossy_v2(
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
 ) {
     if idx3.cmpge(grid.n_cells3).any() { return; }
-    let idx = grid_index_to_flat_idx(uvec3_to_grid_index(idx3), uvec3_to_grid_index(grid.n_cells3))
+    let idx = GridIndex::from_uvec3(idx3).to_flat_idx(GridIndex::from_uvec3(grid.n_cells3))
         as usize;
     let boundary_idx3 = grid.n_cells3 - 1;
 

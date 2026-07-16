@@ -36,6 +36,9 @@ mod dim_types {
     pub type GridIndex = UVec3;
 }
 
+#[allow(unused_imports)]
+use khal_std::glamx::Vec3Swizzles;
+
 /// A trait specifically for vector field vectors.
 pub trait VectExt: VectorValueExt {
     fn to_3d(self, mask: Vec3) -> Vec3;
@@ -52,8 +55,8 @@ pub trait VectorValueExt {
     fn splat(value: Self::Element) -> Self;
     fn zero() -> Self;
     fn one() -> Self;
-    fn max_element(self) -> Self::Element;
-    fn min_element(self) -> Self::Element;
+    fn largest_element(self) -> Self::Element;
+    fn smallest_element(self) -> Self::Element;
 }
 
 impl VectExt for Vect {
@@ -146,14 +149,172 @@ impl VectorValueExt for Vect {
         Self::splat(1.)
     }
     #[inline]
-    fn max_element(self) -> Self::Element {
+    fn largest_element(self) -> Self::Element {
         #[cfg(feature = "dim1")]
         { self }
         #[cfg(not(feature = "dim1"))]
         self.max_element()
     }
     #[inline]
-    fn min_element(self) -> Self::Element {
+    fn smallest_element(self) -> Self::Element {
+        #[cfg(feature = "dim1")]
+        { self }
+        #[cfg(not(feature = "dim1"))]
+        self.min_element()
+    }
+}
+
+pub trait GridIndexExt: VectorValueExt {
+    fn div_ceil(self, rhs: GridIndex) -> GridIndex;
+    fn n_cells_to_3d(self) -> UVec3;
+    fn cell_idx_to_3d(self) -> UVec3;
+    fn as_vect(&self) -> Vect;
+    fn to_3d(self, mask: UVec3) -> UVec3;
+    fn into_array(self) -> [u32; DIM];
+    fn from_index_array(arr: [u32; DIM]) -> GridIndex;
+    fn from_uvec3(uvec3: UVec3) -> GridIndex;
+    fn from_flat_idx(idx: u32, grid_dim: GridIndex) -> GridIndex;
+    fn to_flat_idx(self, grid_dim: GridIndex) -> u32;
+}
+
+impl GridIndexExt for GridIndex {
+    #[inline]
+    fn div_ceil(self, rhs: GridIndex) -> GridIndex {
+        #[cfg(feature = "dim1")]
+        { self.div_ceil(rhs) }
+        #[cfg(feature = "dim2")]
+        { GridIndex::new(self.x.div_ceil(rhs.x), self.y.div_ceil(rhs.y)) }
+        #[cfg(feature = "dim3")]
+        GridIndex::new(self.x.div_ceil(rhs.x), self.y.div_ceil(rhs.y), self.z.div_ceil(rhs.z))
+    }
+
+    /// Helper function for converting the dimensions of a grid into a 3D vector
+    #[inline]
+    fn n_cells_to_3d(self) -> UVec3 {
+        self.to_3d(UVec3::ONE)
+    }
+
+    /// Helper function for converting the index of a cell in a grid into a 3D vector index
+    #[inline]
+    fn cell_idx_to_3d(self) -> UVec3 {
+        self.to_3d(UVec3::ZERO)
+    }
+
+    /// Convert [`GridIndex`] into [`Vect`] using `as` keyword.
+    #[inline]
+    fn as_vect(&self) -> Vect {
+        #[cfg(feature = "dim1")]
+        return *self as Vect;
+        #[cfg(feature = "dim2")]
+        return self.as_vec2();
+        #[cfg(feature = "dim3")]
+        self.as_vec3()
+    }
+
+    /// Converts a [`GridIndex`] to [`UVec3`]
+    /// `mask` sets the components that `self` don't already have.
+    ///
+    /// e.g. `grid_index_to_3d(k, UVec3::ONE)` would return `UVec3::new(1, 1, k)` in 1D.
+    #[inline]
+    #[allow(unused_variables)]
+    fn to_3d(self, mask: UVec3) -> UVec3 {
+        #[cfg(feature = "dim1")]
+        return mask.with_z(self);
+        #[cfg(feature = "dim2")]
+        return mask.with_xy(self);
+        #[cfg(feature = "dim3")]
+        self
+    }
+
+    #[inline]
+    fn into_array(self) -> [u32; DIM] {
+        #[cfg(feature = "dim1")]
+        return [self];
+        #[cfg(not(feature = "dim1"))]
+        self.to_array()
+    }
+
+    #[inline]
+    fn from_index_array(arr: [u32; DIM]) -> GridIndex {
+        #[cfg(feature = "dim1")]
+        return arr[0];
+        #[cfg(not(feature = "dim1"))]
+        GridIndex::from_array(arr)
+    }
+
+    #[inline]
+    fn from_uvec3(uvec3: UVec3) -> GridIndex {
+        #[cfg(feature = "dim1")]
+        return uvec3.z;
+        #[cfg(feature = "dim2")]
+        return uvec3.xy();
+        #[cfg(feature = "dim3")]
+        uvec3
+    }
+
+    #[inline]
+    #[allow(unused_variables)]
+    fn from_flat_idx(idx: u32, grid_dim: GridIndex) -> GridIndex {
+        #[cfg(feature = "dim1")]
+        return idx;
+        #[cfg(feature = "dim2")]
+        return GridIndex::new(
+            idx % grid_dim.x,
+            (idx / grid_dim.x) % grid_dim.y,
+        );
+        #[cfg(feature = "dim3")]
+        GridIndex::new(
+            idx % grid_dim.x,
+            (idx / grid_dim.x) % grid_dim.y,
+            idx / (grid_dim.x * grid_dim.y),
+        )
+    }
+
+    #[inline]
+    #[allow(unused_variables)]
+    fn to_flat_idx(self, grid_dim: GridIndex) -> u32 {
+        #[cfg(feature = "dim1")]
+        return self;
+        #[cfg(feature = "dim2")]
+        return self.y * grid_dim.x + self.x;
+        #[cfg(feature = "dim3")]
+        {
+            self.z * grid_dim.x * grid_dim.y +
+                self.y * grid_dim.x +
+                self.x
+        }
+    }
+}
+
+impl VectorValueExt for GridIndex {
+    type Element = Index;
+    /// Create a vector field element with all its components set to `value`
+    #[inline]
+    fn splat(value: Self::Element) -> Self {
+        cfg_select! {
+            feature = "dim1" => value,
+            _ => Self::splat(value)
+        }
+    }
+    /// Create a vector field element with all its components set to `0.`
+    #[inline]
+    fn zero() -> Self {
+        Self::splat(0)
+    }
+    /// Create a vector field element with all its components set to `1.`
+    #[inline]
+    fn one() -> Self {
+        Self::splat(1)
+    }
+    #[inline]
+    fn largest_element(self) -> Self::Element {
+        #[cfg(feature = "dim1")]
+        { self }
+        #[cfg(not(feature = "dim1"))]
+        self.max_element()
+    }
+    #[inline]
+    fn smallest_element(self) -> Self::Element {
         #[cfg(feature = "dim1")]
         { self }
         #[cfg(not(feature = "dim1"))]
@@ -338,106 +499,6 @@ impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 
 impl_vector_indexing!(Vect, Real, SpatialAxis, DIM);
 impl_vector_indexing!(GridIndex, Index, SpatialAxis, DIM);
-
-#[allow(unused_imports)]
-use khal_std::glamx::Vec3Swizzles;
-
-/// Helper function for converting the dimensions of a grid into a 3D vector
-#[inline]
-pub fn n_cells_to_3d(n_cells: GridIndex) -> UVec3 {
-    grid_index_to_3d(n_cells, UVec3::ONE)
-}
-
-/// Helper function for converting the index of a cell in a grid into a 3D vector index
-#[inline]
-pub fn cell_idx_to_3d(cell_idx: GridIndex) -> UVec3 {
-    grid_index_to_3d(cell_idx, UVec3::ZERO)
-}
-
-/// Convert [`GridIndex`] into [`Vect`] using `as` keyword.
-#[inline]
-pub fn grid_index_as_vect(idx: GridIndex) -> Vect {
-    #[cfg(feature = "dim1")]
-    return idx as Vect;
-    #[cfg(feature = "dim2")]
-    return idx.as_vec2();
-    #[cfg(feature = "dim3")]
-    idx.as_vec3()
-}
-
-/// Converts a [`GridIndex`] to [`UVec3`]
-/// `mask` sets the components that `self` don't already have.
-///
-/// e.g. `grid_index_to_3d(k, UVec3::ONE)` would return `UVec3::new(1, 1, k)` in 1D.
-#[inline]
-#[allow(unused_variables)]
-pub fn grid_index_to_3d(idx: GridIndex, mask: UVec3) -> UVec3 {
-    #[cfg(feature = "dim1")]
-    return mask.with_z(idx);
-    #[cfg(feature = "dim2")]
-    return mask.with_xy(idx);
-    #[cfg(feature = "dim3")]
-    idx
-}
-
-#[inline]
-pub fn grid_index_to_array(idx: GridIndex) -> [u32; DIM] {
-    #[cfg(feature = "dim1")]
-    return [idx];
-    #[cfg(not(feature = "dim1"))]
-    idx.to_array()
-}
-
-#[inline]
-pub fn grid_index_from_array(arr: [u32; DIM]) -> GridIndex {
-    #[cfg(feature = "dim1")]
-    return arr[0];
-    #[cfg(not(feature = "dim1"))]
-    GridIndex::from_array(arr)
-}
-
-#[inline]
-pub fn uvec3_to_grid_index(uvec3: UVec3) -> GridIndex {
-    #[cfg(feature = "dim1")]
-    return uvec3.z;
-    #[cfg(feature = "dim2")]
-    return uvec3.xy();
-    #[cfg(feature = "dim3")]
-    uvec3
-}
-
-#[inline]
-#[allow(unused_variables)]
-pub fn flat_idx_to_grid_index(idx: u32, grid_dim: GridIndex) -> GridIndex {
-    #[cfg(feature = "dim1")]
-    return idx;
-    #[cfg(feature = "dim2")]
-    return GridIndex::new(
-        idx % grid_dim.x,
-        (idx / grid_dim.x) % grid_dim.y,
-    );
-    #[cfg(feature = "dim3")]
-    GridIndex::new(
-        idx % grid_dim.x,
-        (idx / grid_dim.x) % grid_dim.y,
-        idx / (grid_dim.x * grid_dim.y),
-    )
-}
-
-#[inline]
-#[allow(unused_variables)]
-pub fn grid_index_to_flat_idx(grid_idx: GridIndex, grid_dim: GridIndex) -> u32 {
-    #[cfg(feature = "dim1")]
-    return grid_idx;
-    #[cfg(feature = "dim2")]
-    return grid_idx.y * grid_dim.x + grid_idx.x;
-    #[cfg(feature = "dim3")]
-    {
-        grid_idx.z * grid_dim.x * grid_dim.y +
-            grid_idx.y * grid_dim.x +
-            grid_idx.x
-    }
-}
 
 /// A saturating_sub implementation that computes `a - b`.
 /// Because Rust-GPU doesn't have the core library's saturating_sub() implemented yet, we have this function.

@@ -5,7 +5,7 @@ use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
 use std::num::NonZeroU32;
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{Vect, VectExt, VectorValueExt};
+use taser_em1d::shaders::math::{Vect, VectorValueExt};
 use taser_em1d::{ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 
 pub const MAT_REGION_ALPHA: f32 = 0.9;

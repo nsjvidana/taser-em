@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::{PmlCoefficients2, GpuPolarizationMode};
-use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt};
+use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt, GridIndexExt};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 #[derive(Clone, Debug)]
@@ -153,7 +153,7 @@ impl MaterialRegions {
         material: ElectricMaterial
     ) -> &mut Self {
         let region_dims = end - start;
-        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element()));
+        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.largest_element()));
 
         let shape = SharedShape::new(Cuboid::new(half_extents));
         let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
@@ -248,7 +248,7 @@ impl PmlCoefficientsGrid {
             grading_order: pml_grading_order
         } = pml_parameters;
         let n_cells = grid_mats.n_cells;
-        let n_cells3 = n_cells_to_3d(n_cells);
+        let n_cells3 = n_cells.n_cells_to_3d();
 
         let YeeGridMaterials {
             n_cells: _n_cells,
@@ -284,8 +284,8 @@ impl PmlCoefficientsGrid {
         let c0_dt = C_0 * dt;
         // TODO: use par_iter here
         for (i, coeff) in coeffs.iter_mut().enumerate() {
-            let idx = flat_idx_to_grid_index(i as u32, n_cells);
-            let sig_idx = cell_idx_to_3d(idx * 2).to_array()
+            let idx = GridIndex::from_flat_idx(i as u32, n_cells);
+            let sig_idx = (idx * 2).cell_idx_to_3d().to_array()
                 .map(|i| i as usize);
 
             let dn_sigs = Vec3::from_array(
@@ -369,10 +369,10 @@ impl YeeGridMaterials {
         regions: &MaterialRegions,
         default_mat: ElectricMaterial,
     ) -> Self {
-        let cell_count = n_cells_to_3d(n_cells).element_product() as usize;
+        let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
-        let grid_center = grid_index_as_vect(n_cells) * cell_size / 2.;
+        let grid_center = n_cells.as_vect() * cell_size / 2.;
         let regions_center = Vect::from_vec3(regions.compute_bounding_box().center());
         let regions_offset = (grid_center - regions_center).to_3d(Vec3::ZERO);
         let centered_scene_pose = regions.scene_pose.append_translation(regions_offset);
@@ -393,8 +393,8 @@ impl YeeGridMaterials {
 
         // TODO: par_iter
         for (i, mat) in mats.iter_mut().enumerate() {
-            let grid_idx = flat_idx_to_grid_index(i as u32, n_cells);
-            let pos = (grid_index_as_vect(grid_idx) * cell_size).to_3d(Vec3::ZERO);
+            let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
+            let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
             let dn_mat = dn_offsets.map(|off| mat_at_pt(pos + off));
             let h_mat = h_offsets.map(|off| mat_at_pt(pos + off));
             *mat = ElectricMaterial {
@@ -420,28 +420,26 @@ impl YeeGridMaterials {
         downscale_factor: NonZeroU32,
     ) -> YeeGridMaterials {
         let downscale_factor = downscale_factor.get();
-        let n_cells = grid_index_from_array(
-            grid_index_to_array(self.n_cells)
-                .map(|dim| dim.div_ceil(downscale_factor))
-        );
+
+        let n_cells = self.n_cells.div_ceil(GridIndex::splat(downscale_factor));
         let cell_size = self.cell_size * downscale_factor as f32;
-        let cell_count = grid_index_to_array(n_cells).iter()
+        let cell_count = n_cells.into_array().iter()
             .product::<Index>();
         let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count as usize];
 
-        let kernel_cells = grid_cells_iter(grid_index_from_array([downscale_factor; DIM]))
-            .map(|t| grid_index_from_array(t.into()))
+        let kernel_cells = grid_cells_iter(GridIndex::from_index_array([downscale_factor; DIM]))
+            .map(|t| GridIndex::from_index_array(t.into()))
             .collect::<Vec<_>>();
-        let old_n_cells3 = n_cells_to_3d(self.n_cells);
+        let old_n_cells3 = self.n_cells.n_cells_to_3d();
         for i in 0..cell_count {
-            let idx = flat_idx_to_grid_index(i, n_cells) * downscale_factor;
+            let idx = GridIndex::from_flat_idx(i, n_cells) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
             for k in kernel_cells.iter() {
                 let k_idx = idx + k;
-                let k_idx3 = cell_idx_to_3d(k_idx);
+                let k_idx3 = k_idx.cell_idx_to_3d();
                 if k_idx3.cmplt(old_n_cells3).all() {
-                    let k_i = grid_index_to_flat_idx(k_idx, self.n_cells) as usize;
+                    let k_i = k_idx.to_flat_idx(self.n_cells) as usize;
                     mat_sum.mu_r += self.materials[k_i].mu_r;
                     mat_sum.eps_r += self.materials[k_i].eps_r;
                     mat_sum.sig += self.materials[k_i].sig;
@@ -512,13 +510,13 @@ impl LayerWidths {
 
     /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
     pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
-        let mut n_cells = grid_index_to_array(n_cells);
+        let mut n_cells = n_cells.into_array();
         for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
             .zip(self.iter_axes())
         {
             *n_cells_i += lo_hi_widths.iter().sum::<Index>();
         }
-        grid_index_from_array(n_cells)
+        GridIndex::from_index_array(n_cells)
     }
 
     #[inline]

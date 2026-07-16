@@ -16,8 +16,8 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{Axis, VectExt, VectorValueExt};
-use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::math::{Axis, GridIndexExt, VectExt, VectorValueExt};
+use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -153,11 +153,11 @@ impl FdtdSolver {
                 match source {
                     Source::Dipole { position, t_start, vals } => {
                         let pos = (regions_offset + position) / self.grid.cell_size;
-                        debug_assert!(!pos.min_element().is_sign_negative());
+                        debug_assert!(!pos.smallest_element().is_sign_negative());
                         let start = source_vals.len();
                         source_vals.extend_from_slice(vals);
                         Some(GpuDipole {
-                            cell_idx: grid_index_to_flat_idx(pos.as_grid_index(), n_cells),
+                            cell_idx: pos.as_grid_index().to_flat_idx(n_cells),
                             vals_range: [start as u32, source_vals.len() as u32 - 1],
                             t_start: (t_start / self.dt) as u32,
                         })
@@ -169,7 +169,7 @@ impl FdtdSolver {
         if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
         if source_vals.is_empty() { source_vals.push(0.0); }
 
-        let cell_count = grid_index_to_array(n_cells)
+        let cell_count = n_cells.into_array()
             .iter()
             .product::<Index>() as usize;
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
@@ -178,7 +178,7 @@ impl FdtdSolver {
             for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter().zip(SpatialAxis::ALL_AXES) {
                 let mut grid_incr = GridIndex::default();
                     grid_incr[spatial_axis] = 1;
-                incrs[axis] = grid_index_to_flat_idx(grid_incr, n_cells);
+                incrs[axis] = grid_incr.to_flat_idx(n_cells);
             }
             incrs
         };
@@ -195,11 +195,11 @@ impl FdtdSolver {
                 grid_params: GridParameters2 {
                     flat_idx_incrs,
                     polarization_mode: self.grid.polarization_mode.into(),
-                    n_cells3: n_cells_to_3d(n_cells),
+                    n_cells3: n_cells.n_cells_to_3d(),
                     d: self.grid.cell_size.to_3d(Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
-                thread_count: n_cells_to_3d(n_cells).to_array()
+                thread_count: n_cells.n_cells_to_3d().to_array()
             }
         )
     }

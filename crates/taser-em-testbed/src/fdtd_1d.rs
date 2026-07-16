@@ -10,7 +10,7 @@ use kiss3d::color::RED;
 use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{grid_index_as_vect, Vect, VectExt, VectorValueExt};
+use taser_em1d::shaders::math::{GridIndexExt, Vect, VectorValueExt};
 use crate::MAT_REGION_ALPHA;
 
 pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
@@ -53,7 +53,7 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
     let (regions_offset, coeffs) = solver.compute_pml_coeffs();
     let mut buffers = solver.create_shader_data(backend, &coeffs, regions_offset)?;
 
-    let grid_extents = grid_index_as_vect(n_cells) * cell_size;
+    let grid_extents = n_cells.as_vect() * cell_size;
     let mut window = Window::new("Kiss3d: cube").await;
     let mut camera = OrbitCamera3d::new_with_frustum(
         core::f32::consts::PI / 4.0,
@@ -63,7 +63,6 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
         Vec3::Z * grid_extents / 2.
     );
     camera.set_projection(Projection::Orthographic);
-
 
     let mut scene = SceneNode3d::empty();
     for (mesh, pose) in solver.grid.material_regions.regions.iter()
@@ -100,7 +99,7 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
         let mut prev_pos = 0.;
         let mut prev_val = dn[0].y * cell_size;
         for (i,) in grid_cells_iter(n_cells).skip(1) {
-            let pos = grid_index_as_vect(i) * cell_size;
+            let pos = i.as_vect() * cell_size;
             let val = dn[i as usize].y * cell_size;
             window.draw_line(
                 Vec3::new(0., prev_val, prev_pos), Vec3::new(0., val, pos),
