@@ -42,6 +42,7 @@ pub trait VectExt {
     fn zero() -> Self;
     fn one() -> Self;
     fn max_element(self) -> Self::Element;
+    fn min_element(self) -> Self::Element;
 }
 
 impl VectExt for Vect {
@@ -70,6 +71,13 @@ impl VectExt for Vect {
         { self }
         #[cfg(not(feature = "dim1"))]
         self.max_element()
+    }
+    #[inline]
+    fn min_element(self) -> Self::Element {
+        #[cfg(feature = "dim1")]
+        { self }
+        #[cfg(not(feature = "dim1"))]
+        self.min_element()
     }
 }
 

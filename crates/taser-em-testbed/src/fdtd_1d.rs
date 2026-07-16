@@ -24,7 +24,7 @@ pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {
         .min(stability.dt_from_gaussian_freq(f_max));
     let wavelen = C_0 / f_max;
 
-    let slab_extents = [Vect::splat(1.), Vect::splat(1. + wavelen * 2.)];
+    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
     let source = Source::Dipole {
         position: slab_extents[0] - wavelen * 3.,
         t_start: 0.,

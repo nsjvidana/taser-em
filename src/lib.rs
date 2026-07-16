@@ -16,7 +16,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{vec3_to_vect, vect_as_grid_index, Axis};
+use taser_em_shaders::math::{vec3_to_vect, vect_as_grid_index, Axis, VectExt};
 use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_from_array, vect_to_3d, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -153,6 +153,7 @@ impl FdtdSolver {
                 match source {
                     Source::Dipole { position, t_start, vals } => {
                         let pos = (regions_offset + position) / self.grid.cell_size;
+                        debug_assert!(!pos.min_element().is_sign_negative());
                         let start = source_vals.len();
                         source_vals.extend_from_slice(vals);
                         Some(GpuDipole {
