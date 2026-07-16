@@ -16,8 +16,8 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{vec3_to_vect, vect_as_grid_index, Axis, VectExt};
-use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_from_array, vect_to_3d, vect_to_array, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::math::{Axis, VectExt};
+use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -115,7 +115,7 @@ impl FdtdSolver {
         let source_pts = self.sources.iter()
             .filter_map(|src| {
                 match src {
-                    Source::Dipole { position, .. } => Some(vect_to_3d(*position, Vec3::ZERO)),
+                    Source::Dipole { position, .. } => Some(position.to_3d(Vec3::ZERO)),
                     _ => None
                 }
             })
@@ -146,7 +146,7 @@ impl FdtdSolver {
         let grid_coeffs = &coeffs_grid.coeffs;
 
         let mut source_vals: Vec<Real> = vec![];
-        let regions_offset = vec3_to_vect(regions_offset);
+        let regions_offset = Vect::from_vec3(regions_offset);
         let mut dipoles = self.sources.iter()
             .filter_map(|source| {
                 // todo!("convert dipoles for GPU use, and populate source_vals")
@@ -157,7 +157,7 @@ impl FdtdSolver {
                         let start = source_vals.len();
                         source_vals.extend_from_slice(vals);
                         Some(GpuDipole {
-                            cell_idx: grid_index_to_flat_idx(vect_as_grid_index(pos), n_cells),
+                            cell_idx: grid_index_to_flat_idx(pos.as_grid_index(), n_cells),
                             vals_range: [start as u32, source_vals.len() as u32 - 1],
                             t_start: (t_start / self.dt) as u32,
                         })
@@ -196,7 +196,7 @@ impl FdtdSolver {
                     flat_idx_incrs,
                     polarization_mode: self.grid.polarization_mode.into(),
                     n_cells3: n_cells_to_3d(n_cells),
-                    d: vect_to_3d(self.grid.cell_size, Vec3::ZERO),
+                    d: self.grid.cell_size.to_3d(Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
                 thread_count: n_cells_to_3d(n_cells).to_array()
@@ -289,11 +289,11 @@ impl FdtdStability {
     pub fn cell_size_from_min_wavelength(&self, f_max: Real) -> Vect {
         let min_wavelen = C_0 / f_max;
         let cell_size = min_wavelen / self.cells_per_wavelength as Real;
-        vect_from_array([cell_size; DIM])
+        Vect::from_array([cell_size; DIM])
     }
 
     pub fn cfl_condition(&self, cell_size: Vect) -> Real {
-        let cell_size_term = vect_to_array(cell_size)
+        let cell_size_term = cell_size.to_array()
             .map(|v| {
                 v.powi(2).recip()
             })

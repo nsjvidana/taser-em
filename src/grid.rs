@@ -4,7 +4,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::{PmlCoefficients2, GpuPolarizationMode};
-use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, vect_as_grid_index, vec3_to_vect, vect_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt};
+use taser_em_shaders::math::{cell_idx_to_3d, flat_idx_to_grid_index, grid_index_as_vect, grid_index_from_array, grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
 #[derive(Clone, Debug)]
@@ -75,8 +75,8 @@ impl YeeGrid {
                 inner_bb.maxs = inner_bb.maxs.max(*pt);
             }
         }
-        let n_cells_vec3 = (inner_bb.extents() / vect_to_3d(self.cell_size, Vec3::ONE)).ceil();
-        let materials_n_cells = vect_as_grid_index(vec3_to_vect(n_cells_vec3));
+        let n_cells_vec3 = (inner_bb.extents() / self.cell_size.to_3d(Vec3::ONE)).ceil();
+        let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
 
         self.spacer_region_widths
             .sum_with_n_cells(materials_n_cells)
@@ -153,10 +153,10 @@ impl MaterialRegions {
         material: ElectricMaterial
     ) -> &mut Self {
         let region_dims = end - start;
-        let half_extents = vect_to_3d(region_dims, Vec3::splat(region_dims.max_element()));
+        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element()));
 
         let shape = SharedShape::new(Cuboid::new(half_extents));
-        let middle = vect_to_3d((start + end) / 2., Vec3::ZERO);
+        let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
         let pose = Pose3::from_translation(middle);
 
         self.regions.push(MaterialRegion::new(shape, pose, material));
@@ -362,7 +362,7 @@ impl YeeGridMaterials {
     /// - 1D: Only when intersecting w/ Z axis
     /// - 2D: Only when intersecting w/ X-Y plane
     /// - 3D: Grid of size `n_cells` is centered at the middle of a bounding box encapsulating all regions.
-    ///       Whatever parts of regions that are inside the grid at this location are included.
+    ///   Whatever parts of regions that are inside the grid at this location are included.
     pub fn new_material_grid(
         n_cells: GridIndex,
         cell_size: Vect,
@@ -373,11 +373,11 @@ impl YeeGridMaterials {
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
         let grid_center = grid_index_as_vect(n_cells) * cell_size / 2.;
-        let regions_center = vec3_to_vect(regions.compute_bounding_box().center());
-        let regions_offset = vect_to_3d(grid_center - regions_center, Vec3::ZERO);
+        let regions_center = Vect::from_vec3(regions.compute_bounding_box().center());
+        let regions_offset = (grid_center - regions_center).to_3d(Vec3::ZERO);
         let centered_scene_pose = regions.scene_pose.append_translation(regions_offset);
 
-        let cell_size3 = vect_to_3d(cell_size, Vec3::ZERO);
+        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
         let dn_offsets = YeeGrid::DN_OFFSETS.map(|v| v * cell_size3);
         let h_offsets = YeeGrid::H_OFFSETS.map(|v| v * cell_size3);
         let regions_transformed = regions.regions.iter()
@@ -394,9 +394,7 @@ impl YeeGridMaterials {
         // TODO: par_iter
         for (i, mat) in mats.iter_mut().enumerate() {
             let grid_idx = flat_idx_to_grid_index(i as u32, n_cells);
-            let pos = vect_to_3d(
-                grid_index_as_vect(grid_idx) * cell_size, Vec3::ZERO
-            );
+            let pos = (grid_index_as_vect(grid_idx) * cell_size).to_3d(Vec3::ZERO);
             let dn_mat = dn_offsets.map(|off| mat_at_pt(pos + off));
             let h_mat = h_offsets.map(|off| mat_at_pt(pos + off));
             *mat = ElectricMaterial {

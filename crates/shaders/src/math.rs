@@ -43,6 +43,13 @@ pub trait VectExt {
     fn one() -> Self;
     fn max_element(self) -> Self::Element;
     fn min_element(self) -> Self::Element;
+
+    fn to_3d(self, mask: Vec3) -> Vec3;
+    fn to_array(self) -> [Real; DIM];
+    fn from_array(arr: [Real; DIM]) -> Vect;
+    fn from_vec3(vec3: Vec3) -> Vect;
+    fn from_vec4(v4: Vec4) -> Vect;
+    fn as_grid_index(self) -> GridIndex;
 }
 
 impl VectExt for Vect {
@@ -78,6 +85,69 @@ impl VectExt for Vect {
         { self }
         #[cfg(not(feature = "dim1"))]
         self.min_element()
+    }
+
+    /// Converts a [`Vect`] to [`Vec3`]
+    /// `mask` sets the components that `self` don't already have.
+    ///
+    /// e.g. `to_3d(z, Vec3::ONE)` would return `Vec3::new(1., 1., z)` in 1D.
+    #[inline]
+    #[allow(unused_variables)]
+    fn to_3d(self, mask: Vec3) -> Vec3 {
+        #[cfg(feature = "dim1")]
+        return mask.with_z(self);
+        #[cfg(feature = "dim2")]
+        return mask.with_xy(self);
+        #[cfg(feature = "dim3")]
+        self
+    }
+    #[inline]
+    fn to_array(self) -> [Real; DIM] {
+        #[cfg(feature = "dim1")]
+        return [self];
+        #[cfg(not(feature = "dim1"))]
+        self.to_array()
+    }
+    #[inline]
+    fn from_array(arr: [Real; DIM]) -> Vect {
+        #[cfg(feature = "dim1")]
+        return arr[0];
+        #[cfg(not(feature = "dim1"))]
+        Vect::from_array(arr)
+    }
+    #[inline]
+    fn from_vec3(vec3: Vec3) -> Vect {
+        #[cfg(feature = "dim1")]
+        return vec3.z;
+        #[cfg(feature = "dim2")]
+        return vec3.xy();
+        #[cfg(feature = "dim3")]
+        vec3
+    }
+    #[inline]
+    fn from_vec4(v4: Vec4) -> Vect {
+        #[cfg(feature = "dim1")]
+        { v4.z }
+        #[cfg(feature = "dim2")] {
+            use khal_std::glamx::Vec4Swizzles;
+            v4.xy()
+        }
+        #[cfg(feature = "dim3")] {
+            use khal_std::glamx::Vec4Swizzles;
+            v4.xyz()
+        }
+    }
+
+    /// Convert [`Vect`] to [`GridIndex`] using `as` keyword. So this effectively floors all components
+    /// of `self`.
+    #[inline]
+    fn as_grid_index(self) -> GridIndex {
+        #[cfg(feature = "dim1")]
+        return self as GridIndex;
+        #[cfg(feature = "dim2")]
+        return self.as_uvec2();
+        #[cfg(feature = "dim3")]
+        self.as_uvec3()
     }
 }
 
@@ -262,21 +332,6 @@ impl_vector_indexing!(GridIndex, Index, SpatialAxis, DIM);
 #[allow(unused_imports)]
 use khal_std::glamx::Vec3Swizzles;
 
-/// Converts a [`Vect`] to [`Vec3`]
-/// `mask` sets the components that `self` don't already have.
-///
-/// e.g. `to_3d(z, Vec3::ONE)` would return `Vec3::new(1., 1., z)` in 1D.
-#[inline]
-#[allow(unused_variables)]
-pub fn vect_to_3d(v: Vect, mask: Vec3) -> Vec3 {
-    #[cfg(feature = "dim1")]
-    return mask.with_z(v);
-    #[cfg(feature = "dim2")]
-    return mask.with_xy(v);
-    #[cfg(feature = "dim3")]
-    v
-}
-
 /// Helper function for converting the dimensions of a grid into a 3D vector
 #[inline]
 pub fn n_cells_to_3d(n_cells: GridIndex) -> UVec3 {
@@ -287,58 +342,6 @@ pub fn n_cells_to_3d(n_cells: GridIndex) -> UVec3 {
 #[inline]
 pub fn cell_idx_to_3d(cell_idx: GridIndex) -> UVec3 {
     grid_index_to_3d(cell_idx, UVec3::ZERO)
-}
-
-#[inline]
-pub fn vect_to_array(v: Vect) -> [Real; DIM] {
-    #[cfg(feature = "dim1")]
-    return [v];
-    #[cfg(not(feature = "dim1"))]
-    v.to_array()
-}
-
-#[inline]
-pub fn vect_from_array(arr: [Real; DIM]) -> Vect {
-    #[cfg(feature = "dim1")]
-    return arr[0];
-    #[cfg(not(feature = "dim1"))]
-    Vect::from_array(arr)
-}
-
-#[inline]
-pub fn vec3_to_vect(vec3: Vec3) -> Vect {
-    #[cfg(feature = "dim1")]
-    return vec3.z;
-    #[cfg(feature = "dim2")]
-    return vec3.xy();
-    #[cfg(feature = "dim3")]
-    vec3
-}
-
-#[inline]
-pub fn vec4_to_vect(v: Vec4) -> Vect {
-    #[cfg(feature = "dim1")]
-    { v.z }
-    #[cfg(feature = "dim2")] {
-        use khal_std::glamx::Vec4Swizzles;
-        v.xy()
-    }
-    #[cfg(feature = "dim3")] {
-        use khal_std::glamx::Vec4Swizzles;
-        v.xyz()
-    }
-}
-
-/// Convert [`Vect`] to [`GridIndex`] using `as` keyword. So this effectively floors all components
-/// of `v`.
-#[inline]
-pub fn vect_as_grid_index(v: Vect) -> GridIndex {
-    #[cfg(feature = "dim1")]
-    return v as GridIndex;
-    #[cfg(feature = "dim2")]
-    return v.as_uvec2();
-    #[cfg(feature = "dim3")]
-    v.as_uvec3()
 }
 
 /// Convert [`GridIndex`] into [`Vect`] using `as` keyword.
