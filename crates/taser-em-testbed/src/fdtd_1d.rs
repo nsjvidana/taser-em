@@ -10,7 +10,7 @@ use kiss3d::color::RED;
 use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{grid_index_as_vect, Vect, VectExt};
+use taser_em1d::shaders::math::{grid_index_as_vect, Vect, VectExt, VectorValueExt};
 use crate::MAT_REGION_ALPHA;
 
 pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {

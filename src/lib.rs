@@ -16,7 +16,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
 use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
-use taser_em_shaders::math::{Axis, VectExt};
+use taser_em_shaders::math::{Axis, VectExt, VectorValueExt};
 use taser_em_shaders::math::{grid_index_to_array, grid_index_to_flat_idx, n_cells_to_3d, GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -293,7 +293,7 @@ impl FdtdStability {
     }
 
     pub fn cfl_condition(&self, cell_size: Vect) -> Real {
-        let cell_size_term = cell_size.to_array()
+        let cell_size_term = cell_size.into_array()
             .map(|v| {
                 v.powi(2).recip()
             })
