@@ -1,14 +1,17 @@
 mod fdtd_1d;
 
-use glamx::Vec3;
+use std::cell::RefCell;
+use glamx::{Vec3, Vec4};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
 use std::num::NonZeroU32;
+use std::rc::Rc;
 use kiss3d::camera::Projection;
-use kiss3d::prelude::{OrbitCamera3d, SceneNode3d, Window};
+use kiss3d::color::{GRAY, RED};
+use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
 use taser_em::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em::prelude::GpuResult;
-use taser_em::shaders::math::{Real, Vect, VectorValueExt};
-use taser_em::{ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
+use taser_em::shaders::math::{GridIndex, GridIndexExt, Real, Vect, VectorValueExt};
+use taser_em::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 
 pub const MAT_REGION_ALPHA: f32 = 0.9;
 
@@ -16,9 +19,11 @@ pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
+    pub dn_field_color: Color
 }
 
 impl FdtdTestbedViewer {
+    /// Create a new testbed viewer window, camera, and scene with Dn field color set to [`RED`].
     pub async fn new() -> anyhow::Result<Self> {
         #[cfg(feature = "dim1")]
         let title = "1D FDTD Testbed";
@@ -36,21 +41,44 @@ impl FdtdTestbedViewer {
                 window,
                 camera,
                 scene,
+                dn_field_color: RED,
             }
         )
     }
 
     pub fn set_clipping_planes(&mut self, znear: f32, zfar: f32) {
-        todo!()
+        let new_camera = OrbitCamera3d::new_with_frustum(
+            self.camera.fov(),
+            znear,
+            zfar,
+            self.camera.eye(),
+            self.camera.at()
+        );
     }
 
     /// Add material regions as meshes rendered in the scene.
-    pub fn add_region_meshes(&mut self, regions: &MaterialRegions) {
-        todo!()
+    pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, regions_offset: Vec3) {
+        for (mesh, pose) in mat_regions.regions.iter()
+            .filter_map(|r| r.mesh.as_ref().map(|mesh| (mesh, r.pose)))
+        {
+            let kiss3d_mesh = Rc::new(RefCell::new(GpuMesh3d::new(
+                mesh.vertices.clone(), mesh.indices.clone(), None, None, false
+            )));
+            self.scene.add_mesh(kiss3d_mesh, Vec3::ONE)
+                .set_pose((mat_regions.scene_pose * pose).append_translation(regions_offset))
+                .set_color(GRAY.with_alpha(MAT_REGION_ALPHA));
+        }
     }
 
-    /// Renders one frame
-    pub fn render_frame(&mut self) {
+    /// Renders one frame.
+    ///
+    /// Returns `false` if the viewer should stop rendering (e.g. when the window closes).
+    pub async fn render_frame(
+        &mut self,
+        dn_field: Vec<Vec4>,
+        n_cells: GridIndex,
+        cell_size: Vect
+    ) -> bool {
         todo!()
     }
 }
