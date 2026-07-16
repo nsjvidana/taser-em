@@ -80,7 +80,7 @@ macro_rules! shader_struct {
     };
 }
 
-shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossyV2);
+shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 
 pub struct FdtdSolver {
     pub kernel: FdtdWithLoss,

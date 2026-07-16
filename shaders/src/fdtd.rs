@@ -6,174 +6,6 @@ use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::math::{DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real, GridIndex, GridIndexExt};
 
-// TODO: Docs, remove the "2" from the struct names, delete fdtd1 module, try using Vect for vector field
-#[spirv_bindgen]
-#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
-#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8))))]
-#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn fdtd_lossy(
-    #[spirv(global_invocation_id)] idx3: UVec3,
-    // Vector fields
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
-    // Field update terms
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] int_terms: &mut [IntegrationTerms],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients2],
-    // Sources
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] steps: &mut u32,
-    // Uniforms
-    #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
-) {
-    if idx3.cmpge(grid.n_cells3).any() { return; }
-    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
-    let boundary_idx3 = grid.n_cells3 - 1;
-    // TODO: use usize indexing once indexing glam vectors is fixed? (see https://github.com/Rust-GPU/rust-gpu/issues/432)
-
-    let idx = GridIndex::from_uvec3(idx3).to_flat_idx(n_cells) as usize;
-    let PmlCoefficients2 {
-        h_coeffs,
-        dn_coeffs,
-        en_coeffs,
-    } = grid_coeffs.read(idx);
-    let mut int = int_terms.read(idx);
-    let en_cell = en.read(idx);
-    let h_axes = grid.polarization_mode.get_h_axes();
-    let dn_axes = grid.polarization_mode.get_dn_axes();
-
-    // Dipole sources (working)
-    let steps_usize = *steps as usize;
-    let mut source_term = 0.;
-    for i in 0..dipoles.len() {
-        let GpuDipole {
-            vals_range: [start, end],
-            cell_idx,
-            t_start,
-        } = dipoles.read(i);
-        let t_start = t_start as usize;
-        let t = saturating_sub(steps_usize, t_start);
-        let [start, end] = [start as usize, end as usize];
-        let vals_i = start + t;
-        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
-        source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
-    }
-    // TODO: More source injection (plane wave, etc.)
-
-    // H Update
-    let h_cell = {
-        let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
-        let h_cell = h.read(idx);
-        let mut new_h = Vec4::ZERO;
-        for i in 0..MAX_DIM {
-            let axis = h_axes[i];
-            if axis == Axis::INVALID { break; }
-            let axis_idx = AxisIndex::from_axis(axis);
-            let axis1 = axis.permute();
-            let axis2 = axis1.permute();
-            let de2_d1 = if SpatialAxis::is_spatial_axis(axis1) {
-                let neighbor_idx = (idx + grid.flat_idx_incrs[axis1] as usize).min(en.len() - 1);
-                let en_neighbor = en.read(neighbor_idx) * not_boundary[axis1];
-                (en_neighbor[axis2] - en_cell[axis2]) / grid.d[axis1]
-            } else { 0. };
-            let de1_d2 = if SpatialAxis::is_spatial_axis(axis2) {
-                let neighbor_idx = (idx + grid.flat_idx_incrs[axis2] as usize).min(en.len() - 1);
-                let en_neighbor = en.read(neighbor_idx) * not_boundary[axis2];
-                (en_neighbor[axis1] - en_cell[axis1]) / grid.d[axis2]
-            } else { 0. };
-            let en_curl_axis = de2_d1 - de1_d2;
-
-            // Update Equations
-            let coeffs = h_coeffs[axis_idx];
-            #[allow(unused_mut)]
-            let mut new_h_cmp = coeffs[0] * h_cell[axis] +
-                coeffs[1] * en_curl_axis;
-            // integration terms
-            #[cfg(any(feature = "dim2", feature = "dim3"))]
-            {
-                int.h[axis_idx][0] += en_curl_axis;
-                new_h_cmp += coeffs[2] * int.h[axis_idx][0];
-                #[cfg(feature = "dim3")]
-                {
-                    int.h[axis_idx][1] += h_cell[axis];
-                    new_h_cmp += coeffs[3] * int.h[axis_idx][1];
-                }
-            }
-            // Source injection
-            new_h_cmp += source_term * grid.polarization_mode.is_te() as u32 as f32;
-            new_h[axis] = new_h_cmp;
-        }
-        h.write(idx, new_h);
-        new_h
-    };
-
-    // Dn Update
-    let dn_cell = {
-        let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
-        let dn_cell = dn.read(idx);
-        let mut new_dn = Vec4::ZERO;
-        for i in 0..MAX_DIM {
-            let axis = dn_axes[i];
-            if axis == Axis::INVALID { break; }
-            let axis_idx = AxisIndex::from_axis(axis);
-            let axis1 = axis.permute();
-            let axis2 = axis1.permute();
-            let de2_d1 = if SpatialAxis::is_spatial_axis(axis1) {
-                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis1] as usize).min(h.len() - 1);
-                let h_neighbor = h.read(neighbor_idx) * not_boundary[axis1];
-                (h_cell[axis2] - h_neighbor[axis2]) / grid.d[axis1]
-            } else { 0. };
-            let de1_d2 = if SpatialAxis::is_spatial_axis(axis2) {
-                let neighbor_idx = idx.wrapping_sub(grid.flat_idx_incrs[axis2] as usize).min(h.len() - 1);
-                let en_neighbor = h.read(neighbor_idx) * not_boundary[axis2];
-                (h_cell[axis1] - en_neighbor[axis1]) / grid.d[axis2]
-            } else { 0. };
-            let h_curl_axis = de2_d1 - de1_d2;
-
-            // Update Equations
-            let coeffs = dn_coeffs[axis_idx];
-            int.dn[axis_idx][0] += en_cell[axis];
-            #[allow(unused_mut)]
-            let mut new_dn_cmp = coeffs[0] * dn_cell[axis] +
-                coeffs[1] * h_curl_axis +
-                coeffs[2] * en_cell[axis] +
-                coeffs[3] * int.dn[axis_idx][0];
-            // integration terms
-            #[cfg(any(feature = "dim2", feature = "dim3"))]
-            {
-                int.dn[axis_idx][1] += h_curl_axis;
-                new_dn_cmp += coeffs[4] * int.dn[axis_idx][1];
-                #[cfg(feature = "dim3")]
-                {
-                    int.dn[axis_idx][2] += dn_cell[axis];
-                    new_dn_cmp += coeffs[5] * int.dn[axis_idx][2];
-                }
-            }
-            // Source injection
-            new_dn_cmp += source_term * grid.polarization_mode.is_tm() as u32 as f32;
-            new_dn[axis] = new_dn_cmp;
-        }
-        dn.write(idx, new_dn);
-        new_dn
-    };
-    int_terms.write(idx, int);
-
-    // En Update
-    let mut en_cell = en_cell;
-    for i in 0..MAX_DIM {
-        let axis = dn_axes[i];
-        if axis == Axis::INVALID { break; }
-        let axis_idx = AxisIndex::from_axis(axis);
-        en_cell[axis] = en_coeffs[axis_idx] * dn_cell[axis];
-    }
-    en.write(idx, en_cell);
-
-    if idx3 == UVec3::ZERO {
-        *steps += 1;
-    }
-}
-
 /// Information describing the grid
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
@@ -322,10 +154,12 @@ pub struct IntegrationTerms {
     pub dn: [[f32; DIM]; MAX_DIM],
 }
 
+/// N-dimensional FDTD shader with loss (conductivity)
+// TODO: try using Vect for the vector fields
 /// ===========================================================================================================================
 #[spirv_bindgen]
 #[spirv(compute(threads(1, 1, 64)))]
-pub fn fdtd_lossy_v2(
+pub fn fdtd_lossy(
     #[spirv(global_invocation_id)] idx3: UVec3,
     // Vector fields
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
