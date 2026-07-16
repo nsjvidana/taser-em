@@ -14,23 +14,27 @@ pub async fn cube() -> anyhow::Result<()> {
     let webgpu = WebGpu::default().await?;
     let backend = GpuBackend::WebGpu(webgpu);
 
-    let stability = FdtdStability {
-        dt_safety_factor: 6.,
-        ..Default::default()
-    };
+    // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
+
+    // Simulation parameters w/ default stability values.
+    let stability = FdtdStability::default();
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
     let dt = stability.cfl_condition(cell_size)
         .min(stability.dt_from_gaussian_freq(f_max));
-    let wavelen = C_0 / f_max;
 
+    // Compute slab dimensions
+    let wavelen = C_0 / f_max;
     let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
+
+    // Compute source position and gaussian curve data points
     let source = Source::Dipole {
         position: slab_extents[0] - wavelen * 3.,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
 
+    // Construct the slab shape
     let mut mat_regions = MaterialRegions::new();
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -38,12 +42,13 @@ pub async fn cube() -> anyhow::Result<()> {
         sig: Vec3::splat(0.3),
     };
     mat_regions.fill_region(slab_extents[0], slab_extents[1], mat);
+
+    // Discretize slab in the grid
     let grid = YeeGrid::new(
+        mat_regions,
         cell_size,
         PolarizationMode::TransverseMagnetic,
-        mat_regions,
-        NonZeroU32::new(3).unwrap(),
-        LayerWidths::splat(10)
+        &stability
     );
     let mut solver = FdtdSolver::new(&backend, grid, dt)?;
     solver.add_source(source);
@@ -51,6 +56,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let (regions_offset, coeffs) = solver.compute_pml_coeffs();
     let mut buffers = solver.create_shader_data(&backend, &coeffs, regions_offset)?;
 
+    // Set up viewer
     let grid_extents = n_cells.as_vect() * cell_size;
     let mut testbed = FdtdTestbedViewer::new().await?;
     testbed.set_clipping_planes(cell_size / 3., cell_size * 1000.)

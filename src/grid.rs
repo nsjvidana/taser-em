@@ -1,4 +1,4 @@
-use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
+use crate::{grid_cells_iter, ElectricMaterial, FdtdStability, PmlParameters, C_0, EPS_0};
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
@@ -40,19 +40,18 @@ impl YeeGrid {
     ];
 
     pub fn new(
+        material_regions: MaterialRegions,
         cell_size: Vect,
         polarization_mode: PolarizationMode,
-        material_regions: MaterialRegions,
-        material_resolution: NonZeroU32,
-        spacer_region_widths: LayerWidths,
+        stability: &FdtdStability
     ) -> Self {
         Self {
             cell_size,
             polarization_mode,
             material_regions,
-            material_resolution,
+            material_resolution: stability.material_resolution,
             background_material: ElectricMaterial::FREE_SPACE,
-            spacer_region_widths,
+            spacer_region_widths: stability.spacer_region_widths,
         }
     }
 

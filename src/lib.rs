@@ -7,7 +7,7 @@ pub mod re_exports {
     pub use khal;
 }
 
-use std::num::NonZeroI32;
+use std::num::{NonZeroI32, NonZeroU32};
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
@@ -275,6 +275,8 @@ impl PmlParameters {
 }
 
 /// Helper struct containing parameters and functions for ensuring simulation stability.
+///
+/// The default of this struct contains hardcoded values that are generally stable.
 #[derive(Derivative, Clone)]
 #[derivative(Default)]
 pub struct FdtdStability {
@@ -287,6 +289,10 @@ pub struct FdtdStability {
     pub dt_safety_factor: Real,
     #[derivative(Default(value = "10"))]
     pub source_resolution: Index,
+    #[derivative(Default(value = "NonZeroU32::new(3).unwrap()"))]
+    pub material_resolution: NonZeroU32,
+    #[derivative(Default(value = "LayerWidths::splat(10)"))]
+    pub spacer_region_widths: LayerWidths,
 }
 
 impl FdtdStability {

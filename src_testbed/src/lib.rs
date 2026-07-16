@@ -3,25 +3,22 @@ pub mod re_exports {
 }
 
 use glamx::{Vec3, Vec4, Vec4Swizzles};
-use khal::backend::{Backend, Buffer, Encoder, GpuBackend};
+use khal::backend::{Backend, Buffer, Encoder};
 use kiss3d::camera::Projection;
 use kiss3d::color::{GRAY, RED};
 use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
 use std::cell::RefCell;
-use std::num::NonZeroU32;
 use std::rc::Rc;
-use taser_em::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
-use taser_em::prelude::GpuResult;
+use taser_em::grid::MaterialRegions;
 use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect, VectExt, VectorValueExt};
-use taser_em::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
-
-pub const MAT_REGION_ALPHA: f32 = 0.9;
+use taser_em::grid_cells_iter;
 
 pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
-    pub vector_field_color: Color
+    pub vector_field_color: Color,
+    pub material_region_alpha: f32
 }
 
 impl FdtdTestbedViewer {
@@ -44,6 +41,7 @@ impl FdtdTestbedViewer {
                 camera,
                 scene,
                 vector_field_color: RED,
+                material_region_alpha: 0.9,
             }
         )
     }
@@ -72,7 +70,7 @@ impl FdtdTestbedViewer {
             )));
             self.scene.add_mesh(kiss3d_mesh, Vec3::ONE)
                 .set_pose((mat_regions.scene_pose * pose).append_translation(regions_offset))
-                .set_color(GRAY.with_alpha(MAT_REGION_ALPHA));
+                .set_color(GRAY.with_alpha(self.material_region_alpha));
         }
     }
 
