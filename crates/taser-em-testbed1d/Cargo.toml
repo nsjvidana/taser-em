@@ -1,10 +1,15 @@
 [package]
-name = "taser-em-testbed"
+name = "taser-em-testbed1d"
 version.workspace = true
 authors.workspace = true
 categories.workspace = true
 keywords.workspace = true
 edition.workspace = true
+
+
+[lib]
+name = "taser_em_testbed1d"
+path = "../../src_testbed/src/lib.rs"
 
 [dependencies]
 taser-em1d = { workspace = true, features = ["render"] }

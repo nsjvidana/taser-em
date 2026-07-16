@@ -27,6 +27,8 @@ async fn main() {
 
     fdtd_1d::visualize(&backend).await.unwrap();
     // TODO: run & visualize 2d/3d. maybe have different functions do it with their own taser-em imports?
+    // TODO: maybe use rapier's debug shape rendering?
+    //       (See https://github.com/dimforge/rapier/blob/c13133ad293ee70c7f9cec9e498eac016c362169/src/pipeline/debug_render_pipeline/debug_render_pipeline.rs#L471)
 }
 
 async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
@@ -88,5 +90,4 @@ async fn benchmark(backend: &GpuBackend) -> GpuResult<f32> {
     backend.slow_read_buffer(&buffers.dn.buffer, &mut out).await?;
     println!("{:?}", out);
     Ok(time)
-    // TODO: visualize the shader
 }
