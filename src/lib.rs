@@ -57,6 +57,8 @@ pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
     }
 }
 
+// TODO: make a FdtdSolver trait?
+
 macro_rules! shader_struct {
     ($name:ident, $inner:ty) => {
         #[derive(Shader)]
@@ -82,7 +84,7 @@ macro_rules! shader_struct {
 
 shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 
-pub struct FdtdSolver {
+pub struct FdtdLossySolver {
     pub kernel: FdtdWithLoss,
     pub grid: YeeGrid,
     pub pml_parameters: PmlParameters,
@@ -90,9 +92,9 @@ pub struct FdtdSolver {
     pub sources: Vec<Source>
 }
 
-impl FdtdSolver {
+impl FdtdLossySolver {
     /// Construct a solver with generally stable PML parameters.
-    pub fn new(backend: &GpuBackend, grid: YeeGrid, dt: Real) -> GpuResult<FdtdSolver> {
+    pub fn new(backend: &GpuBackend, grid: YeeGrid, dt: Real) -> GpuResult<FdtdLossySolver> {
         Ok(Self {
             kernel: FdtdWithLoss::from_backend(backend)?,
             grid,
@@ -144,7 +146,7 @@ impl FdtdSolver {
         backend: &GpuBackend,
         coeffs_grid: &PmlCoefficientsGrid,
         regions_offset: Vec3
-    ) -> GpuResult<FdtdSolverGpuData> {
+    ) -> GpuResult<FdtdLossyGpuData> {
         let n_cells = coeffs_grid.n_cells;
         let grid_coeffs = &coeffs_grid.coeffs;
 
@@ -186,7 +188,7 @@ impl FdtdSolver {
             incrs
         };
         Ok(
-            FdtdSolverGpuData {
+            FdtdLossyGpuData {
                 h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
@@ -208,8 +210,8 @@ impl FdtdSolver {
     }
 
     /// Submit a simulation step into `pass` using the GPU buffers `buffers`.
-    pub fn submit_step(&self, buffers: &mut FdtdSolverGpuData, pass: &mut GpuPass) -> GpuResult<()> {
-        let FdtdSolverGpuData {
+    pub fn submit_step(&self, buffers: &mut FdtdLossyGpuData, pass: &mut GpuPass) -> GpuResult<()> {
+        let FdtdLossyGpuData {
             h,
             dn,
             en,
@@ -238,7 +240,7 @@ impl FdtdSolver {
 }
 
 /// Buffers and data needed for running the shader
-pub struct FdtdSolverGpuData {
+pub struct FdtdLossyGpuData {
     pub h: GpuBufferReadable<Vec4>,
     pub dn: GpuBufferReadable<Vec4>,
     pub en: GpuBufferReadable<Vec4>,

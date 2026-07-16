@@ -49,7 +49,7 @@ pub async fn cube() -> anyhow::Result<()> {
         PolarizationMode::TransverseMagnetic,
         &stability
     );
-    let mut solver = FdtdSolver::new(&backend, grid, dt)?;
+    let mut solver = FdtdLossySolver::new(&backend, grid, dt)?;
     solver.add_source(source);
     let n_cells = solver.grid_n_cells();
     let (regions_offset, coeffs) = solver.compute_pml_coeffs();
