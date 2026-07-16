@@ -3,14 +3,13 @@ pub mod re_exports {
 }
 
 use glamx::{Vec3, Vec4, Vec4Swizzles};
-use khal::backend::{Backend, Buffer, Encoder};
 use kiss3d::camera::Projection;
 use kiss3d::color::{GRAY, RED};
 use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::MaterialRegions;
-use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect, VectExt, VectorValueExt};
+use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect};
 use taser_em::grid_cells_iter;
 
 pub struct FdtdTestbedViewer {

@@ -15,11 +15,10 @@ use crate::grid::{LayerWidths, PmlCoefficientsGrid, YeeGrid};
 use crate::prelude::GpuResult;
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
+use khal::backend::{DispatchGrid, GpuBackend, GpuBuffer, GpuPass};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
-use taser_em_shaders::fdtd1::{GridParameters, PmlCoefficients};
 use taser_em_shaders::math::{Axis, GridIndexExt, VectExt, VectorValueExt};
 use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
@@ -333,19 +332,6 @@ impl FdtdStability {
     }
 }
 
-// TODO: remove this shader after testing it against FdtdLossy
-shader_struct!(Fdtd1, taser_em_shaders::fdtd1::Fdtd1DnY);
-
-#[derive(Default)]
-pub struct FdtdParameters1 {
-    pub dt: f32,
-    /// Number of grid cells (in each principal direction)
-    pub n_cells: GridIndex,
-    /// Size of each cell (in meters)
-    pub cell_size: Vect,
-    // TODO: E-field (or H field for current loops) Source enum
-}
-
 /// Relative material properties
 #[derive(Copy, Clone, Debug)]
 pub struct ElectricMaterial {
@@ -373,83 +359,6 @@ impl ElectricMaterial {
         let i = axis as usize;
         (self.eps_r[i] * self.mu_r[i]).sqrt()
     }
-}
-
-pub struct Fdtd1Runner {
-    pub h_x: Vec<f32>,
-    pub dn_y: Vec<f32>,
-    pub en_y: Vec<f32>,
-    pub int_en_y: Vec<f32>,
-    pub buffers: Fdtd1Buffers,
-}
-
-impl Fdtd1Runner {
-    // TODO: make Fdtd1Runner with things other than just `num_cells`
-    pub fn new(
-        backend: &GpuBackend,
-        num_cells: usize,
-        grid_params: GridParameters
-    ) -> GpuResult<Self> {
-        let h_x = vec![Default::default(); num_cells];
-        let dn_y = vec![Default::default(); num_cells];
-        let en_y = vec![Default::default(); num_cells];
-        let int_en_y = vec![Default::default(); num_cells];
-        let coeffs = vec![PmlCoefficients::default(); num_cells];
-
-        let buffers = Fdtd1Buffers {
-            h_x: h_x.create_gpu_buffer_readable(backend)?,
-            dn_y: dn_y.create_gpu_buffer_readable(backend)?,
-            en_y: en_y.create_gpu_buffer_readable(backend)?,
-            int_en_y: int_en_y.create_gpu_buffer(backend)?,
-            coeffs: coeffs.create_gpu_buffer(backend)?,
-            grid: grid_params.create_gpu_uniform(backend)?,
-        };
-
-        Ok(Self {
-            h_x,
-            dn_y,
-            en_y,
-            int_en_y,
-            buffers,
-        })
-    }
-
-    pub fn submit(
-        &mut self,
-        backend: &GpuBackend,
-        kernel: &taser_em_shaders::fdtd1::Fdtd1DnY,
-        timestamps: Option<&mut GpuTimestamps>
-    ) -> GpuResult<()> {
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("fdtd1_dn_y", timestamps);
-        kernel.call(
-            &mut pass,
-            self.dn_y.len(),
-            &mut self.buffers.h_x.buffer,
-            &mut self.buffers.dn_y.buffer,
-            &mut self.buffers.en_y.buffer,
-            &mut self.buffers.int_en_y,
-            &self.buffers.coeffs,
-            &self.buffers.grid,
-        )?;
-        drop(pass);
-        self.buffers.h_x.encode_copy_cmd(&mut encoder)?;
-        self.buffers.dn_y.encode_copy_cmd(&mut encoder)?;
-        self.buffers.en_y.encode_copy_cmd(&mut encoder)?;
-
-        backend.submit(encoder)?;
-
-        Ok(())
-    }
-}
-
-pub struct Fdtd1Buffers {
-    pub h_x: GpuBufferReadable<f32>,
-    pub dn_y: GpuBufferReadable<f32>,
-    pub en_y: GpuBufferReadable<f32>,
-    pub int_en_y: GpuBuffer<f32>,
-    pub coeffs: GpuBuffer<PmlCoefficients>,
-    pub grid: GpuBuffer<GridParameters>,
 }
 
 /// Inject energy into the simulation in various ways.
