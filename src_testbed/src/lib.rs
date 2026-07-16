@@ -1,3 +1,7 @@
+pub mod re_exports {
+    pub use anyhow;
+}
+
 use glamx::{Vec3, Vec4, Vec4Swizzles};
 use khal::backend::{Backend, Buffer, Encoder, GpuBackend};
 use kiss3d::camera::Projection;
@@ -23,14 +27,14 @@ pub struct FdtdTestbedViewer {
 impl FdtdTestbedViewer {
     /// Create a new testbed viewer window, camera, and scene with Dn field color set to [`RED`].
     pub async fn new() -> anyhow::Result<Self> {
-        #[cfg(feature = "dim1")]
-        let title = "1D FDTD Testbed";
-        #[cfg(feature = "dim2")]
-        let title = "2D FDTD Testbed";
-        #[cfg(feature = "dim3")]
-        let title = "3D FDTD Testbed";
-        let window = Window::new(title).await;
+        let title_dim = cfg_select! {
+            feature = "dim1" => "1D",
+            feature = "dim2" => "2D",
+            feature = "dim3" => "3D",
+        };
+        let window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
         let mut camera = OrbitCamera3d::default();
+        #[cfg(not(feature = "dim3"))]
         camera.set_projection(Projection::Orthographic);
         let scene = SceneNode3d::default();
 
@@ -44,14 +48,18 @@ impl FdtdTestbedViewer {
         )
     }
 
-    pub fn set_clipping_planes(&mut self, znear: f32, zfar: f32) {
-        let new_camera = OrbitCamera3d::new_with_frustum(
+    pub fn set_clipping_planes(&mut self, znear: f32, zfar: f32) -> &mut Self {
+        let mut new_camera = OrbitCamera3d::new_with_frustum(
             self.camera.fov(),
             znear,
             zfar,
             self.camera.eye(),
             self.camera.at()
         );
+        #[cfg(not(feature = "dim3"))]
+        new_camera.set_projection(Projection::Orthographic);
+        self.camera = new_camera;
+        self
     }
 
     /// Add material regions as meshes rendered in the scene.
@@ -73,12 +81,12 @@ impl FdtdTestbedViewer {
     /// Returns `false` if the viewer should stop rendering (e.g. when the window closes).
     pub async fn render_frame(
         &mut self,
-        v_field: Vec<Vec4>,
+        v_field: &[Vec4],
         n_cells: GridIndex,
         cell_size: Vect
     ) -> bool {
         let continue_rendering = self.window.render_3d(&mut self.scene, &mut self.camera).await;
-        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
+        let cell_size_splat = Vec3::splat(cell_size);
 
         #[cfg(feature = "dim1")]
         {
@@ -86,7 +94,7 @@ impl FdtdTestbedViewer {
             for cell_idx in grid_cells_iter(n_cells)
                 .map(|i| GridIndex::from_index_array(i.into()))
             {
-                let vector = v_field[cell_idx as usize].xyz() * cell_size3;
+                let vector = v_field[cell_idx as usize].xyz() * cell_size_splat;
                 let pos = vector.with_z(cell_idx.as_vect() * cell_size);
                 self.window.draw_line(
                     prev_pos, pos,

@@ -9,6 +9,7 @@ edition.workspace = true
 [dependencies]
 taser-em1d.workspace = true
 taser-em-testbed1d.workspace = true
+kiss3d.workspace = true
 
 [[bin]]
 name = "examples1d"

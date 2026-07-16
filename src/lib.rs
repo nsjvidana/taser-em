@@ -2,6 +2,10 @@ pub mod prelude;
 pub mod gpu_util;
 pub mod grid;
 pub mod util;
+pub mod re_exports {
+    pub use glamx;
+    pub use khal;
+}
 
 use std::num::NonZeroI32;
 pub use taser_em_shaders as shaders;
