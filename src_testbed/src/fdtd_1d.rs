@@ -7,10 +7,10 @@ use kiss3d::prelude::{GpuMesh3d, SceneNode3d, Window, GRAY};
 use kiss3d::camera::{OrbitCamera3d, Projection};
 use kiss3d::event::{Action, Key};
 use kiss3d::color::RED;
-use taser_em1d::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
-use taser_em1d::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
-use taser_em1d::prelude::GpuResult;
-use taser_em1d::shaders::math::{GridIndexExt, Vect, VectorValueExt};
+use taser_em::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
+use taser_em::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
+use taser_em::prelude::GpuResult;
+use taser_em::shaders::math::{GridIndexExt, Vect, VectorValueExt};
 use crate::MAT_REGION_ALPHA;
 
 pub async fn visualize(backend: &GpuBackend) -> GpuResult<()> {

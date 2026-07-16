@@ -12,7 +12,12 @@ name = "taser_em_testbed1d"
 path = "../../src_testbed/src/lib.rs"
 
 [dependencies]
-taser-em1d = { workspace = true, features = ["render"] }
 kiss3d = "0.44.0"
 khal.workspace = true
 glamx.workspace = true
+
+[dependencies.taser_em]
+package = "taser-em1d"
+path = "../taser-em1d"
+version = "0.1.0"
+features = ["render"]
