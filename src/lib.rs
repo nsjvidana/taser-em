@@ -15,7 +15,7 @@ use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGrid, Ye
 use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{DispatchGrid, GpuBackend, GpuBuffer, GpuPass};
+use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters, IntegrationTerms, PmlCoefficients};
@@ -207,6 +207,49 @@ impl FdtdLossySimulation {
         let n_cells_spacer = stability.spacer_region_widths
             .sum_with_n_cells(materials_n_cells);
         self.pml_parameters.widths.sum_with_n_cells(n_cells_spacer)
+    }
+}
+
+pub struct FdtdLossyPipeline {
+    kernel: FdtdWithLoss,
+    num_steps_per_submission: usize,
+}
+
+impl FdtdLossyPipeline {
+    pub fn new(backend: &GpuBackend, num_steps_per_submission: usize) -> GpuResult<Self> {
+        Ok(Self {
+            kernel: FdtdWithLoss::from_backend(backend)?,
+            num_steps_per_submission,
+        })
+    }
+
+    pub fn submit_steps(
+        &self,
+        backend: &GpuBackend,
+        gpu_data: &mut FdtdLossyGpuData,
+        timestamps: Option<&mut GpuTimestamps>
+    ) -> GpuResult<()> {
+        let mut encoder = backend.begin_encoding();
+        let timestamps = timestamps.filter(|ts| ts.is_idle());
+        let mut pass = encoder.begin_pass("fdtd_lossy", timestamps);
+        for _ in 0..self.num_steps_per_submission {
+            self.kernel.call(
+                &mut pass,
+                DispatchGrid::ThreadCount(gpu_data.thread_count),
+                &mut gpu_data.h.buffer,
+                &mut gpu_data.dn.buffer,
+                &mut gpu_data.en.buffer,
+                &mut gpu_data.int_terms,
+                &gpu_data.grid_coeffs,
+                &gpu_data.dipoles,
+                &gpu_data.source_vals,
+                &mut gpu_data.steps,
+                &gpu_data.grid_params,
+            )?;
+        }
+        drop(pass);
+        backend.submit(encoder)?;
+        Ok(())
     }
 }
 
