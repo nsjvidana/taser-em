@@ -1,16 +1,14 @@
-mod fdtd_1d;
-
-use std::cell::RefCell;
-use glamx::{Vec3, Vec4};
-use khal::backend::{Backend, Buffer, Encoder, GpuBackend, WebGpu};
-use std::num::NonZeroU32;
-use std::rc::Rc;
+use glamx::{Vec3, Vec4, Vec4Swizzles};
+use khal::backend::{Backend, Buffer, Encoder, GpuBackend};
 use kiss3d::camera::Projection;
 use kiss3d::color::{GRAY, RED};
 use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
+use std::cell::RefCell;
+use std::num::NonZeroU32;
+use std::rc::Rc;
 use taser_em::grid::{LayerWidths, MaterialRegions, PolarizationMode, YeeGrid};
 use taser_em::prelude::GpuResult;
-use taser_em::shaders::math::{GridIndex, GridIndexExt, Real, Vect, VectorValueExt};
+use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect, VectExt, VectorValueExt};
 use taser_em::{grid_cells_iter, ElectricMaterial, FdtdSolver, FdtdStability, Source, C_0};
 
 pub const MAT_REGION_ALPHA: f32 = 0.9;
@@ -19,7 +17,7 @@ pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
-    pub dn_field_color: Color
+    pub vector_field_color: Color
 }
 
 impl FdtdTestbedViewer {
@@ -41,7 +39,7 @@ impl FdtdTestbedViewer {
                 window,
                 camera,
                 scene,
-                dn_field_color: RED,
+                vector_field_color: RED,
             }
         )
     }
@@ -70,16 +68,39 @@ impl FdtdTestbedViewer {
         }
     }
 
-    /// Renders one frame.
+    /// Renders one frame of the vector field `v_field`.
     ///
     /// Returns `false` if the viewer should stop rendering (e.g. when the window closes).
     pub async fn render_frame(
         &mut self,
-        dn_field: Vec<Vec4>,
+        v_field: Vec<Vec4>,
         n_cells: GridIndex,
         cell_size: Vect
     ) -> bool {
-        todo!()
+        let continue_rendering = self.window.render_3d(&mut self.scene, &mut self.camera).await;
+        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
+
+        #[cfg(feature = "dim1")]
+        {
+            let mut prev_pos = v_field[0].xyz().with_z(0.0);
+            for cell_idx in grid_cells_iter(n_cells)
+                .map(|i| GridIndex::from_index_array(i.into()))
+            {
+                let vector = v_field[cell_idx as usize].xyz() * cell_size3;
+                let pos = vector.with_z(cell_idx.as_vect() * cell_size);
+                self.window.draw_line(
+                    prev_pos, pos,
+                    self.vector_field_color, 2., false
+                );
+                prev_pos = pos;
+            }
+        }
+        #[cfg(not(feature = "dim1"))]
+        {
+            todo!("visualize 2d and 3d vector fields")
+        }
+
+        continue_rendering
     }
 }
 

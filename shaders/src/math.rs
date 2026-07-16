@@ -12,7 +12,7 @@ mod dim_types {
     use crate::math::{Index, Real};
 
     pub const DIM: usize = 1;
-    /// A shader's vector field element (a Z component in 1 dimension)
+    /// A "vector" type used as a spatial position or a vector of staggered vector components.
     pub type Vect = Real;
     pub type GridIndex = Index;
 }
