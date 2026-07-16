@@ -3,7 +3,7 @@ use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
-use taser_em_shaders::fdtd::{PmlCoefficients2, GpuPolarizationMode};
+use taser_em_shaders::fdtd::{PmlCoefficients, GpuPolarizationMode};
 use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt, GridIndexExt};
 
 /// Information describing a 1-, 2-, or 3-D Yee Grid with E and H fields staggered by half a cell.
@@ -229,7 +229,7 @@ pub struct PmlCoefficientsGrid {
     /// Dimensions of grid
     pub n_cells: GridIndex,
     /// Grid's update coefficients in a flattened array.
-    pub coeffs: Vec<PmlCoefficients2>,
+    pub coeffs: Vec<PmlCoefficients>,
 }
 
 impl PmlCoefficientsGrid {
@@ -277,7 +277,7 @@ impl PmlCoefficientsGrid {
         });
 
         let cell_count = n_cells3.element_product() as usize;
-        let mut coeffs = vec![PmlCoefficients2::default(); cell_count];
+        let mut coeffs = vec![PmlCoefficients::default(); cell_count];
         let inv_dt = dt.recip();
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         let c0_dt = C_0 * dt;

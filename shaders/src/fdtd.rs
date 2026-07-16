@@ -9,7 +9,7 @@ use crate::math::{DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real, GridInd
 /// Information describing the grid
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
-pub struct GridParameters2 {
+pub struct GridParameters {
     /// Increments by 1 in i/j/k indices for flat indexing. Used for accessing
     /// data from neighboring cells.
     pub flat_idx_incrs: UVec3,
@@ -127,7 +127,7 @@ impl<T, const N: usize> core::ops::IndexMut<AxisIndex> for [T; N] {
 /// Update coefficients for H, D, and E fields with a UPML
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
-pub struct PmlCoefficients2 {
+pub struct PmlCoefficients {
     pub h_coeffs: [[f32; 2 + DIM - 1]; MAX_DIM],
     pub dn_coeffs: [[f32; 4 + DIM - 1]; MAX_DIM],
     pub en_coeffs: [f32; MAX_DIM],
@@ -167,13 +167,13 @@ pub fn fdtd_lossy(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
     // Field update terms
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [IntegrationTerms],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients2],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
     // Sources
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] steps: &mut u32,
     // Uniforms
-    #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters2,
+    #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters,
 ) {
     if idx3.cmpge(grid.n_cells3).any() { return; }
     let idx = GridIndex::from_uvec3(idx3).to_flat_idx(GridIndex::from_uvec3(grid.n_cells3))
@@ -197,7 +197,7 @@ pub fn fdtd_lossy(
         source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
     }
 
-    let PmlCoefficients2 {
+    let PmlCoefficients {
         h_coeffs, dn_coeffs, en_coeffs
     } = grid_coeffs.read(idx);
     let mut int_terms = integrals.read(idx);

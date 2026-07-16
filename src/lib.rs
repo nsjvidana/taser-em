@@ -18,7 +18,7 @@ use glamx::{UVec3, Vec3, Vec4};
 use khal::backend::{DispatchGrid, GpuBackend, GpuBuffer, GpuPass};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
-use taser_em_shaders::fdtd::{GpuDipole, GridParameters2, IntegrationTerms, PmlCoefficients2};
+use taser_em_shaders::fdtd::{GpuDipole, GridParameters, IntegrationTerms, PmlCoefficients};
 use taser_em_shaders::math::{Axis, GridIndexExt, VectExt, VectorValueExt};
 use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
@@ -195,7 +195,7 @@ impl FdtdSolver {
                 dipoles: dipoles.create_gpu_buffer(backend)?,
                 source_vals: source_vals.create_gpu_buffer(backend)?,
                 steps: 0.create_gpu_buffer(backend)?,
-                grid_params: GridParameters2 {
+                grid_params: GridParameters {
                     flat_idx_incrs,
                     polarization_mode: self.grid.polarization_mode.into(),
                     n_cells3: n_cells.n_cells_to_3d(),
@@ -243,11 +243,11 @@ pub struct FdtdSolverGpuData {
     pub dn: GpuBufferReadable<Vec4>,
     pub en: GpuBufferReadable<Vec4>,
     pub int_terms: GpuBuffer<IntegrationTerms>,
-    pub grid_coeffs: GpuBuffer<PmlCoefficients2>,
+    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
     pub dipoles: GpuBuffer<GpuDipole>,
     pub source_vals: GpuBuffer<f32>,
     pub steps: GpuBuffer<u32>,
-    pub grid_params: GpuBuffer<GridParameters2>,
+    pub grid_params: GpuBuffer<GridParameters>,
     pub thread_count: [u32; 3]
 }
 
