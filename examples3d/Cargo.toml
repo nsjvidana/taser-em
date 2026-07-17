@@ -6,6 +6,9 @@ categories.workspace = true
 keywords.workspace = true
 edition.workspace = true
 
+[features]
+rayon = ["taser-em3d/rayon"]
+
 [dependencies]
 taser-em-testbed3d.workspace = true
 kiss3d.workspace = true

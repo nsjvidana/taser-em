@@ -18,7 +18,11 @@ pub async fn cube() -> anyhow::Result<()> {
     let stability = FdtdStability {
         dt_safety_factor: 3.,
         cells_per_wavelength: 10,
-        material_resolution: NonZeroU32::new(10).unwrap(),
+        spacer_region_widths: LayerWidths::new(
+            10, 10,
+            10, 10,
+            0, 0
+        ),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);

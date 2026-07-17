@@ -10,6 +10,8 @@ members = [
     "examples2d",
     "crates/taser-em3d",
     "crates/taser-em-shaders3d",
+    "crates/taser-em-testbed3d",
+    "examples3d",
     "crates/taser-em-build",
 ]
 resolver = "2"
@@ -50,7 +52,9 @@ taser-em-shaders2d = { version = "0.1.0", path = "crates/taser-em-shaders2d" }
 taser-em-testbed2d = { version = "0.1.0", path = "crates/taser-em-testbed2d" }
 taser-em3d = { version = "0.1.0", path = "crates/taser-em3d" }
 taser-em-shaders3d = { version = "0.1.0", path = "crates/taser-em-shaders3d" }
+taser-em-testbed3d = { version = "0.1.0", path = "crates/taser-em-testbed3d" }
 taser-em-build = { version = "0.1.0", path = "crates/taser-em-build" }
+rayon = "1.1"
 
 # Compile build dependencies to speed up shader compilation times
 [profile.release.build-override]

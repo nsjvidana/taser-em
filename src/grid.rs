@@ -1,10 +1,13 @@
-use crate::{grid_cells_iter, ElectricMaterial, PmlParameters, C_0, EPS_0};
+use crate::{grid_cells_iter, to_parallel, ElectricMaterial, PmlParameters, C_0, EPS_0};
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use taser_em_shaders::fdtd::{PmlCoefficients, GpuPolarizationMode};
 use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt, GridIndexExt};
+
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
@@ -158,7 +161,6 @@ impl YeeGridMaterials {
         default_mat: ElectricMaterial,
     ) -> Self {
         let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
-        let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
         let sim_offset = Self::compute_simulation_offset(simulation_bb, n_cells, cell_size);
         let centered_scene_pose = regions.scene_pose.append_translation(sim_offset);
@@ -177,18 +179,21 @@ impl YeeGridMaterials {
                 .unwrap_or(&default_mat)
         };
 
-        // TODO: par_iter
-        for (i, mat) in mats.iter_mut().enumerate() {
-            let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
-            let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
-            let dn_mat = dn_offsets.map(|off| mat_at_pt(pos + off));
-            let h_mat = h_offsets.map(|off| mat_at_pt(pos + off));
-            *mat = ElectricMaterial {
-                eps_r: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].eps_r[i] })),
-                sig: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].sig[i] })),
-                mu_r: Vec3::from_array(std::array::from_fn(|i| { h_mat[i].mu_r[i] })),
-            };
-        }
+        let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
+        let start = std::time::Instant::now();
+        to_parallel!(mats.iter_mut().enumerate())
+            .for_each(|(i, mat)| {
+                let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
+                let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
+                let dn_mat = dn_offsets.map(|off| mat_at_pt(pos + off));
+                let h_mat = h_offsets.map(|off| mat_at_pt(pos + off));
+                *mat = ElectricMaterial {
+                    eps_r: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].eps_r[i] })),
+                    sig: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].sig[i] })),
+                    mu_r: Vec3::from_array(std::array::from_fn(|i| { h_mat[i].mu_r[i] })),
+                };
+            });
+        println!("{:?}", start.elapsed());
 
         Self {
             n_cells,
@@ -318,66 +323,66 @@ impl PmlCoefficientsGrid {
         let inv_dt = dt.recip();
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         let c0_dt = C_0 * dt;
-        // TODO: use par_iter here
-        for (i, coeff) in coeffs.iter_mut().enumerate() {
-            let idx = GridIndex::from_flat_idx(i as u32, n_cells);
-            let sig_idx = (idx * 2).cell_idx_to_3d().to_array()
-                .map(|i| i as usize);
+        to_parallel!(coeffs.iter_mut().enumerate())
+            .for_each(|(i, coeff)| {
+                let idx = GridIndex::from_flat_idx(i as u32, n_cells);
+                let sig_idx = (idx * 2).cell_idx_to_3d().to_array()
+                    .map(|i| i as usize);
 
-            let dn_sigs = Vec3::from_array(
-                std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i]])
-            );
-            let h_sigs = Vec3::from_array(
-                std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i] + 1])
-            );
+                let dn_sigs = Vec3::from_array(
+                    std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i]])
+                );
+                let h_sigs = Vec3::from_array(
+                    std::array::from_fn(|axis_i| sig[axis_i][sig_idx[axis_i] + 1])
+                );
 
-            for axis in Axis::ALL_AXES {
-                let axis_idx = axis as usize;
-                let axis1 = axis.permute();
-                let axis2 = axis1.permute();
+                for axis in Axis::ALL_AXES {
+                    let axis_idx = axis as usize;
+                    let axis1 = axis.permute();
+                    let axis2 = axis1.permute();
 
-                let coeff_term0 = (
-                    inv_dt + ((h_sigs[axis1] + h_sigs[axis2]) / (2. * EPS_0)) +
-                        ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                ).recip();
-                let inv_mu_r_axis = mats[i].mu_r[axis].recip();
-                coeff.h_coeffs[axis_idx][0] = coeff_term0 * (
-                    inv_dt - ((h_sigs[axis1] + h_sigs[axis2]) / (2. * EPS_0)) -
-                        ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                    let coeff_term0 = (
+                        inv_dt + ((h_sigs[axis1] + h_sigs[axis2]) / (2. * EPS_0)) +
+                            ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                    ).recip();
+                    let inv_mu_r_axis = mats[i].mu_r[axis].recip();
+                    coeff.h_coeffs[axis_idx][0] = coeff_term0 * (
+                        inv_dt - ((h_sigs[axis1] + h_sigs[axis2]) / (2. * EPS_0)) -
+                            ((h_sigs[axis1] * h_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
                     );
-                coeff.h_coeffs[axis_idx][1] = -coeff_term0 * C_0 * inv_mu_r_axis;
-                #[cfg(any(feature = "dim2", feature = "dim3"))]
-                {
-                    coeff.h_coeffs[axis_idx][2] = -coeff_term0 * c0_dt * h_sigs[axis] / EPS_0 * inv_mu_r_axis;
-                    #[cfg(feature = "dim3")]
+                    coeff.h_coeffs[axis_idx][1] = -coeff_term0 * C_0 * inv_mu_r_axis;
+                    #[cfg(any(feature = "dim2", feature = "dim3"))]
                     {
-                        coeff.h_coeffs[axis_idx][3] = -coeff_term0 * dt * h_sigs[axis1] * h_sigs[axis2] / (EPS_0 * EPS_0);
+                        coeff.h_coeffs[axis_idx][2] = -coeff_term0 * c0_dt * h_sigs[axis] / EPS_0 * inv_mu_r_axis;
+                        #[cfg(feature = "dim3")]
+                        {
+                            coeff.h_coeffs[axis_idx][3] = -coeff_term0 * dt * h_sigs[axis1] * h_sigs[axis2] / (EPS_0 * EPS_0);
+                        }
                     }
-                }
 
-                let coeff_term0 = (
-                    inv_dt + ((dn_sigs[axis1] + dn_sigs[axis2]) / (2. * EPS_0)) +
-                        ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                ).recip();
-                let mat_sig_axis = mats[i].sig[axis];
-                coeff.dn_coeffs[axis_idx][0] = coeff_term0 * (
-                    inv_dt - ((dn_sigs[axis1] + dn_sigs[axis2]) / (2. * EPS_0)) -
-                        ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                    let coeff_term0 = (
+                        inv_dt + ((dn_sigs[axis1] + dn_sigs[axis2]) / (2. * EPS_0)) +
+                            ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                    ).recip();
+                    let mat_sig_axis = mats[i].sig[axis];
+                    coeff.dn_coeffs[axis_idx][0] = coeff_term0 * (
+                        inv_dt - ((dn_sigs[axis1] + dn_sigs[axis2]) / (2. * EPS_0)) -
+                            ((dn_sigs[axis1] * dn_sigs[axis2] * dt) / (4. * EPS_0 * EPS_0))
                     );
-                coeff.dn_coeffs[axis_idx][1] = coeff_term0 * C_0;
-                coeff.dn_coeffs[axis_idx][2] = -coeff_term0 * mat_sig_axis / EPS_0;
-                coeff.dn_coeffs[axis_idx][3] = -coeff_term0 * dn_sigs[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
-                #[cfg(any(feature = "dim2", feature = "dim3"))]
-                {
-                    coeff.dn_coeffs[axis_idx][4] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
-                    #[cfg(feature = "dim3")]
+                    coeff.dn_coeffs[axis_idx][1] = coeff_term0 * C_0;
+                    coeff.dn_coeffs[axis_idx][2] = -coeff_term0 * mat_sig_axis / EPS_0;
+                    coeff.dn_coeffs[axis_idx][3] = -coeff_term0 * dn_sigs[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
+                    #[cfg(any(feature = "dim2", feature = "dim3"))]
                     {
-                        coeff.dn_coeffs[axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2] / (EPS_0 * EPS_0);
+                        coeff.dn_coeffs[axis_idx][4] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
+                        #[cfg(feature = "dim3")]
+                        {
+                            coeff.dn_coeffs[axis_idx][5] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2] / (EPS_0 * EPS_0);
+                        }
                     }
+                    coeff.en_coeffs[axis_idx] = mats[i].eps_r[axis].recip();
                 }
-                coeff.en_coeffs[axis_idx] = mats[i].eps_r[axis].recip();
-            }
-        }
+            });
 
         (*regions_offset, Self { n_cells, coeffs, })
     }
