@@ -7,7 +7,7 @@ pub mod re_exports {
 use glamx::{Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
 use kiss3d::camera::Projection;
 use kiss3d::color::{BLUE, GRAY, RED};
-use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
+use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, InstanceData3d, OrbitCamera3d, SceneNode3d, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
@@ -124,7 +124,6 @@ impl FdtdTestbedViewer {
 /// The mode in which vector fields are visualized.
 ///
 /// Includes modes for all dimensions.
-#[derive(Clone)]
 pub enum VisualizationMode {
     /// A line graph of vector field magnitudes
     #[cfg(feature = "dim1")]
@@ -137,20 +136,15 @@ pub enum VisualizationMode {
     },
     #[cfg(feature = "dim2")]
     Quads {
+        instanced_quad: SceneNode3d,
+        instances: Vec<InstanceData3d>,
         color_mode: ColorMode,
-        quads: Vec<SceneNode3d>
     },
     #[cfg(feature = "dim3")]
     Cubes {
         color_mode: ColorMode,
         cubes: Vec<SceneNode3d>
     },
-    #[cfg(not(feature = "dim1"))]
-    Arrows {
-        color_mode: ColorMode,
-        /// The origin of each arrow
-        arrow_starts: Vec<Vec3>
-    }
 }
 
 
@@ -175,19 +169,19 @@ impl VisualizationMode {
                 *graph_max_magnitude = grid_extents / 100.;
             },
             #[cfg(feature = "dim2")]
-            VisualizationMode::Quads { quads, .. } => {
+            VisualizationMode::Quads { instanced_quad, instances, color_mode } => {
                 let cell_size_half3 = (cell_size / 2.).to_3d(Vec3::ZERO);
-                *quads = cell_positions.iter()
+                *instanced_quad = scene.add_quad(cell_size.x, cell_size.y, 1, 1);
+                *instances = cell_positions.iter()
                     .map(|pos| {
-                        scene
-                            .add_quad(cell_size.x, cell_size.y, 1, 1)
-                            .translate(pos + cell_size_half3)
+                        InstanceData3d {
+                            color: color_mode.compute_color(Real::MIN),
+                            position: pos + cell_size_half3,
+                            ..Default::default()
+                        }
                     })
                     .collect();
-            }
-            #[cfg(not(feature = "dim1"))]
-            VisualizationMode::Arrows { arrow_starts, .. } => {
-                *arrow_starts = cell_positions;
+                instanced_quad.set_instances(instances);
             }
             #[cfg(feature = "dim3")]
             VisualizationMode::Cubes { .. } => {
@@ -223,15 +217,14 @@ impl VisualizationMode {
         #[cfg(feature = "dim2")]
         {
             match self {
-                VisualizationMode::Quads { color_mode, quads } => {
-                    for (quad, vector) in quads.iter_mut()
+                VisualizationMode::Quads { instanced_quad, instances, color_mode } => {
+                    for (quad_inst, vector) in instances.iter_mut()
                         .zip(v_field)
                     {
-                        let color = color_mode.compute_color(vector.length());
-                        quad.set_color(color);
+                        quad_inst.color = color_mode.compute_color(vector.length());
                     }
+                    instanced_quad.set_instances(instances);
                 }
-                VisualizationMode::Arrows { .. } => todo!(),
             }
         }
         #[cfg(feature = "dim3")]
@@ -255,8 +248,9 @@ impl Default for VisualizationMode {
         #[cfg(feature = "dim2")]
         {
             Self::Quads {
+                instanced_quad: SceneNode3d::default(),
                 color_mode: Default::default(),
-                quads: Vec::new(),
+                instances: Vec::new(),
             }
         }
         #[cfg(feature = "dim3")]
