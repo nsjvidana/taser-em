@@ -1,0 +1,18 @@
+[package]
+name = "examples2d"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+
+[dependencies]
+taser-em-testbed2d.workspace = true
+kiss3d.workspace = true
+
+[dependencies.taser-em2d]
+path = "../crates/taser-em2d"
+
+[[bin]]
+name = "examples2d"
+path = "main.rs"

@@ -840,6 +840,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "examples2d"
+version = "0.1.0"
+dependencies = [
+ "kiss3d",
+ "taser-em-testbed2d",
+ "taser-em2d",
+]
+
+[[package]]
 name = "exr"
 version = "1.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3245,6 +3254,17 @@ dependencies = [
  "khal",
  "kiss3d",
  "taser-em1d",
+]
+
+[[package]]
+name = "taser-em-testbed2d"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glamx",
+ "khal",
+ "kiss3d",
+ "taser-em2d",
 ]
 
 [[package]]

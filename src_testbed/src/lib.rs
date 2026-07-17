@@ -94,10 +94,10 @@ impl FdtdTestbedViewer {
         v_field: &[Vec4],
     ) -> bool {
         let continue_rendering = self.window.render_3d(&mut self.scene, &mut self.camera).await;
-        let cell_size_splat = Vec3::splat(self.cell_size);
 
         #[cfg(feature = "dim1")]
         {
+            let cell_size_splat = Vec3::splat(self.cell_size);
             let mut prev_pos = v_field[0].xyz().with_z(0.0);
             for cell_idx in grid_cells_iter(self.n_cells)
                 .map(|i| GridIndex::from_index_array(i.into()))
