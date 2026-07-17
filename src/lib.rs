@@ -184,6 +184,7 @@ impl FdtdLossySimulation {
         }
     }
 
+    /// Compute the dimensions of the grid, in grid cells
     pub fn compute_n_cells(&self, stability: &FdtdStability) -> GridIndex {
         let mut inner_bb = self.material_regions.compute_bounding_box();
 
@@ -249,7 +250,7 @@ impl FdtdLossyPipeline {
             )?;
         }
         drop(pass);
-        encoding_fn(&mut encoder, gpu_data);
+        encoding_fn(&mut encoder, gpu_data)?;
         backend.submit(encoder)?;
         Ok(())
     }
