@@ -11,11 +11,11 @@ use std::num::{NonZeroI32, NonZeroU32, NonZeroUsize};
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
-use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGrid, YeeGridMaterials};
+use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGridMaterials};
 use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuTimestamps};
+use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
@@ -46,16 +46,6 @@ impl<T> GridCellsIter for T where T: Iterator<Item = (Index,)> {}
 impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index,)> {}
 #[cfg(feature = "dim3")]
 impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index, Index,)> {}
-
-/// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
-/// The cell positions are given as tuples.
-pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
-    cfg_select! {
-        feature = "dim1" => itertools::iproduct!(0..n_cells),
-        feature = "dim2" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y]),
-        feature = "dim3" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y], 0..n_cells[SpatialAxis::Z]),
-    }
-}
 
 // TODO: use some "FdtdSolver" generics here?
 
@@ -270,22 +260,6 @@ impl FdtdLossyPipeline {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct FdtdParameters {
-    pub cell_size: Vect,
-    pub dt: Real,
-    pub polarization_mode: PolarizationMode,
-    pub material_discretization: MaterialDiscretization
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum MaterialDiscretization {
-    Rough,
-    Smooth { resolution: NonZeroU32 }
-}
-
-// TODO: make a FdtdSolver trait?
-
 macro_rules! shader_struct {
     ($name:ident, $inner:ty) => {
         #[derive(Shader)]
@@ -311,150 +285,21 @@ macro_rules! shader_struct {
 
 shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 
-pub struct FdtdLossySolver {
-    pub kernel: FdtdWithLoss,
-    pub grid: YeeGrid,
-    pub pml_parameters: PmlParameters,
+#[derive(Clone, Debug)]
+pub struct FdtdParameters {
+    pub cell_size: Vect,
     pub dt: Real,
-    pub sources: Vec<Source>
+    pub polarization_mode: PolarizationMode,
+    pub material_discretization: MaterialDiscretization
 }
 
-impl FdtdLossySolver {
-    /// Construct a solver with generally stable PML parameters.
-    pub fn new(backend: &GpuBackend, grid: YeeGrid, dt: Real) -> GpuResult<FdtdLossySolver> {
-        Ok(Self {
-            kernel: FdtdWithLoss::from_backend(backend)?,
-            grid,
-            pml_parameters: PmlParameters::new(dt),
-            dt,
-            sources: Vec::new()
-        })
-    }
-
-    #[inline]
-    pub fn add_source(&mut self, source: Source) -> &mut Self {
-        self.sources.push(source);
-        self
-    }
-
-    /// Computes dimensions of entire Yee grid, including PML
-    pub fn grid_n_cells(&self) -> GridIndex {
-        self.pml_parameters.widths.sum_with_n_cells(self.n_cells_inner())
-    }
-
-    /// Computes dimensions of the grid, excluding PML
-    pub fn n_cells_inner(&self) -> GridIndex {
-        let source_pts = self.sources.iter()
-            .filter_map(|src| {
-                match src {
-                    Source::Dipole { position, .. } => Some(position.to_3d(Vec3::ZERO)),
-                    _ => None
-                }
-            })
-            .collect::<Vec<_>>();
-        self.grid.n_cells(Some(&source_pts))
-    }
-
-    /// Creates GPU buffers and dispatch parameters for simulating.
-    pub fn create_shader_data(
-        &self,
-        backend: &GpuBackend,
-        coeffs_grid: &PmlCoefficientsGrid,
-        regions_offset: Vec3
-    ) -> GpuResult<FdtdLossyGpuData> {
-        let n_cells = coeffs_grid.n_cells;
-        let grid_coeffs = &coeffs_grid.coeffs;
-
-        let mut source_vals: Vec<Real> = vec![];
-        let regions_offset = Vect::from_vec3(regions_offset);
-        let mut dipoles = self.sources.iter()
-            .filter_map(|source| {
-                // todo!("convert dipoles for GPU use, and populate source_vals")
-                match source {
-                    Source::Dipole { position, t_start, vals } => {
-                        let pos = (regions_offset + position) / self.grid.cell_size;
-                        debug_assert!(!pos.smallest_element().is_sign_negative());
-                        let start = source_vals.len();
-                        source_vals.extend_from_slice(vals);
-                        Some(GpuDipole {
-                            cell_idx: pos.as_grid_index().to_flat_idx(n_cells),
-                            vals_range: [start as u32, source_vals.len() as u32 - 1],
-                            t_start: (t_start / self.dt) as u32,
-                        })
-                    }
-                    _ => None
-                }
-            })
-            .collect::<Vec<_>>();
-        if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
-        if source_vals.is_empty() { source_vals.push(0.0); }
-
-        let cell_count = n_cells.into_array()
-            .iter()
-            .product::<Index>() as usize;
-        let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
-        let flat_idx_incrs = {
-            let mut incrs = UVec3::ZERO;
-            for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter().zip(SpatialAxis::ALL_AXES) {
-                let mut grid_incr = GridIndex::default();
-                    grid_incr[spatial_axis] = 1;
-                incrs[axis] = grid_incr.to_flat_idx(n_cells);
-            }
-            incrs
-        };
-        Ok(
-            FdtdLossyGpuData {
-                h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                int_terms: vec![IntegrationTerms::default(); cell_count].create_gpu_buffer(backend)?,
-                grid_coeffs: grid_coeffs.create_gpu_buffer(backend)?,
-                dipoles: dipoles.create_gpu_buffer(backend)?,
-                source_vals: source_vals.create_gpu_buffer(backend)?,
-                steps: 0.create_gpu_buffer(backend)?,
-                grid_params: GridParameters {
-                    flat_idx_incrs,
-                    polarization_mode: self.grid.polarization_mode.into(),
-                    n_cells3: n_cells.n_cells_to_3d(),
-                    d: self.grid.cell_size.to_3d(Vec3::ZERO),
-                    ..Default::default()
-                }.create_gpu_uniform(backend)?,
-                thread_count: n_cells.n_cells_to_3d().to_array(),
-                n_cells
-            }
-        )
-    }
-
-    /// Submit a simulation step into `pass` using the GPU buffers `buffers`.
-    pub fn submit_step(&self, buffers: &mut FdtdLossyGpuData, pass: &mut GpuPass) -> GpuResult<()> {
-        let FdtdLossyGpuData {
-            h,
-            dn,
-            en,
-            int_terms,
-            grid_coeffs,
-            dipoles,
-            source_vals,
-            steps,
-            grid_params,
-            thread_count,
-            n_cells: _,
-        } = buffers;
-        self.kernel.call(
-            pass,
-            DispatchGrid::ThreadCount(*thread_count),
-            &mut h.buffer,
-            &mut dn.buffer,
-            &mut en.buffer,
-            int_terms,
-            grid_coeffs,
-            dipoles,
-            source_vals,
-            steps,
-            grid_params,
-        )
-    }
+#[derive(Copy, Clone, Debug)]
+pub enum MaterialDiscretization {
+    Rough,
+    Smooth { resolution: NonZeroU32 }
 }
+
+// TODO: make an FdtdSolver trait?
 
 /// Buffers and data needed for running the shader
 pub struct FdtdLossyGpuData {
@@ -646,5 +491,16 @@ impl Default for Source {
             t_start: Default::default(),
             vals: Default::default(),
         }
+    }
+}
+
+
+/// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
+/// The cell positions are given as tuples.
+pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
+    cfg_select! {
+        feature = "dim1" => itertools::iproduct!(0..n_cells),
+        feature = "dim2" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y]),
+        feature = "dim3" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y], 0..n_cells[SpatialAxis::Z]),
     }
 }
