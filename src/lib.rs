@@ -7,7 +7,7 @@ pub mod re_exports {
     pub use khal;
 }
 
-use std::num::{NonZeroI32, NonZeroU32};
+use std::num::{NonZeroI32, NonZeroU32, NonZeroUsize};
 pub use taser_em_shaders as shaders;
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
@@ -15,7 +15,7 @@ use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGrid, Ye
 use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuTimestamps};
+use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters, IntegrationTerms, PmlCoefficients};
@@ -84,7 +84,7 @@ impl FdtdLossySimulation {
     }
     
     pub fn finalize(
-        self,
+        &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
     ) -> GpuResult<FdtdLossyGpuData> {
@@ -216,10 +216,10 @@ pub struct FdtdLossyPipeline {
 }
 
 impl FdtdLossyPipeline {
-    pub fn new(backend: &GpuBackend, num_steps_per_submission: usize) -> GpuResult<Self> {
+    pub fn new(backend: &GpuBackend, num_steps_per_submission: NonZeroUsize) -> GpuResult<Self> {
         Ok(Self {
             kernel: FdtdWithLoss::from_backend(backend)?,
-            num_steps_per_submission,
+            num_steps_per_submission: num_steps_per_submission.get(),
         })
     }
 
@@ -227,10 +227,11 @@ impl FdtdLossyPipeline {
         &self,
         backend: &GpuBackend,
         gpu_data: &mut FdtdLossyGpuData,
-        timestamps: Option<&mut GpuTimestamps>
+        timestamps: Option<&mut GpuTimestamps>,
+        encoding_fn: impl Fn(&mut GpuEncoder, &mut FdtdLossyGpuData) -> GpuResult<()>
     ) -> GpuResult<()> {
-        let mut encoder = backend.begin_encoding();
         let timestamps = timestamps.filter(|ts| ts.is_idle());
+        let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("fdtd_lossy", timestamps);
         for _ in 0..self.num_steps_per_submission {
             self.kernel.call(
@@ -248,6 +249,7 @@ impl FdtdLossyPipeline {
             )?;
         }
         drop(pass);
+        encoding_fn(&mut encoder, gpu_data);
         backend.submit(encoder)?;
         Ok(())
     }

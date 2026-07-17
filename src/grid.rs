@@ -371,9 +371,7 @@ impl YeeGridMaterials {
         let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
-        let grid_center = n_cells.as_vect() * cell_size / 2.;
-        let regions_center = Vect::from_vec3(regions.compute_bounding_box().center());
-        let regions_offset = (grid_center - regions_center).to_3d(Vec3::ZERO);
+        let regions_offset = Self::compute_regions_offset(regions, n_cells, cell_size);
         let centered_scene_pose = regions.scene_pose.append_translation(regions_offset);
 
         let cell_size3 = cell_size.to_3d(Vec3::ZERO);
@@ -460,6 +458,16 @@ impl YeeGridMaterials {
             default_mat: self.default_mat,
             regions_offset: self.regions_offset,
         }
+    }
+
+    pub fn compute_regions_offset(
+        regions: &MaterialRegions,
+        n_cells: GridIndex,
+        cell_size: Vect
+    ) -> Vec3 {
+        let grid_center = n_cells.as_vect() * cell_size / 2.;
+        let regions_center = Vect::from_vec3(regions.compute_bounding_box().center());
+        (grid_center - regions_center).to_3d(Vec3::ZERO)
     }
 }
 
