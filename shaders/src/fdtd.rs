@@ -156,9 +156,10 @@ pub struct IntegrationTerms {
 
 /// N-dimensional FDTD shader with loss (conductivity)
 // TODO: try using Vect for the vector fields
-/// ===========================================================================================================================
 #[spirv_bindgen]
-#[spirv(compute(threads(1, 1, 64)))]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn fdtd_lossy(
     #[spirv(global_invocation_id)] idx3: UVec3,
     // Vector fields
