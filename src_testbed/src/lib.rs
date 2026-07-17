@@ -33,6 +33,8 @@ impl FdtdTestbedViewer {
         };
         let window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
         let mut camera = OrbitCamera3d::default();
+        #[cfg(not(feature = "dim1"))]
+        camera.set_up_axis(Vec3::Z);
         #[cfg(not(feature = "dim3"))]
         camera.set_projection(Projection::Orthographic);
         let scene = SceneNode3d::default();

@@ -7,8 +7,9 @@ pub mod re_exports {
     pub use khal;
 }
 
-use std::num::{NonZeroI32, NonZeroU32, NonZeroUsize};
 pub use taser_em_shaders as shaders;
+
+use std::num::{NonZeroI32, NonZeroU32, NonZeroUsize};
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGridMaterials};
