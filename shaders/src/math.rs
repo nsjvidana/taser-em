@@ -15,25 +15,28 @@ mod dim_types {
     /// A "vector" type used as a spatial position or a vector of staggered vector components.
     pub type Vect = Real;
     pub type GridIndex = Index;
+    pub type BoolVect = bool;
 }
 
 #[cfg(feature = "dim2")]
 mod dim_types {
-    use khal_std::glamx::{UVec2, Vec2};
+    use khal_std::glamx::{BVec2, UVec2, Vec2};
 
     pub const DIM: usize = 2;
     /// A shader's vector field element
     pub type Vect = Vec2;
     pub type GridIndex = UVec2;
+    pub type BoolVect = BVec2;
 }
 
 #[cfg(feature = "dim3")]
 mod dim_types {
-    use khal_std::glamx::{UVec3, Vec3};
+    use khal_std::glamx::{BVec3, UVec3, Vec3};
     pub const DIM: usize = super::MAX_DIM;
     /// A shader's vector field element
     pub type Vect = Vec3;
     pub type GridIndex = UVec3;
+    pub type BoolVect = BVec3;
 }
 
 #[allow(unused_imports)]
@@ -52,11 +55,13 @@ pub trait VectExt: VectorValueExt {
 /// A trait with functions for general vector values
 pub trait VectorValueExt {
     type Element;
+    type Boolean;
     fn splat(value: Self::Element) -> Self;
     fn zero() -> Self;
     fn one() -> Self;
     fn largest_element(self) -> Self::Element;
     fn smallest_element(self) -> Self::Element;
+    fn ge(self, rhs: Self) -> Self::Boolean;
 }
 
 impl VectExt for Vect {
@@ -130,6 +135,8 @@ impl VectExt for Vect {
 
 impl VectorValueExt for Vect {
     type Element = Real;
+    type Boolean = BoolVect;
+
     /// Create a vector field element with all its components set to `value`
     #[inline]
     fn splat(value: Self::Element) -> Self {
@@ -138,16 +145,19 @@ impl VectorValueExt for Vect {
             _ => Self::splat(value)
         }
     }
+
     /// Create a vector field element with all its components set to `0.`
     #[inline]
     fn zero() -> Self {
         Self::splat(0.)
     }
+
     /// Create a vector field element with all its components set to `1.`
     #[inline]
     fn one() -> Self {
         Self::splat(1.)
     }
+
     #[inline]
     fn largest_element(self) -> Self::Element {
         #[cfg(feature = "dim1")]
@@ -155,12 +165,21 @@ impl VectorValueExt for Vect {
         #[cfg(not(feature = "dim1"))]
         self.max_element()
     }
+
     #[inline]
     fn smallest_element(self) -> Self::Element {
         #[cfg(feature = "dim1")]
         { self }
         #[cfg(not(feature = "dim1"))]
         self.min_element()
+    }
+
+    #[inline]
+    fn ge(self, rhs: Self) -> Self::Boolean {
+        #[cfg(feature = "dim1")]
+        { self >= rhs }
+        #[cfg(not(feature = "dim1"))]
+        self.cmpge(rhs)
     }
 }
 
@@ -288,6 +307,8 @@ impl GridIndexExt for GridIndex {
 
 impl VectorValueExt for GridIndex {
     type Element = Index;
+    type Boolean = BoolVect;
+
     /// Create a vector field element with all its components set to `value`
     #[inline]
     fn splat(value: Self::Element) -> Self {
@@ -319,6 +340,35 @@ impl VectorValueExt for GridIndex {
         { self }
         #[cfg(not(feature = "dim1"))]
         self.min_element()
+    }
+
+    #[inline]
+    fn ge(self, rhs: Self) -> Self::Boolean {
+        #[cfg(feature = "dim1")]
+        { self >= rhs }
+        #[cfg(not(feature = "dim1"))]
+        self.cmpge(rhs)
+    }
+}
+
+pub trait BoolVectExt {
+    fn any(self) -> bool;
+    fn all(self) -> bool;
+}
+
+impl BoolVectExt for BoolVect {
+    fn any(self) -> bool {
+        #[cfg(feature = "dim1")]
+        { self }
+        #[cfg(not(feature = "dim1"))]
+        self.any()
+    }
+
+    fn all(self) -> bool {
+        #[cfg(feature = "dim1")]
+        { self }
+        #[cfg(not(feature = "dim1"))]
+        self.all()
     }
 }
 

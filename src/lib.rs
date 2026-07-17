@@ -19,7 +19,7 @@ use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEn
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters, IntegrationTerms, PmlCoefficients};
-use taser_em_shaders::math::{Axis, GridIndexExt, VectExt, VectorValueExt};
+use taser_em_shaders::math::{Axis, BoolVectExt, GridIndexExt, VectExt, VectorValueExt};
 use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -106,18 +106,19 @@ impl FdtdLossySimulation {
                     match source {
                         Source::Dipole { position, t_start, vals } => {
                             let pos = (regions_offset + position) / cell_size;
+                            let cell_grid_idx = pos.as_grid_index();
                             debug_assert!(
-                                !pos.smallest_element().is_sign_negative(),
-                                "negative position! {}", pos.smallest_element()
+                                !pos.smallest_element().is_sign_negative() && !BoolVectExt::any(VectorValueExt::ge(pos.as_grid_index(), n_cells)),
+                                "negative source position!"
                             );
                             let start = source_vals.len();
                             source_vals.extend_from_slice(vals);
                             Some(GpuDipole {
-                                cell_idx: pos.as_grid_index().to_flat_idx(n_cells),
+                                cell_idx: cell_grid_idx.to_flat_idx(n_cells),
                                 vals_range: [start as u32, source_vals.len() as u32 - 1],
                                 t_start: (t_start / dt) as u32,
                             })
-                        }
+                        },
                         _ => None
                     }
                 })
