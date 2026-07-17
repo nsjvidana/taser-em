@@ -15,7 +15,11 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let f_max = 2.4e9; // 2.4 GHz
 
     // Simulation parameters w/ default stability values.
-    let stability = FdtdStability::default();
+    let stability = FdtdStability {
+        dt_safety_factor: 3.,
+        cells_per_wavelength: 30,
+        ..Default::default()
+    };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
     let dt = stability.cfl_condition(cell_size)
         .min(stability.dt_from_gaussian_freq(f_max));

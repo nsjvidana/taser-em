@@ -106,7 +106,10 @@ impl FdtdLossySimulation {
                     match source {
                         Source::Dipole { position, t_start, vals } => {
                             let pos = (regions_offset + position) / cell_size;
-                            debug_assert!(!pos.smallest_element().is_sign_negative());
+                            debug_assert!(
+                                !pos.smallest_element().is_sign_negative(),
+                                "negative position! {}", pos.smallest_element()
+                            );
                             let start = source_vals.len();
                             source_vals.extend_from_slice(vals);
                             Some(GpuDipole {
@@ -176,7 +179,7 @@ impl FdtdLossySimulation {
                 let res = resolution.get();
                 YeeGridMaterials::new_material_grid(
                     n_cells * res,
-                    cell_size / res as f32,
+                    cell_size / res as Real,
                     &self.material_regions,
                     self.background_material,
                 ).downscaled(*resolution)
