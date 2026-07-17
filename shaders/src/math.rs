@@ -50,6 +50,7 @@ pub trait VectExt: VectorValueExt {
     fn from_vec3(vec3: Vec3) -> Vect;
     fn from_vec4(v4: Vec4) -> Vect;
     fn as_grid_index(&self) -> GridIndex;
+    fn magnitude(&self) -> Real;
 }
 
 /// A trait with functions for general vector values
@@ -130,6 +131,14 @@ impl VectExt for Vect {
         return self.as_uvec2();
         #[cfg(feature = "dim3")]
         self.as_uvec3()
+    }
+
+    #[inline]
+    fn magnitude(&self) -> Real {
+        cfg_select! {
+            feature = "dim1" => *self,
+            _ => self.length()
+        }
     }
 }
 

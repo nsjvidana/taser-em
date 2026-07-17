@@ -113,7 +113,6 @@ impl FdtdTestbedViewer {
         self.visualization_mode.visualize(
             v_field,
             &mut self.window,
-            self.cell_size
         );
 
         continue_rendering
@@ -129,8 +128,9 @@ pub enum VisualizationMode {
     #[cfg(feature = "dim1")]
     LineGraph {
         color: Color,
-        /// The maximum value that the line graph can have.
-        max: Real,
+        /// The maximum magnitude of vector field
+        max_magnitude: Real,
+        graph_max_magnitude: Real,
         positions: Vec<Vec3>,
     },
     #[cfg(feature = "dim2")]
@@ -152,7 +152,12 @@ pub enum VisualizationMode {
 
 
 impl VisualizationMode {
-    pub fn initialize(&mut self, scene: &mut SceneNode3d, n_cells: GridIndex, cell_size: Vect) {
+    pub fn initialize(
+        &mut self,
+        #[cfg_attr(feature = "dim1", allow(unused_variables))] scene: &mut SceneNode3d,
+        n_cells: GridIndex,
+        cell_size: Vect
+    ) {
         let cell_positions = grid_cells_iter(n_cells)
             .map(|i| (GridIndex::from_index_array(i.into()).as_vect() * cell_size)
                 .to_3d(Vec3::ZERO)
@@ -161,8 +166,10 @@ impl VisualizationMode {
         
         match self {
             #[cfg(feature = "dim1")]
-            VisualizationMode::LineGraph { positions, .. } => {
+            VisualizationMode::LineGraph { positions, graph_max_magnitude, .. } => {
                 *positions = cell_positions;
+                let grid_extents = n_cells.as_vect() * cell_size;
+                *graph_max_magnitude = grid_extents / 100.;
             },
             #[cfg(feature = "dim2")]
             VisualizationMode::Quads { quads, .. } => {
@@ -186,16 +193,22 @@ impl VisualizationMode {
     }
 
     #[allow(unused_variables)]
-    pub fn visualize(&mut self, v_field: &[Vec4], window: &mut Window, cell_size: Vect) {
+    pub fn visualize(&mut self, v_field: &[Vec4], window: &mut Window) {
         #[cfg(feature = "dim1")]
         {
-            let Self::LineGraph { color, max, positions } = self else { unreachable!() };
-            let mut prev_pos = positions[0] + (v_field[0].xyz() / *max) * cell_size;
+            let Self::LineGraph {
+                color,
+                max_magnitude,
+                graph_max_magnitude,
+                positions
+            } = self;
+
+            let mut prev_pos = positions[0] + (v_field[0].xyz() / *max_magnitude) * *graph_max_magnitude;
             for (cell_pos, vector) in positions.iter()
                 .zip(v_field)
                 .skip(1)
             {
-                let pos = cell_pos + (vector.xyz() / *max) * cell_size;
+                let pos = cell_pos + (vector.xyz() / *max_magnitude) * *graph_max_magnitude;
                 window.draw_line(
                     prev_pos, pos,
                     *color, 2., false
@@ -220,7 +233,8 @@ impl Default for VisualizationMode {
         {
             Self::LineGraph {
                 color: RED,
-                max: 1.,
+                max_magnitude: 1.,
+                graph_max_magnitude: 0.,
                 positions: vec![],
             }
         }
