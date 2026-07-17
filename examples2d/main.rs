@@ -17,7 +17,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 3.,
-        cells_per_wavelength: 30,
+        cells_per_wavelength: 10,
+        material_resolution: NonZeroU32::new(10).unwrap(),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -27,7 +28,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
         cell_size,
         dt,
         material_discretization: MaterialDiscretization::Smooth {
-            resolution: NonZeroU32::new(3).unwrap()
+            resolution: stability.material_resolution
         },
         // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseMagnetic
@@ -36,7 +37,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute slab dimensions
     let wavelen = C_0 / f_max;
-    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
+    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.5)];
     // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -48,7 +49,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source = Source::Dipole {
-        position: slab_extents[0] - wavelen * 3.,
+        position: slab_extents[0] - wavelen * 0.5,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
@@ -63,7 +64,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     // Create viewer and set up camera
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
-    let grid_center = (grid_extents / 2.);
+    let grid_center = grid_extents / 2.;
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
         .camera
@@ -71,9 +72,11 @@ pub async fn single_rod() -> anyhow::Result<()> {
             grid_center.to_3d(Vec3::Z * grid_extents.length() * 3.),
             grid_center.to_3d(Vec3::ZERO)
         );
+    testbed.camera.set_up_axis(Vec3::Z);
         
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; gpu_data.dn.buffer.len()];
+    println!("n_cells: {}", n_cells);
     while testbed.render_frame(&dn_field).await {
         backend.synchronize()?;
         gpu_data.dn.read(&backend, &mut dn_field).await?;

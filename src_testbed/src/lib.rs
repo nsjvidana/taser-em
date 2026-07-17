@@ -14,6 +14,7 @@ use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect};
 use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability};
 use taser_em::prelude::{Real, VectExt, VectorValueExt};
+use crate::util::lerp_colors;
 
 pub struct FdtdTestbedViewer {
     pub window: Window,
@@ -50,7 +51,6 @@ impl FdtdTestbedViewer {
         let cell_size = simulation.fdtd_parameters.cell_size;
         let mut visualization_mode = VisualizationMode::default();
         visualization_mode.initialize(&mut scene, n_cells, cell_size);
-        // TODO: make slab size proportional to grid size
 
         let mut selff = Self {
             window,
@@ -109,7 +109,9 @@ impl FdtdTestbedViewer {
         &mut self,
         v_field: &[Vec4],
     ) -> bool {
+
         let continue_rendering = self.window.render_3d(&mut self.scene, &mut self.camera).await;
+
         self.visualization_mode.visualize(
             v_field,
             &mut self.window,
@@ -146,6 +148,7 @@ pub enum VisualizationMode {
     #[cfg(not(feature = "dim1"))]
     Arrows {
         color_mode: ColorMode,
+        /// The origin of each arrow
         arrow_starts: Vec<Vec3>
     }
 }
@@ -156,7 +159,7 @@ impl VisualizationMode {
         &mut self,
         #[cfg_attr(feature = "dim1", allow(unused_variables))] scene: &mut SceneNode3d,
         n_cells: GridIndex,
-        cell_size: Vect
+        cell_size: Vect,
     ) {
         let cell_positions = grid_cells_iter(n_cells)
             .map(|i| (GridIndex::from_index_array(i.into()).as_vect() * cell_size)
@@ -173,11 +176,12 @@ impl VisualizationMode {
             },
             #[cfg(feature = "dim2")]
             VisualizationMode::Quads { quads, .. } => {
+                let cell_size_half3 = (cell_size / 2.).to_3d(Vec3::ZERO);
                 *quads = cell_positions.iter()
                     .map(|pos| {
                         scene
                             .add_quad(cell_size.x, cell_size.y, 1, 1)
-                            .translate(*pos)
+                            .translate(pos + cell_size_half3)
                     })
                     .collect();
             }
@@ -218,7 +222,17 @@ impl VisualizationMode {
         }
         #[cfg(feature = "dim2")]
         {
-            todo!()
+            match self {
+                VisualizationMode::Quads { color_mode, quads } => {
+                    for (quad, vector) in quads.iter_mut()
+                        .zip(v_field)
+                    {
+                        let color = color_mode.compute_color(vector.length());
+                        quad.set_color(color);
+                    }
+                }
+                VisualizationMode::Arrows { .. } => todo!(),
+            }
         }
         #[cfg(feature = "dim3")]
         {
@@ -262,13 +276,34 @@ pub enum ColorMode {
     AutoScale {
         color_min: Color,
         color_max: Color,
-        max: Real
+        v_max: Real
     },
     /// Set a fixed range of magnitudes for interpolating between colors
     FixedRange {
         color_min: Color,
         color_max: Color,
-        max: Real
+        /// The minimum magnitude
+        v_min: Real,
+        /// The maximum magnitude
+        v_max: Real,
+    }
+}
+
+impl ColorMode {
+    pub fn compute_color(&mut self, val: Real) -> Color {
+        match self {
+            ColorMode::AutoScale { color_min, color_max, v_max } => {
+                *v_max = v_max.max(val);
+                lerp_colors((val / *v_max).clamp(0., 1.), *color_min, *color_max)
+            }
+            ColorMode::FixedRange { color_min, color_max, v_min, v_max } => {
+                lerp_colors(
+                    ((val - *v_min) / (*v_max - *v_min)).clamp(0., 1.),
+                    *color_min,
+                    *color_max
+                )
+            }
+        }
     }
 }
 
@@ -277,7 +312,7 @@ impl Default for ColorMode {
         ColorMode::AutoScale {
             color_min: BLUE,
             color_max: RED,
-            max: 0.
+            v_max: 0.
         }
     }
 }
