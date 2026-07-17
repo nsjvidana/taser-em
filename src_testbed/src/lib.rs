@@ -37,7 +37,8 @@ impl FdtdTestbedViewer {
         camera.set_projection(Projection::Orthographic);
         let scene = SceneNode3d::default();
 
-        let n_cells = simulation.compute_n_cells(stability);
+        let sim_bb = simulation.compute_bounding_box();
+        let n_cells = simulation.compute_n_cells(&sim_bb, stability);
         let mut viewer = Self {
             window,
             camera,
@@ -47,8 +48,8 @@ impl FdtdTestbedViewer {
             n_cells,
             cell_size: simulation.fdtd_parameters.cell_size
         };
-        let regions_offset = YeeGridMaterials::compute_regions_offset(
-            &simulation.material_regions,
+        let regions_offset = YeeGridMaterials::compute_simulation_offset(
+            &simulation.compute_bounding_box(),
             n_cells,
             simulation.fdtd_parameters.cell_size,
         );

@@ -80,20 +80,6 @@ impl YeeGrid {
         self.spacer_region_widths
             .sum_with_n_cells(materials_n_cells)
     }
-
-    /// Compute material grid of dimensions `n_cells` with smoothing via box filter.
-    /// Smoothing resolution is `self.material_resolution`.
-    ///
-    /// For how the material at each vector component is determined, see [`YeeGridMaterials::new_material_grid`]
-    pub fn compute_materials_smoothed(&self, n_cells: GridIndex) -> YeeGridMaterials {
-        let res = self.material_resolution.get();
-        YeeGridMaterials::new_material_grid(
-            n_cells * res,
-            self.cell_size / res as f32,
-            &self.material_regions,
-            self.background_material,
-        ).downscaled(self.material_resolution)
-    }
     
     /// Resets all stored material data
     pub fn reset(&mut self) {
@@ -220,7 +206,7 @@ pub struct YeeGridMaterials {
     /// The material applied to cells that don't intersect with any material regions.
     pub default_mat: ElectricMaterial,
     /// The translation applied to all objects in a [`MaterialRegions`] to center them on this grid.
-    pub regions_offset: Vec3,
+    pub sim_offset: Vec3,
 }
 
 /// Grid of PML update coefficients for FDTD using Yee Grid
@@ -252,7 +238,7 @@ impl PmlCoefficientsGrid {
         let YeeGridMaterials {
             n_cells: _n_cells,
             materials: mats,
-            regions_offset,
+            sim_offset: regions_offset,
             ..
         } = grid_mats;
 
@@ -365,14 +351,15 @@ impl YeeGridMaterials {
     pub fn new_material_grid(
         n_cells: GridIndex,
         cell_size: Vect,
+        simulation_bb: &Aabb,
         regions: &MaterialRegions,
         default_mat: ElectricMaterial,
     ) -> Self {
         let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
-        let regions_offset = Self::compute_regions_offset(regions, n_cells, cell_size);
-        let centered_scene_pose = regions.scene_pose.append_translation(regions_offset);
+        let sim_offset = Self::compute_simulation_offset(simulation_bb, n_cells, cell_size);
+        let centered_scene_pose = regions.scene_pose.append_translation(sim_offset);
 
         let cell_size3 = cell_size.to_3d(Vec3::ZERO);
         let dn_offsets = YeeGrid::DN_OFFSETS.map(|v| v * cell_size3);
@@ -406,7 +393,7 @@ impl YeeGridMaterials {
             cell_size,
             materials: mats,
             default_mat,
-            regions_offset,
+            sim_offset,
         }
     }
 
@@ -456,18 +443,18 @@ impl YeeGridMaterials {
             cell_size,
             materials,
             default_mat: self.default_mat,
-            regions_offset: self.regions_offset,
+            sim_offset: self.sim_offset,
         }
     }
 
-    pub fn compute_regions_offset(
-        regions: &MaterialRegions,
+    pub fn compute_simulation_offset(
+        simulation_bb: &Aabb,
         n_cells: GridIndex,
         cell_size: Vect
     ) -> Vec3 {
         let grid_center = n_cells.as_vect() * cell_size / 2.;
-        let regions_center = Vect::from_vec3(regions.compute_bounding_box().center());
-        (grid_center - regions_center).to_3d(Vec3::ZERO)
+        let sim_center = Vect::from_vec3(simulation_bb.center());
+        (grid_center - sim_center).to_3d(Vec3::ZERO)
     }
 }
 

@@ -18,6 +18,7 @@ use glamx::{UVec3, Vec3, Vec4};
 use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
+use parry3d::bounding_volume::Aabb;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters, IntegrationTerms, PmlCoefficients};
 use taser_em_shaders::math::{Axis, BoolVectExt, GridIndexExt, VectExt, VectorValueExt};
 use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
@@ -92,9 +93,10 @@ impl FdtdLossySimulation {
             cell_size, dt, polarization_mode, ..
         } = self.fdtd_parameters;
 
-        let n_cells = self.compute_n_cells(stability);
+        let sim_bb = self.compute_bounding_box();
+        let n_cells = self.compute_n_cells(&sim_bb, stability);
         
-        let grid_mats = self.discretize_material_regions(n_cells);
+        let grid_mats = self.create_material_grid(&sim_bb, n_cells);
         let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
 
         let buffers = {
@@ -102,7 +104,6 @@ impl FdtdLossySimulation {
             let regions_offset = Vect::from_vec3(regions_offset);
             let mut dipoles = self.sources.iter()
                 .filter_map(|source| {
-                    // todo!("convert dipoles for GPU use, and populate source_vals")
                     match source {
                         Source::Dipole { position, t_start, vals } => {
                             let pos = (regions_offset + position) / cell_size;
@@ -158,14 +159,15 @@ impl FdtdLossySimulation {
                     d: cell_size.to_3d(Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
-                thread_count: n_cells.n_cells_to_3d().to_array()
+                thread_count: n_cells.n_cells_to_3d().to_array(),
+                n_cells
             }
         };
 
         Ok(buffers)
     }
 
-    pub fn discretize_material_regions(&self, n_cells: GridIndex) -> YeeGridMaterials {
+    pub fn create_material_grid(&self, simulation_bb: &Aabb, n_cells: GridIndex) -> YeeGridMaterials {
         let FdtdParameters { material_discretization, cell_size, .. } =
             &self.fdtd_parameters;
         match material_discretization {
@@ -173,6 +175,7 @@ impl FdtdLossySimulation {
                 YeeGridMaterials::new_material_grid(
                     n_cells,
                     *cell_size,
+                    simulation_bb,
                     &self.material_regions,
                     self.background_material,
                 ),
@@ -181,6 +184,7 @@ impl FdtdLossySimulation {
                 YeeGridMaterials::new_material_grid(
                     n_cells * res,
                     cell_size / res as Real,
+                    simulation_bb,
                     &self.material_regions,
                     self.background_material,
                 ).downscaled(*resolution)
@@ -188,10 +192,22 @@ impl FdtdLossySimulation {
         }
     }
 
-    /// Compute the dimensions of the grid, in grid cells
-    pub fn compute_n_cells(&self, stability: &FdtdStability) -> GridIndex {
-        let mut inner_bb = self.material_regions.compute_bounding_box();
+    /// Compute the dimensions of a grid that can encompass `simulation_bb`, then add spacer regions
+    /// from `stability` and PML widths from `self`.
+    pub fn compute_n_cells(&self, simulation_bb: &Aabb, stability: &FdtdStability) -> GridIndex {
 
+        let cell_size = self.fdtd_parameters.cell_size;
+        let n_cells_vec3 = (simulation_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
+        let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
+
+        let n_cells_spacer = stability.spacer_region_widths
+            .sum_with_n_cells(materials_n_cells);
+        self.pml_parameters.widths.sum_with_n_cells(n_cells_spacer)
+    }
+
+    /// Compute the bounding box surrounding all elements
+    pub fn compute_bounding_box(&self) -> Aabb {
+        let mut regions_bb = self.material_regions.compute_bounding_box(); 
         let source_pts = self.sources.iter()
             .filter_map(|src| {
                 match src {
@@ -201,17 +217,11 @@ impl FdtdLossySimulation {
             })
             .collect::<Vec<_>>();
         for pt in source_pts.iter() {
-            inner_bb.mins = inner_bb.mins.min(*pt);
-            inner_bb.maxs = inner_bb.maxs.max(*pt);
+            regions_bb.mins = regions_bb.mins.min(*pt);
+            regions_bb.maxs = regions_bb.maxs.max(*pt);
         }
-
-        let cell_size = self.fdtd_parameters.cell_size;
-        let n_cells_vec3 = (inner_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
-        let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
-
-        let n_cells_spacer = stability.spacer_region_widths
-            .sum_with_n_cells(materials_n_cells);
-        self.pml_parameters.widths.sum_with_n_cells(n_cells_spacer)
+        // ensure the simulation encompasses everything by adding machine eps
+        regions_bb.add_half_extents(Vec3::splat(Real::EPSILON))
     }
 }
 
@@ -345,18 +355,6 @@ impl FdtdLossySolver {
         self.grid.n_cells(Some(&source_pts))
     }
 
-    /// Calculates materials (see [YeeGrid::compute_materials_smoothed]) PML coefficients.
-    ///
-    /// Returns the coefficients and the offset applied to each [`grid::MaterialRegion`] to align them with
-    /// the grid.
-    pub fn compute_pml_coeffs(&self) -> (Vec3, PmlCoefficientsGrid) {
-        let n_cells = self.pml_parameters.widths.sum_with_n_cells(
-            self.n_cells_inner()
-        );
-        let grid_mats = self.grid.compute_materials_smoothed(n_cells);
-        PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, self.dt)
-    }
-
     /// Creates GPU buffers and dispatch parameters for simulating.
     pub fn create_shader_data(
         &self,
@@ -421,7 +419,8 @@ impl FdtdLossySolver {
                     d: self.grid.cell_size.to_3d(Vec3::ZERO),
                     ..Default::default()
                 }.create_gpu_uniform(backend)?,
-                thread_count: n_cells.n_cells_to_3d().to_array()
+                thread_count: n_cells.n_cells_to_3d().to_array(),
+                n_cells
             }
         )
     }
@@ -439,6 +438,7 @@ impl FdtdLossySolver {
             steps,
             grid_params,
             thread_count,
+            n_cells: _,
         } = buffers;
         self.kernel.call(
             pass,
@@ -467,7 +467,8 @@ pub struct FdtdLossyGpuData {
     pub source_vals: GpuBuffer<f32>,
     pub steps: GpuBuffer<u32>,
     pub grid_params: GpuBuffer<GridParameters>,
-    pub thread_count: [u32; 3]
+    pub thread_count: [u32; 3],
+    pub n_cells: GridIndex,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation

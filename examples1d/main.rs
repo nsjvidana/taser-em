@@ -37,15 +37,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     // Compute slab dimensions
     let wavelen = C_0 / f_max;
     let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
-
-    // Compute source position and gaussian curve data points
-    let source = Source::Dipole {
-        position: slab_extents[0] - wavelen * 3.,
-        t_start: 0.,
-        vals: Source::gaussian_max_f(f_max, 1., dt)
-    };
-
-    // Construct the slab
+    // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
@@ -53,6 +45,13 @@ pub async fn single_slab() -> anyhow::Result<()> {
         sig: Vec3::splat(0.),
     };
     simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
+
+    // Compute source position and gaussian curve data points
+    let source = Source::Dipole {
+        position: slab_extents[0] - wavelen * 3.,
+        t_start: 0.,
+        vals: Source::gaussian_max_f(f_max, 1., dt)
+    };
     simulation.add_source(source);
 
 
@@ -63,7 +62,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let pipeline = FdtdLossyPipeline::new(&backend, NonZeroUsize::new(1).unwrap())?;
 
     // Create viewer and set up camera
-    let n_cells = simulation.compute_n_cells(&stability);
+    let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
     testbed.set_clipping_planes(cell_size / 3., cell_size * 1000.)
