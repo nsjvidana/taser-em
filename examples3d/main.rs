@@ -1,16 +1,16 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 
-use taser_em_testbed2d::{FdtdTestbedViewer, re_exports::anyhow};
-use taser_em2d::prelude::*;
-use taser_em2d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
-use taser_em2d::re_exports::glamx::glam::*;
+use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow};
+use taser_em3d::prelude::*;
+use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
+use taser_em3d::re_exports::glamx::glam::*;
 
 #[kiss3d::main]
 async fn main() {
-    single_rod().await.unwrap()
+    cube().await.unwrap()
 }
 
-pub async fn single_rod() -> anyhow::Result<()> {
+pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
 
@@ -24,7 +24,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
     let dt = stability.cfl_condition(cell_size)
         .min(stability.dt_from_gaussian_freq(f_max));
-    let parameters = FdtdParameters {
+    let fdtd_params = FdtdParameters {
         cell_size,
         dt,
         material_discretization: MaterialDiscretization::Smooth {
@@ -33,27 +33,31 @@ pub async fn single_rod() -> anyhow::Result<()> {
         // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseMagnetic
     };
-    let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
+    let pml_params = PmlParameters::new(dt);
+    let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);
 
-    // Compute slab dimensions
+    // Compute cube dimensions
     let wavelen = C_0 / f_max;
-    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.5)];
-    // construct the slab
+    let cube_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen)];
+    // construct the cube
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
     };
-    simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
+    simulation.material_regions.fill_region(cube_extents[0], cube_extents[1], mat);
 
     // Compute source position and gaussian curve data points
     let source = Source::Dipole {
-        position: slab_extents[0] - wavelen * 0.5,
+        position: cube_extents[0] - Vect::Z * wavelen,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
     simulation.add_source(source);
+
+    let sim_bb = simulation.compute_bounding_box();
+    println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
     
     // Set up buffers and pipeline
     let webgpu = WebGpu::default().await?;

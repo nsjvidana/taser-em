@@ -186,7 +186,6 @@ impl FdtdLossySimulation {
     /// Compute the dimensions of a grid that can encompass `simulation_bb`, then add spacer regions
     /// from `stability` and PML widths from `self`.
     pub fn compute_n_cells(&self, simulation_bb: &Aabb, stability: &FdtdStability) -> GridIndex {
-
         let cell_size = self.fdtd_parameters.cell_size;
         let n_cells_vec3 = (simulation_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
         let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
@@ -196,7 +195,7 @@ impl FdtdLossySimulation {
         self.pml_parameters.widths.sum_with_n_cells(n_cells_spacer)
     }
 
-    /// Compute the bounding box surrounding all elements
+    /// Compute the bounding box surrounding all objects and sources in the simulation.
     pub fn compute_bounding_box(&self) -> Aabb {
         let mut regions_bb = self.material_regions.compute_bounding_box(); 
         let source_pts = self.sources.iter()
