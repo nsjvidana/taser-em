@@ -35,7 +35,7 @@ parry3d = "0.28"
 khal = { version = "0.2.1", features = ["derive"] }
 khal-builder = "0.2.1"
 khal-std = "0.2.1"
-kiss3d = "0.45.0"
+kiss3d = "0.44.0"
 glamx = { version = "0.3", features = ["bytemuck"] }
 bytemuck = "1"
 itertools = "0.15"

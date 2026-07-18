@@ -6,7 +6,6 @@ categories.workspace = true
 keywords.workspace = true
 edition.workspace = true
 links = "taser-em-shaders2d"
-build = "../../shaders/build.rs"
 
 [lints]
 rust.unexpected_cfgs = { level = "warn", check-cfg = [
