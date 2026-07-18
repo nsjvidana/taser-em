@@ -15,6 +15,7 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = [
 [features]
 default = ["dim1"]
 dim1 = []
+rayon = ["dep:rayon"]
 
 [lib]
 name = "taser_em_testbed1d"
@@ -24,6 +25,7 @@ required-features = ["dim1"]
 [dependencies]
 kiss3d.workspace = true
 khal.workspace = true
+rayon = { workspace = true, optional = true }
 glamx.workspace = true
 anyhow.workspace = true
 
