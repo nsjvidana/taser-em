@@ -34,4 +34,3 @@ khal.workspace = true
 
 [build-dependencies]
 khal-std.workspace = true
-taser-em-build.workspace = true
