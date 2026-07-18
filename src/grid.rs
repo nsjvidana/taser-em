@@ -1,5 +1,5 @@
 use crate::{grid_cells_iter, to_parallel, ElectricMaterial, PmlParameters, C_0, EPS_0};
-use glamx::{Pose3, Vec3};
+use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
@@ -28,6 +28,37 @@ pub enum PolarizationMode {
     /// 2D: Ez, Hx, Hy
     /// 3D: All axes
     TransverseElectric = 1,
+}
+
+impl PolarizationMode {
+    pub fn get_e_magnitude(&self, e: &Vec4) -> Real {
+        match self {
+            PolarizationMode::TransverseMagnetic => cfg_select! {
+                feature = "dim1" => e.y,
+                feature = "dim2" => e.z,
+                feature = "dim3" => e.length(),
+            },
+            PolarizationMode::TransverseElectric => cfg_select! {
+                feature = "dim1" => e.x,
+                any(feature = "dim2", feature = "dim3") => e.length(),
+            },
+        }
+    }
+
+    pub fn extract_e_vector(&self, e: &Vec4) -> Vec3 {
+        match self {
+            PolarizationMode::TransverseMagnetic => cfg_select! {
+                feature = "dim1" => Vec3::new(0., e.y, 0.),
+                feature = "dim2" => Vec3::Z * e.z,
+                feature = "dim3" => glamx::Vec4Swizzles::xyz(*e),
+            },
+            PolarizationMode::TransverseElectric => cfg_select! {
+                feature = "dim1" => Vec3::new(e.x, 0., 0.),
+                feature = "dim2" => Vec3::from((glamx::Vec4Swizzles::xy(*e), 0.)),
+                feature = "dim3" => glamx::Vec4Swizzles::xyz(*e),
+            },
+        }
+    }
 }
 
 impl From<PolarizationMode> for GpuPolarizationMode {

@@ -13,7 +13,7 @@ use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect};
 use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability};
-use taser_em::prelude::{Real, VectExt, VectorValueExt};
+use taser_em::prelude::{PolarizationMode, Real, VectExt, VectorValueExt};
 use crate::util::lerp_colors;
 
 #[cfg(feature = "rayon")]
@@ -27,6 +27,7 @@ pub struct FdtdTestbedViewer {
     pub material_region_alpha: f32,
     pub n_cells: GridIndex,
     pub cell_size: Vect,
+    pub polarization_mode: PolarizationMode,
     pub visualization_mode: VisualizationMode,
 }
 
@@ -69,6 +70,7 @@ impl FdtdTestbedViewer {
             material_region_alpha: 0.9,
             n_cells,
             cell_size,
+            polarization_mode: simulation.fdtd_parameters.polarization_mode,
             visualization_mode
         };
         let regions_offset = YeeGridMaterials::compute_simulation_offset(
@@ -124,6 +126,7 @@ impl FdtdTestbedViewer {
         self.visualization_mode.visualize(
             v_field,
             &mut self.window,
+            self.polarization_mode
         );
 
         continue_rendering
@@ -222,7 +225,7 @@ impl VisualizationMode {
     }
 
     #[allow(unused_variables)]
-    pub fn visualize(&mut self, v_field: &[Vec4], window: &mut Window) {
+    pub fn visualize(&mut self, v_field: &[Vec4], window: &mut Window, polarization_mode: PolarizationMode) {
         #[cfg(feature = "dim1")]
         {
             let Self::LineGraph {
@@ -237,7 +240,7 @@ impl VisualizationMode {
                 .zip(v_field)
                 .skip(1)
             {
-                let pos = cell_pos + (vector.xyz() / *max_magnitude) * *graph_max_magnitude;
+                let pos = cell_pos + (polarization_mode.extract_e_vector(vector) / *max_magnitude) * *graph_max_magnitude;
                 window.draw_line(
                     prev_pos, pos,
                     *color, 2., false
@@ -256,7 +259,7 @@ impl VisualizationMode {
                 for (inst, vector) in to_parallel!(instances.iter_mut())
                     .zip(v_field)
                 {
-                    inst.color = color_mode.compute_color(vector.length());
+                    inst.color = color_mode.compute_color(polarization_mode.get_e_magnitude(vector));
                 }
                 instanced_obj.set_instances(instances);
             };
