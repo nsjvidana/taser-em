@@ -1,7 +1,8 @@
 use std::num::NonZeroUsize;
+use kiss3d::color::RED;
 use kiss3d::prelude::{Color, Light};
 use kiss3d::window::NumSamples;
-use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow};
+use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode, ColorMode};
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
 use taser_em3d::re_exports::glamx::glam::*;
@@ -18,7 +19,7 @@ pub async fn cube() -> anyhow::Result<()> {
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 2.,
-        cells_per_wavelength: 10,
+        spacer_region_widths: LayerWidths::splat(5),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -38,7 +39,7 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute cube dimensions
     let wavelen = C_0 / f_max;
-    let cube_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen)];
+    let cube_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.1)];
     // construct the cube
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -50,7 +51,7 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source = Source::Dipole {
-        position: cube_extents[0] - Vect::Z * wavelen * 0.5,
+        position: cube_extents[0] - Vect::Z * wavelen * 0.25,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
@@ -69,7 +70,11 @@ pub async fn cube() -> anyhow::Result<()> {
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
+    let mut testbed = FdtdTestbedViewer::new(
+        &simulation,
+        &stability,
+        VisualizationMode::default()
+    ).await?;
     testbed.window.set_samples(NumSamples::Four);
     testbed.window.set_ambient(0.5);
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)

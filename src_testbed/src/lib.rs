@@ -35,7 +35,11 @@ impl FdtdTestbedViewer {
     /// set to [`RED`].
     ///
     /// Defaults to [`ColorMode::AutoScale`] for visualizing field magnitudes
-    pub async fn new(simulation: &FdtdLossySimulation, stability: &FdtdStability) -> anyhow::Result<Self> {
+    pub async fn new(
+        simulation: &FdtdLossySimulation,
+        stability: &FdtdStability,
+        mut visualization_mode: VisualizationMode
+    ) -> anyhow::Result<Self> {
         let title_dim = cfg_select! {
             feature = "dim1" => "1D",
             feature = "dim2" => "2D",
@@ -55,7 +59,6 @@ impl FdtdTestbedViewer {
         let sim_bb = simulation.compute_bounding_box();
         let n_cells = simulation.compute_n_cells(&sim_bb, stability);
         let cell_size = simulation.fdtd_parameters.cell_size;
-        let mut visualization_mode = VisualizationMode::default();
         visualization_mode.initialize(&mut scene, n_cells, cell_size);
 
         let mut selff = Self {
