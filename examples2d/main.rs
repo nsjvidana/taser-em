@@ -66,6 +66,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
+    testbed.window.set_ambient(0.5);
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
         .camera
         .look_at(

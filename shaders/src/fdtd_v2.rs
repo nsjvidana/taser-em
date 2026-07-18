@@ -30,7 +30,7 @@ fn fdtd_lossy_v2(
         as usize;
     let boundary_idx3 = grid.n_cells3 - 1;
 
-    // Get the source value at this timestep
+    // Get the source value at this timestep (working)
     let steps_usize = *steps as usize;
     let mut dipole_src_term = 0.;
     for i in 0..dipoles.len() {
@@ -54,7 +54,7 @@ fn fdtd_lossy_v2(
     // H Update
     let h_self = {
         let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
-        let en_curl = compute_curl::<false, true>(
+        let en_curl = compute_curl::<true>(
             idx,
             grid.flat_idx_incrs,
             grid.d,
@@ -82,7 +82,7 @@ fn fdtd_lossy_v2(
     // Dn Update
     let dn_self = {
         let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
-        let h_curl = compute_curl::<false, false>(
+        let h_curl = compute_curl::<false>(
             idx,
             grid.flat_idx_incrs,
             grid.d,
@@ -123,7 +123,7 @@ fn fdtd_lossy_v2(
 /// `POL_MODE == false` => TM mode
 /// `POL_MODE == true` => TE mode
 #[inline(always)]
-fn compute_curl<const POL_MODE: bool, const FORWARDS: bool>(
+fn compute_curl<const FORWARDS: bool>(
     idx: usize,
     flat_idx_incrs: UVec3,
     d: Vec3,
@@ -145,72 +145,20 @@ fn compute_curl<const POL_MODE: bool, const FORWARDS: bool>(
 
     let mut v_curl = Vec4::ZERO;
 
-    if POL_MODE { // TE mode
-        // 1D: Ex, Hy
-        // 2D: Ex, Ey, Hz
-        let curl1 = cfg_select! {
-            feature = "dim3" => curl_diff!(z, y),
-            any(feature = "dim1", feature = "dim2") => 0.
-        };
-        let curl2 = cfg_select! {
-            feature = "dim3" => curl_diff!(y, z),
-            any(feature = "dim1", feature = "dim2") => 0.
-        };
-        v_curl.x = curl1 - curl2;
-
-        let curl1 = cfg_select! {
-            any(feature = "dim1", feature = "dim3") => curl_diff!(x, z),
-            feature = "dim2" => 0.
-        };
-        let curl2 = cfg_select! {
-            feature = "dim3" => curl_diff!(z, x),
-            any(feature = "dim1", feature = "dim2") => 0.
-        };
-        v_curl.y = curl1 - curl2;
-
-        let curl1 = cfg_select! {
-            any(feature = "dim2", feature = "dim3") => curl_diff!(y, x),
-            feature = "dim1" => 0.
-        };
-        let curl2 = cfg_select! {
-            any(feature = "dim2", feature = "dim3") => curl_diff!(x, y),
-            feature = "dim1" => 0.
-        };
-        v_curl.z = curl1 - curl2;
-    }
-    else { // TM mode
-        // 1D: Ey, Hx
-        // 2D: Ez, Hx, Hy
-        let curl1 = cfg_select! {
-            any(feature = "dim2", feature = "dim3") => curl_diff!(z, y),
-            feature = "dim1" => 0.
-        };
-        let curl2 = cfg_select! {
-            any(feature = "dim1", feature = "dim3") => curl_diff!(y, z),
-            feature = "dim2" => 0.
-        };
-        v_curl.x = curl1 - curl2;
-
-        let curl1 = cfg_select! {
-            feature = "dim3" => curl_diff!(x, z),
-            any(feature = "dim1", feature = "dim2") => 0.
-        };
-        let curl2 = cfg_select! {
-            any(feature = "dim2", feature = "dim3") => curl_diff!(z, x),
-            feature = "dim1" => 0.
-        };
-        v_curl.y = curl1 - curl2;
-
-        let curl1 = cfg_select! {
-            any(feature = "dim2", feature = "dim3") => curl_diff!(y, x),
-            feature = "dim1" => 0.
-        };
-        let curl2 = cfg_select! {
-            feature = "dim3" => curl_diff!(x, y),
-            any(feature = "dim1", feature = "dim2") => 0.
-        };
-        v_curl.z = curl1 - curl2;
-    }
+    v_curl.x = cfg_select! {
+        feature = "dim1" => -curl_diff!(y, z),
+        feature = "dim2" => curl_diff!(z, y),
+        feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
+    };
+    v_curl.y = cfg_select! {
+        feature = "dim1" => curl_diff!(x, z),
+        feature = "dim2" => -curl_diff!(z, x),
+        feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
+    };
+    v_curl.z = cfg_select! {
+        feature = "dim1" => 0.,
+        any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
+    };
 
     v_curl
 }
