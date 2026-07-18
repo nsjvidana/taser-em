@@ -7,7 +7,7 @@ pub mod re_exports {
 use glamx::{Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
 use kiss3d::camera::Projection;
 use kiss3d::color::{BLUE, GRAY, RED};
-use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, InstanceData3d, OrbitCamera3d, SceneNode3d, Window};
+use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, InstanceData3d, OrbitCamera3d, SceneNode3d, Window, TRANSPARENT};
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
@@ -116,7 +116,6 @@ impl FdtdTestbedViewer {
         &mut self,
         v_field: &[Vec4],
     ) -> bool {
-
         let continue_rendering = self.window.render_3d(&mut self.scene, &mut self.camera).await;
 
         self.visualization_mode.visualize(
@@ -197,6 +196,7 @@ impl VisualizationMode {
                     })
                     .collect();
                 instanced_obj.set_instances(instances);
+                instanced_obj.enable_backface_culling(true);
             };
             match self {
                 #[cfg(feature = "dim2")]
@@ -256,7 +256,6 @@ impl VisualizationMode {
                     inst.color = color_mode.compute_color(vector.length());
                 }
                 instanced_obj.set_instances(instances);
-                instanced_obj.enable_backface_culling(true);
             };
             match self {
                 #[cfg(feature = "dim2")]
@@ -368,7 +367,7 @@ impl Default for ColorMode {
         #[cfg(feature = "dim3")]
         {
             ColorMode::AutoScale {
-                color_min: BLUE.with_alpha(0.),
+                color_min: TRANSPARENT,
                 color_max: RED.with_alpha(Self::DEFAULT_ALPHA),
                 v_max: 0.
             }

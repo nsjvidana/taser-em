@@ -1,5 +1,5 @@
-use std::num::{NonZeroU32, NonZeroUsize};
-use kiss3d::prelude::{AlphaMode, WHITE};
+use std::num::NonZeroUsize;
+use kiss3d::prelude::{Color, Light};
 use kiss3d::window::NumSamples;
 use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow};
 use taser_em3d::prelude::*;
@@ -70,11 +70,19 @@ pub async fn cube() -> anyhow::Result<()> {
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
+    testbed.window.set_samples(NumSamples::Four);
     testbed.window.set_ambient(0.5);
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
         .camera
         .look_at(grid_extents * 2., grid_center);
     testbed.camera.set_up_axis(Vec3::Z);
+
+    testbed.scene
+        .add_light(
+            Light::directional(Vec3::new(-0.5, -0.8, -0.4))
+                .with_intensity(2.2)
+        )
+        .set_position(grid_extents * 2.);
 
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; gpu_data.dn.buffer.len()];
