@@ -64,7 +64,8 @@ fn fdtd_lossy_v2(
         );
         let old_h = h.read(idx);
         #[allow(unused_mut)]
-        let mut h_self = coeffs.h1 * old_h + coeffs.h2 * en_curl;
+        let mut h_self = coeffs.h1 * old_h + coeffs.h2 * en_curl +
+            dipole_src_term * grid.polarization_mode.is_te() as u32 as f32;
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         {
             ints.en_curl += en_curl;
@@ -95,7 +96,7 @@ fn fdtd_lossy_v2(
         #[allow(unused_mut)]
         let mut dn_self = coeffs.dn1 * old_dn + coeffs.dn2 * h_curl + // regular update terms
             coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en + // loss terms
-            dipole_src_term;
+            dipole_src_term * grid.polarization_mode.is_tm() as u32 as f32;
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         {
             ints.h_curl += h_curl;
