@@ -292,8 +292,8 @@ pub fn fdtd_lossy(
         let dn_axis = dn_axes[i];
         if dn_axis == Axis::INVALID { break; }
         en_self[dn_axis] = en_coeffs[dn_axis as usize] * dn_self[dn_axis];
-        en.write(idx, en_self);
     }
+    en.write(idx, en_self);
 
     integrals.write(idx, int_terms);
 
