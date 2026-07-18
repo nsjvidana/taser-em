@@ -1,6 +1,6 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 
-use taser_em_testbed2d::{FdtdTestbedViewer, re_exports::anyhow};
+use taser_em_testbed2d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode};
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
 use taser_em2d::re_exports::glamx::glam::*;
@@ -65,7 +65,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
         .camera
         .look_at(

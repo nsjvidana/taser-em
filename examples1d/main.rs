@@ -2,7 +2,7 @@ use std::num::{NonZeroU32, NonZeroUsize};
 use taser_em1d::prelude::*;
 use taser_em1d::re_exports::glamx::glam::*;
 use taser_em1d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
-use taser_em_testbed1d::FdtdTestbedViewer;
+use taser_em_testbed1d::{FdtdTestbedViewer, VisualizationMode};
 use taser_em_testbed1d::re_exports::anyhow;
 
 #[kiss3d::main]
@@ -64,7 +64,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     // Create viewer and set up camera
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
     testbed.set_clipping_planes(cell_size / 3., cell_size * 1000.)
         .camera
         .look_at(
