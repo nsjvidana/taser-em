@@ -16,6 +16,9 @@ use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability};
 use taser_em::prelude::{Real, VectExt, VectorValueExt};
 use crate::util::lerp_colors;
 
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
@@ -40,11 +43,13 @@ impl FdtdTestbedViewer {
         };
         let window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
         let mut camera = OrbitCamera3d::default();
-        
+
         #[cfg(not(feature = "dim1"))]
         camera.set_up_axis(Vec3::Z);
         #[cfg(not(feature = "dim3"))]
         camera.set_projection(Projection::Orthographic);
+        #[cfg(feature = "dim3")]
+        camera.set_projection(Projection::Perspective);
         let mut scene = SceneNode3d::default();
 
         let sim_bb = simulation.compute_bounding_box();
@@ -99,7 +104,8 @@ impl FdtdTestbedViewer {
             )));
             self.scene.add_mesh(kiss3d_mesh, Vec3::ONE)
                 .set_pose((mat_regions.scene_pose * pose).append_translation(regions_offset))
-                .set_color(GRAY.with_alpha(self.material_region_alpha));
+                .set_color(GRAY.with_alpha(self.material_region_alpha))
+                .enable_backface_culling(false);
         }
     }
 
@@ -143,8 +149,9 @@ pub enum VisualizationMode {
     },
     #[cfg(feature = "dim3")]
     Cubes {
+        instanced_cube: SceneNode3d,
+        instances: Vec<InstanceData3d>,
         color_mode: ColorMode,
-        cubes: Vec<SceneNode3d>
     },
 }
 
@@ -161,19 +168,26 @@ impl VisualizationMode {
                 .to_3d(Vec3::ZERO)
             )
         .collect::<Vec<_>>();
-        
-        match self {
-            #[cfg(feature = "dim1")]
-            VisualizationMode::LineGraph { positions, graph_max_magnitude, .. } => {
-                *positions = cell_positions;
-                let grid_extents = n_cells.as_vect() * cell_size;
-                *graph_max_magnitude = grid_extents / 100.;
-            },
-            #[cfg(feature = "dim2")]
-            VisualizationMode::Quads { instanced_quad, instances, color_mode } => {
+
+        #[cfg(feature = "dim1")]
+        {
+            let VisualizationMode::LineGraph {
+                positions, graph_max_magnitude, ..
+            } = self;
+            *positions = cell_positions;
+            let grid_extents = n_cells.as_vect() * cell_size;
+            *graph_max_magnitude = grid_extents / 100.;
+        }
+
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
+        {
+            let initialize_instances = |
+                instanced_obj: &mut SceneNode3d,
+                instances: &mut Vec<InstanceData3d>,
+                color_mode: &mut ColorMode,
+            | {
                 let cell_size_half3 = (cell_size / 2.).to_3d(Vec3::ZERO);
-                *instanced_quad = scene.add_quad(cell_size.x, cell_size.y, 1, 1);
-                *instances = cell_positions.iter()
+                *instances = to_parallel!(cell_positions.iter())
                     .map(|pos| {
                         InstanceData3d {
                             color: color_mode.compute_color(Real::MIN),
@@ -182,11 +196,24 @@ impl VisualizationMode {
                         }
                     })
                     .collect();
-                instanced_quad.set_instances(instances);
-            }
-            #[cfg(feature = "dim3")]
-            VisualizationMode::Cubes { .. } => {
-                todo!()
+                instanced_obj.set_instances(instances);
+            };
+            match self {
+                #[cfg(feature = "dim2")]
+                VisualizationMode::Quads {
+                    instanced_quad, instances, color_mode
+                } => {
+                    *instanced_quad = scene.add_quad(cell_size.x, cell_size.y, 1, 1);
+                    initialize_instances(instanced_quad, instances, color_mode)
+                },
+                #[cfg(feature = "dim3")]
+                VisualizationMode::Cubes {
+                    instanced_cube, instances, color_mode
+                } => {
+                    *instanced_cube = scene
+                        .add_cube(cell_size.x, cell_size.y, cell_size.z);
+                    initialize_instances(instanced_cube, instances, color_mode)
+                }
             }
         }
     }
@@ -215,22 +242,32 @@ impl VisualizationMode {
                 prev_pos = pos;
             }
         }
-        #[cfg(feature = "dim2")]
+
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
         {
-            match self {
-                VisualizationMode::Quads { instanced_quad, instances, color_mode } => {
-                    for (quad_inst, vector) in instances.iter_mut()
-                        .zip(v_field)
-                    {
-                        quad_inst.color = color_mode.compute_color(vector.length());
-                    }
-                    instanced_quad.set_instances(instances);
+            let update_colors = |
+                instanced_obj: &mut SceneNode3d,
+                instances: &mut Vec<InstanceData3d>,
+                color_mode: &mut ColorMode,
+            | {
+                for (inst, vector) in to_parallel!(instances.iter_mut())
+                    .zip(v_field)
+                {
+                    inst.color = color_mode.compute_color(vector.length());
                 }
+                instanced_obj.set_instances(instances);
+                instanced_obj.enable_backface_culling(true);
+            };
+            match self {
+                #[cfg(feature = "dim2")]
+                VisualizationMode::Quads {
+                    instanced_quad, instances, color_mode
+                } => update_colors(instanced_quad, instances, color_mode),
+                #[cfg(feature = "dim3")]
+                VisualizationMode::Cubes {
+                    instanced_cube, instances, color_mode
+                } => update_colors(instanced_cube, instances, color_mode),
             }
-        }
-        #[cfg(feature = "dim3")]
-        {
-            todo!()
         }
     }
 }
@@ -249,7 +286,7 @@ impl Default for VisualizationMode {
         #[cfg(feature = "dim2")]
         {
             Self::Quads {
-                instanced_quad: SceneNode3d::default(),
+                instanced_quad: Default::default(),
                 color_mode: Default::default(),
                 instances: Vec::new(),
             }
@@ -258,7 +295,8 @@ impl Default for VisualizationMode {
         {
             Self::Cubes {
                 color_mode: Default::default(),
-                cubes: Vec::new(),
+                instanced_cube: Default::default(),
+                instances: vec![],
             }
         }
     }
@@ -285,6 +323,8 @@ pub enum ColorMode {
 }
 
 impl ColorMode {
+    pub const DEFAULT_ALPHA: f32 = 0.5;
+
     pub fn compute_color(&mut self, val: Real) -> Color {
         match self {
             ColorMode::AutoScale { color_min, color_max, v_max } => {
@@ -300,14 +340,49 @@ impl ColorMode {
             }
         }
     }
+
+    pub fn set_alpha(&mut self, alpha: f32) {
+        match self {
+            ColorMode::AutoScale { color_min, color_max, .. } => {
+                *color_min = color_min.with_alpha(alpha);
+                *color_max = color_max.with_alpha(alpha);
+            }
+            ColorMode::FixedRange { color_min, color_max, .. } => {
+                *color_min = color_min.with_alpha(alpha);
+                *color_max = color_max.with_alpha(alpha);
+            }
+        }
+    }
 }
 
 impl Default for ColorMode {
     fn default() -> Self {
-        ColorMode::AutoScale {
-            color_min: BLUE,
-            color_max: RED,
-            v_max: 0.
+        #[cfg(not(feature = "dim3"))]
+        {
+            ColorMode::AutoScale {
+                color_min: BLUE.with_alpha(Self::DEFAULT_ALPHA),
+                color_max: RED.with_alpha(Self::DEFAULT_ALPHA),
+                v_max: 0.
+            }
+        }
+        #[cfg(feature = "dim3")]
+        {
+            ColorMode::AutoScale {
+                color_min: BLUE.with_alpha(0.),
+                color_max: RED.with_alpha(Self::DEFAULT_ALPHA),
+                v_max: 0.
+            }
         }
     }
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! to_parallel {
+    ($iter:expr) => {
+        cfg_select! {
+            feature = "rayon" => ParallelBridge::par_bridge($iter),
+            _ => $iter,
+        }
+    };
 }

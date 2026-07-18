@@ -1,5 +1,6 @@
 use std::num::{NonZeroU32, NonZeroUsize};
-
+use kiss3d::prelude::{AlphaMode, WHITE};
+use kiss3d::window::NumSamples;
 use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow};
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
@@ -16,13 +17,8 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 3.,
+        dt_safety_factor: 2.,
         cells_per_wavelength: 10,
-        spacer_region_widths: LayerWidths::new(
-            10, 10,
-            10, 10,
-            0, 0
-        ),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -54,7 +50,7 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source = Source::Dipole {
-        position: cube_extents[0] - Vect::Z * wavelen,
+        position: cube_extents[0] - Vect::Z * wavelen * 0.5,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
@@ -62,26 +58,24 @@ pub async fn cube() -> anyhow::Result<()> {
 
     let sim_bb = simulation.compute_bounding_box();
     println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
-    
+
     // Set up buffers and pipeline
     let webgpu = WebGpu::default().await?;
     let backend = GpuBackend::WebGpu(webgpu);
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let pipeline = FdtdLossyPipeline::new(&backend, NonZeroUsize::new(1).unwrap())?;
-    
+
     // Create viewer and set up camera
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability).await?;
+    testbed.window.set_ambient(0.5);
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
         .camera
-        .look_at(
-            grid_center.to_3d(Vec3::Z * grid_extents.length() * 3.),
-            grid_center.to_3d(Vec3::ZERO)
-        );
+        .look_at(grid_extents * 2., grid_center);
     testbed.camera.set_up_axis(Vec3::Z);
-        
+
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; gpu_data.dn.buffer.len()];
     while testbed.render_frame(&dn_field).await {
@@ -91,6 +85,6 @@ pub async fn cube() -> anyhow::Result<()> {
             gpu_data.dn.encode_copy_cmd(encoder)
         })?;
     }
-    
+
     Ok(())
 }
