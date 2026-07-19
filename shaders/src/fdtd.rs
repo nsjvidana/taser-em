@@ -292,14 +292,71 @@ pub fn fdtd_lossy(
         let dn_axis = dn_axes[i];
         if dn_axis == Axis::INVALID { break; }
         en_self[dn_axis] = en_coeffs[dn_axis as usize] * dn_self[dn_axis];
+        en.write(idx, en_self);
     }
-    en.write(idx, en_self);
 
     integrals.write(idx, int_terms);
 
     if idx3 == UVec3::ZERO {
         *steps += 1;
     }
+}
+
+/// `POL_MODE == false` => TM mode
+/// `POL_MODE == true` => TE mode
+fn compute_curl_new<const FORWARDS: bool>(
+    idx: usize,
+    flat_idx_incrs: UVec3,
+    d: Vec3,
+    not_boundary: Vec3,
+    v_field: &[Vec4],
+    v_self: Vec4
+) -> Vec4 {
+    macro_rules! curl_diff {
+        ($field_elem:ident, $diff_elem:ident) => {{
+            let neighbor_idx =
+                if FORWARDS { (idx + flat_idx_incrs.$diff_elem as usize).min(v_field.len() - 1) }
+                else { saturating_sub(idx, flat_idx_incrs.$diff_elem as usize) };
+            let neighbor = v_field.read(neighbor_idx).$field_elem * not_boundary.$diff_elem;
+            if FORWARDS { (neighbor - v_self.$field_elem) / d.$diff_elem }
+            else { (v_self.$field_elem - neighbor) / d.$diff_elem }
+        }};
+    }
+
+    let mut v_curl = Vec4::new(
+        cfg_select! {
+            feature = "dim1" => -curl_diff!(y, z),
+            feature = "dim2" => curl_diff!(z, y),
+            feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
+        },
+        cfg_select! {
+            feature = "dim1" => curl_diff!(x, z),
+            feature = "dim2" => -curl_diff!(z, x),
+            feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
+        },
+        cfg_select! {
+            feature = "dim1" => 0.,
+            any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
+        },
+        0.
+    );
+
+    // v_curl.x = cfg_select! {
+    //     feature = "dim1" => -curl_diff!(y, z),
+    //     feature = "dim2" => curl_diff!(z, y),
+    //     feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
+    // };
+    // v_curl.y = cfg_select! {
+    //     feature = "dim1" => curl_diff!(x, z),
+    //     feature = "dim2" => -curl_diff!(z, x),
+    //     feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
+    // };
+    // v_curl.z = cfg_select! {
+    //     feature = "dim1" => 0.,
+    //     any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
+    // };
+
+    v_curl
 }
 
 /// Forwards & backwards component-wise curl operator
@@ -316,7 +373,7 @@ fn compute_curl<const FORWARDS: bool>(
     let axis1 = axis.permute();
     let axis2 = axis1.permute();
     let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
-        let neighbor_idx = 
+        let neighbor_idx =
             if FORWARDS { idx + flat_idx_incrs[axis1] as usize }
             else { idx.wrapping_sub(flat_idx_incrs[axis1] as usize) }
                 .min(vect_field.len() - 1);
