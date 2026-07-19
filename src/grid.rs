@@ -8,7 +8,7 @@ use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DI
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::PmlCoefficients2;
+use taser_em_shaders::fdtd::PmlCoefficients;
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
@@ -303,7 +303,7 @@ pub struct PmlCoefficientsGrid {
     /// Dimensions of grid
     pub n_cells: GridIndex,
     /// Grid's update coefficients in a flattened array.
-    pub coeffs: Vec<PmlCoefficients2>,
+    pub coeffs: Vec<PmlCoefficients>,
 }
 
 impl PmlCoefficientsGrid {
@@ -351,7 +351,7 @@ impl PmlCoefficientsGrid {
         });
 
         let cell_count = n_cells3.element_product() as usize;
-        let mut coeffs = vec![PmlCoefficients2::default(); cell_count];
+        let mut coeffs = vec![PmlCoefficients::default(); cell_count];
         let inv_dt = dt.recip();
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         let c0_dt = C_0 * dt;

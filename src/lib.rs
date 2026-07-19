@@ -20,7 +20,7 @@ use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEn
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
-use taser_em_shaders::fdtd::{GpuDipole, GridParameters, PmlCoefficients2, PmlIntegrals2};
+use taser_em_shaders::fdtd::{GpuDipole, GridParameters, PmlCoefficients, PmlIntegrals};
 use taser_em_shaders::math::{Axis, BoolVectExt, GridIndexExt, VectExt, VectorValueExt};
 use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 
@@ -138,7 +138,7 @@ impl FdtdLossySimulation {
                 h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                int_terms: vec![PmlIntegrals2::default(); cell_count].create_gpu_buffer(backend)?,
+                int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
                 grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
                 dipoles: dipoles.create_gpu_buffer(backend)?,
                 source_vals: source_vals.create_gpu_buffer(backend)?,
@@ -306,8 +306,8 @@ pub struct FdtdLossyGpuData {
     pub h: GpuBufferReadable<Vec4>,
     pub dn: GpuBufferReadable<Vec4>,
     pub en: GpuBufferReadable<Vec4>,
-    pub int_terms: GpuBuffer<PmlIntegrals2>,
-    pub grid_coeffs: GpuBuffer<PmlCoefficients2>,
+    pub int_terms: GpuBuffer<PmlIntegrals>,
+    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
     pub dipoles: GpuBuffer<GpuDipole>,
     pub source_vals: GpuBuffer<f32>,
     pub steps: GpuBuffer<u32>,

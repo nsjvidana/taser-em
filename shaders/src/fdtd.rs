@@ -147,8 +147,8 @@ pub fn fdtd_lossy(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
     // Field update terms
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [PmlIntegrals2],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients2],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [PmlIntegrals],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
     // Sources
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
@@ -316,7 +316,7 @@ fn compute_curl<const FORWARDS: bool>(
 /// Update coefficients for H, D, and E fields with a UPML
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
-pub struct PmlCoefficients2 {
+pub struct PmlCoefficients {
     pub h1: Vec4,
     pub h2: Vec4,
     #[cfg(any(feature = "dim2", feature = "dim3"))]
@@ -342,7 +342,7 @@ pub struct PmlCoefficients2 {
 /// Spir-V, so the H field has one integration term for each dimension.
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
-pub struct PmlIntegrals2 {
+pub struct PmlIntegrals {
     pub en: Vec4, // used for loss
 
     #[cfg(any(feature = "dim2", feature = "dim3"))]
