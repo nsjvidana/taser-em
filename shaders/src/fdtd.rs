@@ -211,21 +211,19 @@ pub fn fdtd_lossy(
     let h_self = {
         let mut h_self = h.read(idx);
         let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
-        let en_curl = compute_curl_new::<true>(idx, grid.flat_idx_incrs, grid.d, not_boundary, en, en_self);
         for i in 0..MAX_DIM {
             let h_axis = h_axes[i];
             if h_axis == Axis::INVALID { break; }
 
-            let en_curl = en_curl[h_axis];
-            // let en_curl = compute_curl::<true>(
-            //     h_axis,
-            //     grid.d,
-            //     idx,
-            //     not_boundary,
-            //     grid.flat_idx_incrs,
-            //     en_self,
-            //     en
-            // );
+            let en_curl = compute_curl::<true>(
+                h_axis,
+                grid.d,
+                idx,
+                not_boundary,
+                grid.flat_idx_incrs,
+                en_self,
+                en
+            );
 
             #[allow(unused_mut)]
             let mut h_cmp_new = coeffs.h1[h_axis] * h_self[h_axis] + coeffs.h2[h_axis] * en_curl +
@@ -249,25 +247,20 @@ pub fn fdtd_lossy(
     let dn_self = {
         let mut dn_self = dn.read(idx);
         let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
-        let h_curl = compute_curl_new::<false>(idx, grid.flat_idx_incrs, grid.d, not_boundary, h, h_self);
         for i in 0..MAX_DIM {
             let dn_axis = dn_axes[i];
             if dn_axis == Axis::INVALID { break; }
 
-            let h_curl = h_curl[dn_axis];
-            // let h_curl = compute_curl::<false>(
-            //     dn_axis,
-            //     grid.d,
-            //     idx,
-            //     not_boundary,
-            //     grid.flat_idx_incrs,
-            //     h_self,
-            //     h
-            // );
+            let h_curl = compute_curl::<false>(
+                dn_axis,
+                grid.d,
+                idx,
+                not_boundary,
+                grid.flat_idx_incrs,
+                h_self,
+                h
+            );
 
-            // let dn_axis_i = dn_axis as usize;
-            // int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
-            // let [m0, m1, m2, m3, ..] = dn_coeffs[dn_axis_i];
             ints.en[dn_axis] += en_self[dn_axis];
             #[allow(unused_mut)]
             let mut dn_cmp_new = coeffs.dn1[dn_axis] * dn_self[dn_axis] + coeffs.dn2[dn_axis] * h_curl + // regular update terms
@@ -303,63 +296,6 @@ pub fn fdtd_lossy(
     if idx3 == UVec3::ZERO {
         *steps += 1;
     }
-}
-
-/// `POL_MODE == false` => TM mode
-/// `POL_MODE == true` => TE mode
-fn compute_curl_new<const FORWARDS: bool>(
-    idx: usize,
-    flat_idx_incrs: UVec3,
-    d: Vec3,
-    not_boundary: Vec3,
-    v_field: &[Vec4],
-    v_self: Vec4
-) -> Vec4 {
-    macro_rules! curl_diff {
-        ($field_elem:ident, $diff_elem:ident) => {{
-            let neighbor_idx =
-                if FORWARDS { (idx + flat_idx_incrs.$diff_elem as usize).min(v_field.len() - 1) }
-                else { saturating_sub(idx, flat_idx_incrs.$diff_elem as usize) };
-            let neighbor = v_field.read(neighbor_idx).$field_elem * not_boundary.$diff_elem;
-            if FORWARDS { (neighbor - v_self.$field_elem) / d.$diff_elem }
-            else { (v_self.$field_elem - neighbor) / d.$diff_elem }
-        }};
-    }
-
-    let mut v_curl = Vec4::new(
-        cfg_select! {
-            feature = "dim1" => -curl_diff!(y, z),
-            feature = "dim2" => curl_diff!(z, y),
-            feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
-        },
-        cfg_select! {
-            feature = "dim1" => curl_diff!(x, z),
-            feature = "dim2" => -curl_diff!(z, x),
-            feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
-        },
-        cfg_select! {
-            feature = "dim1" => 0.,
-            any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
-        },
-        0.
-    );
-
-    // v_curl.x = cfg_select! {
-    //     feature = "dim1" => -curl_diff!(y, z),
-    //     feature = "dim2" => curl_diff!(z, y),
-    //     feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
-    // };
-    // v_curl.y = cfg_select! {
-    //     feature = "dim1" => curl_diff!(x, z),
-    //     feature = "dim2" => -curl_diff!(z, x),
-    //     feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
-    // };
-    // v_curl.z = cfg_select! {
-    //     feature = "dim1" => 0.,
-    //     any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
-    // };
-
-    v_curl
 }
 
 /// Forwards & backwards component-wise curl operator
