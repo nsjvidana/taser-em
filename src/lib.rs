@@ -284,7 +284,7 @@ macro_rules! shader_struct {
     };
 }
 
-shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd_v2::FdtdLossyV2);
+shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 
 #[derive(Clone, Debug)]
 pub struct FdtdParameters {

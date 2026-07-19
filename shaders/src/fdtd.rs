@@ -4,6 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
+use crate::fdtd_v2::{PmlCoefficients2, PmlIntegrals2};
 use crate::math::{DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real, GridIndex, GridIndexExt};
 
 /// Information describing the grid
@@ -167,8 +168,8 @@ pub fn fdtd_lossy(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
     // Field update terms
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [IntegrationTerms],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [PmlIntegrals2],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients2],
     // Sources
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
@@ -198,10 +199,8 @@ pub fn fdtd_lossy(
         source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
     }
 
-    let PmlCoefficients {
-        h_coeffs, dn_coeffs, en_coeffs
-    } = grid_coeffs.read(idx);
-    let mut int_terms = integrals.read(idx);
+    let coeffs = grid_coeffs.read(idx);
+    let mut ints = integrals.read(idx);
 
     let h_axes = grid.polarization_mode.get_h_axes();
     let dn_axes = grid.polarization_mode.get_dn_axes();
@@ -226,19 +225,17 @@ pub fn fdtd_lossy(
                 en
             );
 
-            let h_axis_i = h_axis as usize;
-            let [m0, m1, ..] = h_coeffs[h_axis_i];
             #[allow(unused_mut)]
-            let mut h_cmp_new = m0 * h_self[h_axis] + m1 * en_curl +
+            let mut h_cmp_new = coeffs.h1[h_axis] * h_self[h_axis] + coeffs.h2[h_axis] * en_curl +
                 source_term * grid.polarization_mode.is_te() as u32 as f32;
             #[cfg(any(feature = "dim2", feature = "dim3"))]
             {
-                int_terms.h[h_axis_i][0] += en_curl;
-                h_cmp_new += h_coeffs[h_axis_i][2] * int_terms.h[h_axis_i][0];
+                ints.en_curl[h_axis] += en_curl;
+                h_cmp_new += coeffs.h3[h_axis] * ints.en_curl[h_axis];
                 #[cfg(feature = "dim3")]
                 {
-                    int_terms.h[h_axis_i][1] += h_self[h_axis];
-                    h_cmp_new += h_coeffs[h_axis_i][3] * int_terms.h[h_axis_i][1];
+                    ints.h[h_axis] += h_self[h_axis];
+                    h_cmp_new += coeffs.h4[h_axis] * ints.h[h_axis];
                 }
             }
             h_self[h_axis] = h_cmp_new;
@@ -264,21 +261,22 @@ pub fn fdtd_lossy(
                 h
             );
 
-            let dn_axis_i = dn_axis as usize;
-            int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
-            let [m0, m1, m2, m3, ..] = dn_coeffs[dn_axis_i];
+            // let dn_axis_i = dn_axis as usize;
+            // int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
+            // let [m0, m1, m2, m3, ..] = dn_coeffs[dn_axis_i];
+            ints.en[dn_axis] += en_self[dn_axis];
             #[allow(unused_mut)]
-            let mut dn_cmp_new = m0 * dn_self[dn_axis] + m1 * h_curl + // regular update terms
-                m2 * en_self[dn_axis] + m3 * int_terms.dn[dn_axis_i][0] + // loss terms
+            let mut dn_cmp_new = coeffs.dn1[dn_axis] * dn_self[dn_axis] + coeffs.dn2[dn_axis] * h_curl + // regular update terms
+                coeffs.dn_loss1[dn_axis] * en_self[dn_axis] + coeffs.dn_loss2[dn_axis] * ints.en[dn_axis] + // loss terms
                 source_term * grid.polarization_mode.is_tm() as u32 as f32;
             #[cfg(any(feature = "dim2", feature = "dim3"))]
             {
-                int_terms.dn[dn_axis_i][1] += h_curl;
-                dn_cmp_new += dn_coeffs[dn_axis_i][4] * int_terms.dn[dn_axis_i][1];
+                ints.h_curl[dn_axis] += h_curl;
+                dn_cmp_new += coeffs.dn3[dn_axis] * ints.h_curl[dn_axis];
                 #[cfg(feature = "dim3")]
                 {
-                    int_terms.dn[dn_axis_i][2] += dn_self[dn_axis];
-                    dn_cmp_new += dn_coeffs[dn_axis_i][5] * int_terms.dn[dn_axis_i][2];
+                    ints.dn[dn_axis] += dn_self[dn_axis];
+                    dn_cmp_new += coeffs.dn4[dn_axis] * ints.dn[dn_axis];
                 }
             }
             dn_self[dn_axis] = dn_cmp_new;
@@ -291,11 +289,12 @@ pub fn fdtd_lossy(
     for i in 0..MAX_DIM {
         let dn_axis = dn_axes[i];
         if dn_axis == Axis::INVALID { break; }
-        en_self[dn_axis] = en_coeffs[dn_axis as usize] * dn_self[dn_axis];
-        en.write(idx, en_self);
+        en_self[dn_axis] = coeffs.en1[dn_axis] * dn_self[dn_axis];
+        // en_self[dn_axis] = en_coeffs[dn_axis as usize] * dn_self[dn_axis];
     }
+    en.write(idx, en_self);
 
-    integrals.write(idx, int_terms);
+    integrals.write(idx, ints);
 
     if idx3 == UVec3::ZERO {
         *steps += 1;

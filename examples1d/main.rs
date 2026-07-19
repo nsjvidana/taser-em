@@ -13,10 +13,11 @@ async fn main() {
 pub async fn single_slab() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
+    let sim_speed = NonZeroUsize::new(3).unwrap();
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 3.,
+        dt_safety_factor: 6.,
         cells_per_wavelength: 30,
         ..Default::default()
     };
@@ -59,7 +60,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let webgpu = WebGpu::default().await?;
     let backend = GpuBackend::WebGpu(webgpu);
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
-    let pipeline = FdtdLossyPipeline::new(&backend, NonZeroUsize::new(1).unwrap())?;
+    let pipeline = FdtdLossyPipeline::new(&backend, sim_speed)?;
 
     // Create viewer and set up camera
     let n_cells = gpu_data.n_cells;
