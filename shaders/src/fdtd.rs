@@ -211,19 +211,21 @@ pub fn fdtd_lossy(
     let h_self = {
         let mut h_self = h.read(idx);
         let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
+        let en_curl = compute_curl_new::<true>(idx, grid.flat_idx_incrs, grid.d, not_boundary, en, en_self);
         for i in 0..MAX_DIM {
             let h_axis = h_axes[i];
             if h_axis == Axis::INVALID { break; }
 
-            let en_curl = compute_curl::<true>(
-                h_axis,
-                grid.d,
-                idx,
-                not_boundary,
-                grid.flat_idx_incrs,
-                en_self,
-                en
-            );
+            let en_curl = en_curl[h_axis];
+            // let en_curl = compute_curl::<true>(
+            //     h_axis,
+            //     grid.d,
+            //     idx,
+            //     not_boundary,
+            //     grid.flat_idx_incrs,
+            //     en_self,
+            //     en
+            // );
 
             #[allow(unused_mut)]
             let mut h_cmp_new = coeffs.h1[h_axis] * h_self[h_axis] + coeffs.h2[h_axis] * en_curl +
@@ -247,19 +249,21 @@ pub fn fdtd_lossy(
     let dn_self = {
         let mut dn_self = dn.read(idx);
         let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
+        let h_curl = compute_curl_new::<false>(idx, grid.flat_idx_incrs, grid.d, not_boundary, h, h_self);
         for i in 0..MAX_DIM {
             let dn_axis = dn_axes[i];
             if dn_axis == Axis::INVALID { break; }
 
-            let h_curl = compute_curl::<false>(
-                dn_axis,
-                grid.d,
-                idx,
-                not_boundary,
-                grid.flat_idx_incrs,
-                h_self,
-                h
-            );
+            let h_curl = h_curl[dn_axis];
+            // let h_curl = compute_curl::<false>(
+            //     dn_axis,
+            //     grid.d,
+            //     idx,
+            //     not_boundary,
+            //     grid.flat_idx_incrs,
+            //     h_self,
+            //     h
+            // );
 
             // let dn_axis_i = dn_axis as usize;
             // int_terms.dn[dn_axis_i][0] += en_self[dn_axis];
