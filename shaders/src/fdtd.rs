@@ -4,8 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::fdtd_v2::{PmlCoefficients2, PmlIntegrals2};
-use crate::math::{DIM, Axis, saturating_sub, SpatialAxis, MAX_DIM, Real, GridIndex, GridIndexExt};
+use crate::math::{saturating_sub, Axis, GridIndex, GridIndexExt, Real, SpatialAxis, DIM, MAX_DIM};
 
 /// Information describing the grid
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
@@ -125,15 +124,6 @@ impl<T, const N: usize> core::ops::IndexMut<AxisIndex> for [T; N] {
     }
 }
 
-/// Update coefficients for H, D, and E fields with a UPML
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-#[repr(C)]
-pub struct PmlCoefficients {
-    pub h_coeffs: [[f32; 2 + DIM - 1]; MAX_DIM],
-    pub dn_coeffs: [[f32; 4 + DIM - 1]; MAX_DIM],
-    pub en_coeffs: [f32; MAX_DIM],
-}
-
 /// An electric dipole source
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
@@ -142,17 +132,6 @@ pub struct GpuDipole {
     pub vals_range: [u32; 2],
     pub t_start: u32,
     // TODO: pub repeat_count: u32,
-}
-
-/// Integration terms used in updating H and D fields
-///
-/// H field technically has zero integration terms in 1D, but we can't have zero-sized arrays in
-/// Spir-V, so the H field has one integration term for each dimension.
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
-#[repr(C)]
-pub struct IntegrationTerms {
-    pub h: [[f32; if DIM == 1 { 1 } else { DIM - 1 }]; MAX_DIM],
-    pub dn: [[f32; DIM]; MAX_DIM],
 }
 
 /// N-dimensional FDTD shader with loss (conductivity)
@@ -332,4 +311,47 @@ fn compute_curl<const FORWARDS: bool>(
         else { (vect_self[axis1] - vect_neighbor[axis1]) / d[axis2] }
     } else { 0. };
     curl_term1 - curl_term2
+}
+
+/// Update coefficients for H, D, and E fields with a UPML
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct PmlCoefficients2 {
+    pub h1: Vec4,
+    pub h2: Vec4,
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    pub h3: Vec4,
+    #[cfg(feature = "dim3")]
+    pub h4: Vec4,
+
+    pub dn1: Vec4,
+    pub dn2: Vec4,
+    pub dn_loss1: Vec4,
+    pub dn_loss2: Vec4,
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    pub dn3: Vec4,
+    #[cfg(feature = "dim3")]
+    pub dn4: Vec4,
+
+    pub en1: Vec4,
+}
+
+/// Integration terms used in updating H and D fields
+///
+/// H field technically has zero integration terms in 1D, but we can't have zero-sized arrays in
+/// Spir-V, so the H field has one integration term for each dimension.
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct PmlIntegrals2 {
+    pub en: Vec4, // used for loss
+
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    pub en_curl: Vec4,
+    #[cfg(feature = "dim3")]
+    pub h: Vec4,
+
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    pub h_curl: Vec4,
+    #[cfg(feature = "dim3")]
+    pub dn: Vec4,
 }

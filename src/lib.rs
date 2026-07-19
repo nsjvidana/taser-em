@@ -20,8 +20,7 @@ use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEn
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
-use taser_em_shaders::fdtd::{GpuDipole, GridParameters, IntegrationTerms, PmlCoefficients};
-use taser_em_shaders::fdtd_v2::{PmlCoefficients2, PmlIntegrals2};
+use taser_em_shaders::fdtd::{GpuDipole, GridParameters, PmlCoefficients2, PmlIntegrals2};
 use taser_em_shaders::math::{Axis, BoolVectExt, GridIndexExt, VectExt, VectorValueExt};
 use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
 

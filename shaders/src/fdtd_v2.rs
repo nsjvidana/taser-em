@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4, Vec4Swizzles};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::fdtd::{GpuDipole, GridParameters, IntegrationTerms};
+use crate::fdtd::{GpuDipole, GridParameters, PmlCoefficients2, PmlIntegrals2};
 use crate::math::{saturating_sub, GridIndex, GridIndexExt, Vect};
 
 #[spirv_bindgen]
@@ -164,40 +164,3 @@ fn compute_curl<const FORWARDS: bool>(
     v_curl
 }
 
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-#[repr(C)]
-pub struct PmlCoefficients2 {
-    pub h1: Vec4,
-    pub h2: Vec4,
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
-    pub h3: Vec4,
-    #[cfg(feature = "dim3")]
-    pub h4: Vec4,
-
-    pub dn1: Vec4,
-    pub dn2: Vec4,
-    pub dn_loss1: Vec4,
-    pub dn_loss2: Vec4,
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
-    pub dn3: Vec4,
-    #[cfg(feature = "dim3")]
-    pub dn4: Vec4,
-
-    pub en1: Vec4,
-}
-
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-#[repr(C)]
-pub struct PmlIntegrals2 {
-    pub en: Vec4, // used for loss
-
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
-    pub en_curl: Vec4,
-    #[cfg(feature = "dim3")]
-    pub h: Vec4,
-
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
-    pub h_curl: Vec4,
-    #[cfg(feature = "dim3")]
-    pub dn: Vec4,
-}

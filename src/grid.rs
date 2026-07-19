@@ -3,12 +3,12 @@ use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
-use taser_em_shaders::fdtd::{PmlCoefficients, GpuPolarizationMode};
+use taser_em_shaders::fdtd::GpuPolarizationMode;
 use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt, GridIndexExt};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd_v2::PmlCoefficients2;
+use taser_em_shaders::fdtd::PmlCoefficients2;
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
