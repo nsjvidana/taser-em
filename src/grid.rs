@@ -170,8 +170,7 @@ impl YeeGridMaterials {
         Vec3::new(1., 1., 0.),
     ];
 
-    /// Compute a material grid with the dimensions of `n_cells` where all material regions
-    /// are centered at the middle of the grid.
+    /// Compute a material grid with the dimensions of `n_cells` by sampling material regions.
     ///
     /// # How it Works
     /// First, the grid is moved **only along the spatial axes** (see [`SpatialAxis::ALL_SPATIAL`]) in a way
@@ -197,9 +196,9 @@ impl YeeGridMaterials {
         let sim_offset = Self::compute_simulation_offset(simulation_bb, n_cells, cell_size);
         let centered_scene_pose = regions.scene_pose.append_translation(sim_offset);
 
-        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
-        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
-        let h_offsets = Self::H_OFFSETS.map(|v| v * cell_size3);
+        let half_cell_size3 = (cell_size / 2.).to_3d(Vec3::ZERO);
+        let dn_offsets = Self::DN_OFFSETS.map(|v| v * half_cell_size3);
+        let h_offsets = Self::H_OFFSETS.map(|v| v * half_cell_size3);
         let regions_transformed = regions.regions.iter()
             .map(|r| (&r.shape, centered_scene_pose * r.pose, r.material))
             .collect::<Vec<_>>();
@@ -388,7 +387,7 @@ impl PmlCoefficientsGrid {
                         coeff.h3[axis] = -coeff_term0 * c0_dt * h_sigs[axis] / EPS_0 * inv_mu_r_axis;
                         #[cfg(feature = "dim3")]
                         {
-                            coeff.h4[axis] = -coeff_term0 * dt * h_sigs[axis1] * h_sigs[axis2] / (EPS_0 * EPS_0);
+                            coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs[axis1] * h_sigs[axis2];
                         }
                     }
 
@@ -409,7 +408,7 @@ impl PmlCoefficientsGrid {
                         coeff.dn3[axis] = coeff_term0 * c0_dt * dn_sigs[axis] / EPS_0;
                         #[cfg(feature = "dim3")]
                         {
-                            coeff.dn4[axis] = -coeff_term0 * dt * dn_sigs[axis1] * dn_sigs[axis2] / (EPS_0 * EPS_0);
+                            coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs[axis1] * dn_sigs[axis2];
                         }
                     }
                     coeff.en1[axis] = mats[i].eps_r[axis].recip();
