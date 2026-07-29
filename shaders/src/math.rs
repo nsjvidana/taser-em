@@ -282,13 +282,13 @@ impl GridIndexExt for GridIndex {
 
     #[inline]
     #[allow(unused_variables)]
-    fn from_flat_idx(idx: u32, grid_dim: GridIndex) -> GridIndex {
+    fn from_flat_idx(idx: Index, grid_dim: GridIndex) -> GridIndex {
         #[cfg(feature = "dim1")]
         return idx;
         #[cfg(feature = "dim2")]
         return GridIndex::new(
             idx % grid_dim.x,
-            (idx / grid_dim.x) % grid_dim.y,
+            idx / grid_dim.x,
         );
         #[cfg(feature = "dim3")]
         GridIndex::new(
