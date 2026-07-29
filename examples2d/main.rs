@@ -13,12 +13,12 @@ async fn main() {
 pub async fn single_rod() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(4).unwrap();
+    let sim_speed = NonZeroUsize::new(12).unwrap();
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 10.,
-        cells_per_wavelength: 20,
+        cells_per_wavelength: 10,
         material_resolution: NonZeroU32::new(10).unwrap(),
         ..Default::default()
     };
@@ -82,9 +82,13 @@ pub async fn single_rod() -> anyhow::Result<()> {
         backend.synchronize()?;
         gpu_data.dn.read(&backend, &mut dn_field).await?;
         pipeline.submit_steps(&backend, &mut gpu_data, None, |encoder, gpu_data| {
-            gpu_data.dn.encode_copy_cmd(encoder)
+            gpu_data.dn.encode_copy_cmd(encoder)?;
+            gpu_data.steps.encode_copy_cmd(encoder)
         })?;
     }
+    let mut steps = vec![0];
+    gpu_data.steps.read(&backend, &mut steps).await?;
+    println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
     
     Ok(())
 }

@@ -211,7 +211,6 @@ impl YeeGridMaterials {
         };
 
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
-        let start = std::time::Instant::now();
         to_parallel!(mats.iter_mut().enumerate())
             .for_each(|(i, mat)| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
@@ -224,7 +223,6 @@ impl YeeGridMaterials {
                     mu_r: Vec3::from_array(std::array::from_fn(|i| { h_mat[i].mu_r[i] })),
                 };
             });
-        println!("{:?}", start.elapsed());
 
         Self {
             n_cells,
@@ -329,7 +327,7 @@ impl PmlCoefficientsGrid {
             ..
         } = grid_mats;
 
-        // PML conductivity terms on all axes.
+        // PML conductivity terms (1D slices along each axis)
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
             (0..n_cells3[axis]*2)
                 .map(|i| {
