@@ -444,7 +444,7 @@ impl LayerWidths {
     /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
     pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
         let mut n_cells = n_cells.into_array();
-        for (n_cells_i, (_, lo_hi_widths)) in n_cells.iter_mut()
+        for (n_cells_i, lo_hi_widths) in n_cells.iter_mut()
             .zip(self.iter_axes())
         {
             *n_cells_i += lo_hi_widths.lo + lo_hi_widths.hi;
@@ -453,15 +453,10 @@ impl LayerWidths {
     }
 
     #[inline]
-    pub fn iter_axes(&self) -> impl Iterator<Item = (SpatialAxis, &LoHiWidths)> {
-        SpatialAxis::ALL_SPATIAL.into_iter()
-            .zip(self.widths.iter())
-    }
-
-    #[inline]
-    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (SpatialAxis, &mut LoHiWidths)> {
-        SpatialAxis::ALL_SPATIAL.into_iter()
-            .zip(self.widths.iter_mut())
+    pub fn iter_axes(&self) -> impl Iterator<Item = &LoHiWidths> {
+        SpatialAxis::ALL_SPATIAL
+            .map(|axis| &self.widths[Axis::from(axis) as usize])
+            .into_iter()
     }
 }
 
