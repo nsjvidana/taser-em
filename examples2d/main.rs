@@ -18,7 +18,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 10.,
-        cells_per_wavelength: 30,
+        cells_per_wavelength: 20,
         material_resolution: NonZeroU32::new(10).unwrap(),
         ..Default::default()
     };

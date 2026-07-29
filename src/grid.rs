@@ -331,22 +331,19 @@ impl PmlCoefficientsGrid {
 
         // PML conductivity terms on all axes.
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
-            if let Ok(s_axis) = SpatialAxis::try_from(axis) {
-                (0..=n_cells[s_axis]*2)
-                    .map(|i| {
-                        let lo_dist = i as Real / 2.;
-                        let hi_dist = n_cells[s_axis] as Real - lo_dist;
-                        let lo_interp = (1. - lo_dist / pml_widths[s_axis].lo as Real)
-                            .clamp(0., 1.);
-                        let hi_interp = (1. - hi_dist / pml_widths[s_axis].hi as Real)
-                            .clamp(0., 1.);
-                        let sig = pml_sig_max * (lo_interp + hi_interp).powi(pml_grading_order.get());
-                        if sig.is_finite() { sig } else { 0. }
-                    })
-                    .collect()
-            } else {
-                vec![0.; n_cells3[axis] as usize * 2]
-            }
+            (0..n_cells3[axis]*2)
+                .map(|i| {
+                    let lo_dist = i as Real;
+                    let hi_dist = ((n_cells3[axis]*2 - 1) - i) as Real;
+                    let lo_t = (1. - lo_dist / (pml_widths[axis].lo*2) as Real)
+                        .clamp(0., 1.);
+                    let hi_t = (1. - hi_dist / (pml_widths[axis].hi*2) as Real)
+                        .clamp(0., 1.);
+                    let sig = pml_sig_max * (lo_t + hi_t)
+                        .powi(pml_grading_order.get());
+                    if sig.is_finite() { sig } else { 0. }
+                })
+                .collect()
         });
 
         let cell_count = n_cells3.element_product() as usize;
