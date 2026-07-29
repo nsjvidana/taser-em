@@ -336,10 +336,10 @@ impl PmlCoefficientsGrid {
                     .map(|i| {
                         let lo_dist = i as Real / 2.;
                         let hi_dist = n_cells[s_axis] as Real - lo_dist;
-                        let [pml_lo, pml_hi] = pml_widths[s_axis]
-                            .map(|l| l as Real);
-                        let lo_interp = (1. - lo_dist / pml_lo).clamp(0., 1.);
-                        let hi_interp = (1. - hi_dist / pml_hi).clamp(0., 1.);
+                        let lo_interp = (1. - lo_dist / pml_widths[s_axis].lo as Real)
+                            .clamp(0., 1.);
+                        let hi_interp = (1. - hi_dist / pml_widths[s_axis].hi as Real)
+                            .clamp(0., 1.);
                         let sig = pml_sig_max * (lo_interp + hi_interp).powi(pml_grading_order.get());
                         if sig.is_finite() { sig } else { 0. }
                     })
@@ -424,64 +424,42 @@ impl PmlCoefficientsGrid {
 /// Stores the "low" and "high" widths on each axis.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct LayerWidths {
-    pub widths: [[Index; 2]; DIM],
+    pub widths: [LoHiWidths; MAX_DIM]
 }
 
 impl LayerWidths {
-    #[inline]
-    #[cfg(feature = "dim1")]
-    pub fn new(z_lo: Index, z_hi: Index) -> Self {
-        Self {
-            widths: [[z_lo, z_hi]]
-        }
-    }
-
-    #[inline]
-    #[cfg(feature = "dim2")]
-    pub fn new(x_lo: Index, x_hi: Index, y_lo: Index, y_hi: Index) -> Self {
-        Self {
-            widths: [[x_lo, x_hi], [y_lo, y_hi]]
-        }
-    }
-
-    #[inline]
-    #[cfg(feature = "dim3")]
-    pub fn new(x_lo: Index, x_hi: Index, y_lo: Index, y_hi: Index, z_lo: Index, z_hi: Index) -> Self {
-        Self {
-            widths: [[x_lo, x_hi], [y_lo, y_hi], [z_lo, z_hi]]
-        }
-    }
-
     /// [`LayerWidths`] with widths along all axes set to `width`.
     #[inline]
     pub fn splat(width: Index) -> Self {
-        #[cfg(feature = "dim1")]
-        return Self::new(width, width);
-        #[cfg(feature = "dim2")]
-        return Self::new(width, width, width, width);
-        #[cfg(feature = "dim3")]
-        Self::new(width, width, width, width, width, width)
+        let mut selff = Self {
+            widths: core::array::repeat(LoHiWidths::default()),
+        };
+        for s_axis in SpatialAxis::ALL_SPATIAL
+        {
+            selff[s_axis] = LoHiWidths::splat(width);
+        }
+        selff
     }
 
     /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
     pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
         let mut n_cells = n_cells.into_array();
-        for (n_cells_i, (_axis, lo_hi_widths)) in n_cells.iter_mut()
+        for (n_cells_i, (_, lo_hi_widths)) in n_cells.iter_mut()
             .zip(self.iter_axes())
         {
-            *n_cells_i += lo_hi_widths.iter().sum::<Index>();
+            *n_cells_i += lo_hi_widths.lo + lo_hi_widths.hi;
         }
         GridIndex::from_index_array(n_cells)
     }
 
     #[inline]
-    pub fn iter_axes(&self) -> impl Iterator<Item = (SpatialAxis, &[Index; 2])> {
+    pub fn iter_axes(&self) -> impl Iterator<Item = (SpatialAxis, &LoHiWidths)> {
         SpatialAxis::ALL_SPATIAL.into_iter()
             .zip(self.widths.iter())
     }
 
     #[inline]
-    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (SpatialAxis, &mut [Index; 2])> {
+    pub fn iter_axes_mut(&mut self) -> impl Iterator<Item = (SpatialAxis, &mut LoHiWidths)> {
         SpatialAxis::ALL_SPATIAL.into_iter()
             .zip(self.widths.iter_mut())
     }
@@ -494,13 +472,14 @@ impl core::ops::AddAssign for LayerWidths {
 impl core::ops::Add for LayerWidths {
     type Output = Self;
     fn add(mut self, rhs: Self) -> Self::Output {
-        for ([lo1, hi1], [lo2, hi2]) in self.widths.iter_mut()
-            .zip(rhs.widths.iter())
-        {
-            *lo1 += lo2;
-            *hi1 += hi2;
+        Self {
+            widths: core::array::from_fn(|i| {
+                LoHiWidths {
+                    lo: self.widths[i].lo + rhs.widths[i].lo,
+                    hi: self.widths[i].hi + rhs.widths[i].hi,
+                }
+            })
         }
-        self
     }
 }
 
@@ -510,28 +489,63 @@ impl core::ops::SubAssign for LayerWidths {
 
 impl core::ops::Sub for LayerWidths {
     type Output = Self;
-    fn sub(mut self, rhs: Self) -> Self::Output {
-        for ([lo1, hi1], [lo2, hi2]) in self.widths.iter_mut()
-            .zip(rhs.widths.iter())
-        {
-            *lo1 -= lo2;
-            *hi1 -= hi2;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            widths: core::array::from_fn(|i| {
+                LoHiWidths {
+                    lo: self.widths[i].lo - rhs.widths[i].lo,
+                    hi: self.widths[i].hi - rhs.widths[i].hi,
+                }
+            })
         }
-        self
+    }
+}
+
+impl core::ops::Index<Axis> for LayerWidths {
+    type Output = LoHiWidths;
+    #[inline]
+    fn index(&self, index: Axis) -> &Self::Output {
+        &self.widths[index as usize]
+    }
+}
+
+impl core::ops::IndexMut<Axis> for LayerWidths {
+    #[inline]
+    fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
+        &mut self.widths[index as usize]
     }
 }
 
 impl core::ops::Index<SpatialAxis> for LayerWidths {
-    type Output = [Index; 2];
+    type Output = LoHiWidths;
     #[inline]
     fn index(&self, index: SpatialAxis) -> &Self::Output {
-        &self.widths[index as usize]
+        &self.widths[Axis::from(index) as usize]
     }
 }
 
 impl core::ops::IndexMut<SpatialAxis> for LayerWidths {
     #[inline]
     fn index_mut(&mut self, index: SpatialAxis) -> &mut Self::Output {
-        &mut self.widths[index as usize]
+        &mut self.widths[Axis::from(index) as usize]
+    }
+}
+
+/// Widths of a layer on the lo- and hi- ends along an axis.
+///
+/// Used by [`LayerWidths`]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct LoHiWidths {
+    pub lo: Index,
+    pub hi: Index,
+}
+
+impl LoHiWidths {
+    #[inline]
+    pub fn splat(width: Index) -> Self {
+        Self {
+            lo: width,
+            hi: width,
+        }
     }
 }
