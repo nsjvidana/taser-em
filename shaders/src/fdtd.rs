@@ -188,7 +188,24 @@ pub fn fdtd_lossy(
     let en_self = en.read(idx);
 
     let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
-    let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
+    // let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
+    let h_axes: [Axis; MAX_DIM] = grid.polarization_mode.get_h_axes();
+    let mut en_curl = Vec4::ZERO;
+    for i in 0..MAX_DIM {
+        let axis = h_axes[i];
+        if axis == Axis::INVALID { break; }
+
+        en_curl[axis] = compute_curl_old::<true>(
+            axis,
+            grid.d,
+            idx,
+            not_boundary.as_vec3(),
+            grid.flat_idx_incrs,
+            en_self,
+            en
+        );
+    }
+
     let h_self = h.read(idx);
     let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
         source_term * grid.polarization_mode.is_te() as u32 as f32;
@@ -208,7 +225,24 @@ pub fn fdtd_lossy(
     let h_self = h_self_new;
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
-    let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
+    // let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
+    let dn_axes: [Axis; MAX_DIM] = grid.polarization_mode.get_dn_axes();
+    let mut h_curl = Vec4::ZERO;
+    for i in 0..MAX_DIM {
+        let axis = dn_axes[i];
+        if axis == Axis::INVALID { break; }
+
+        h_curl[axis] = compute_curl_old::<false>(
+            axis,
+            grid.d,
+            idx,
+            not_boundary.as_vec3(),
+            grid.flat_idx_incrs,
+            h_self,
+            h
+        );
+    }
+
     let dn_self = dn.read(idx);
     ints.en += en_self;
     let dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +

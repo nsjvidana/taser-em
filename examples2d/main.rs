@@ -89,6 +89,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let mut steps = vec![0];
     gpu_data.steps.read(&backend, &mut steps).await?;
     println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
-    
+    println!("steps: {:?}", steps[0]);
+
     Ok(())
 }
