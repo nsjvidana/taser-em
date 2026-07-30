@@ -163,7 +163,6 @@ pub enum VisualizationMode {
     },
 }
 
-
 impl VisualizationMode {
     pub fn initialize(
         &mut self,
