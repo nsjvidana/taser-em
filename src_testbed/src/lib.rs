@@ -4,17 +4,20 @@ pub mod re_exports {
     pub use anyhow;
 }
 
-use glamx::{Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
+use glamx::*;
 use kiss3d::camera::Projection;
-use kiss3d::color::{BLUE, GRAY, RED};
-use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, InstanceData3d, OrbitCamera3d, SceneNode3d, Window, TRANSPARENT};
+use kiss3d::color::*;
+use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect};
 use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability};
-use taser_em::prelude::{PolarizationMode, Real, VectExt, VectorValueExt};
+use taser_em::prelude::{PolarizationMode, Real, VectExt};
 use crate::util::lerp_colors;
+
+#[cfg(not(feature = "dim1"))]
+use kiss3d::prelude::InstanceData3d;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;

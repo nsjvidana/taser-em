@@ -1,5 +1,5 @@
 use crate::{grid_cells_iter, to_parallel, ElectricMaterial, PmlParameters, C_0, EPS_0};
-use glamx::{Pose3, USizeVec3, Vec3, Vec4};
+use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
@@ -475,7 +475,7 @@ impl core::ops::AddAssign for LayerWidths {
 
 impl core::ops::Add for LayerWidths {
     type Output = Self;
-    fn add(mut self, rhs: Self) -> Self::Output {
+    fn add(self, rhs: Self) -> Self::Output {
         Self {
             widths: core::array::from_fn(|i| {
                 LoHiWidths {

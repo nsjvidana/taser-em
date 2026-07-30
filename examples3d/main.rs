@@ -1,8 +1,7 @@
 use std::num::NonZeroUsize;
-use kiss3d::color::RED;
-use kiss3d::prelude::{Color, Light};
+use kiss3d::prelude::Light;
 use kiss3d::window::NumSamples;
-use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode, ColorMode};
+use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode};
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
 use taser_em3d::re_exports::glamx::glam::*;

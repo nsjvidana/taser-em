@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::math::{saturating_sub, Axis, GridIndex, GridIndexExt, Real, SpatialAxis, DIM, MAX_DIM};
+use crate::math::{saturating_sub, Axis, GridIndex, GridIndexExt, Real, SpatialAxis, MAX_DIM};
 
 /// Information describing the grid
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
