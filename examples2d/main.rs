@@ -38,7 +38,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute slab dimensions
     let wavelen = C_0 / f_max;
-    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.5)];
+    let slab_extents = [Vect::from_element(-20.), Vect::from_element(-20. + wavelen * 0.5)];
     // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),

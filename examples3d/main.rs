@@ -40,7 +40,7 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute cube dimensions
     let wavelen = C_0 / f_max;
-    let cube_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.1)];
+    let cube_extents = [Vect::from_element(-20.), Vect::from_element(-20. + wavelen * 0.1)];
     // construct the cube
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),

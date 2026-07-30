@@ -54,10 +54,10 @@ pub trait VectExt: VectorValueExt {
 }
 
 /// A trait with functions for general vector values
-pub trait VectorValueExt {
+pub trait VectorValueExt: Sized {
     type Element;
     type Boolean;
-    fn splat(value: Self::Element) -> Self;
+    fn from_element(value: Self::Element) -> Self;
     fn zero() -> Self;
     fn one() -> Self;
     fn largest_element(self) -> Self::Element;
@@ -148,7 +148,7 @@ impl VectorValueExt for Vect {
 
     /// Create a vector field element with all its components set to `value`
     #[inline]
-    fn splat(value: Self::Element) -> Self {
+    fn from_element(value: Self::Element) -> Self {
         cfg_select! {
             feature = "dim1" => value,
             _ => Self::splat(value)
@@ -158,13 +158,13 @@ impl VectorValueExt for Vect {
     /// Create a vector field element with all its components set to `0.`
     #[inline]
     fn zero() -> Self {
-        Self::splat(0.)
+        Self::from_element(0.)
     }
 
     /// Create a vector field element with all its components set to `1.`
     #[inline]
     fn one() -> Self {
-        Self::splat(1.)
+        Self::from_element(1.)
     }
 
     #[inline]
@@ -320,7 +320,7 @@ impl VectorValueExt for GridIndex {
 
     /// Create a vector field element with all its components set to `value`
     #[inline]
-    fn splat(value: Self::Element) -> Self {
+    fn from_element(value: Self::Element) -> Self {
         cfg_select! {
             feature = "dim1" => value,
             _ => Self::splat(value)
@@ -329,12 +329,12 @@ impl VectorValueExt for GridIndex {
     /// Create a vector field element with all its components set to `0.`
     #[inline]
     fn zero() -> Self {
-        Self::splat(0)
+        Self::from_element(0)
     }
     /// Create a vector field element with all its components set to `1.`
     #[inline]
     fn one() -> Self {
-        Self::splat(1)
+        Self::from_element(1)
     }
     #[inline]
     fn largest_element(self) -> Self::Element {

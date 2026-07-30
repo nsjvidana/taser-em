@@ -241,7 +241,7 @@ impl YeeGridMaterials {
     ) -> YeeGridMaterials {
         let downscale_factor = downscale_factor.get();
 
-        let n_cells = self.n_cells.div_ceil(GridIndex::splat(downscale_factor));
+        let n_cells = self.n_cells.div_ceil(GridIndex::from_element(downscale_factor));
         let cell_size = self.cell_size * downscale_factor as f32;
         let cell_count = n_cells.into_array().iter()
             .product::<Index>();

@@ -176,6 +176,7 @@ pub fn fdtd_lossy(
         let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
         source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
     }
+    // TODO: make components zero depending on dimension
     let source_term = Vec4::new(source_term, source_term, source_term, 0.);
 
     let coeffs = grid_coeffs.read(idx);
