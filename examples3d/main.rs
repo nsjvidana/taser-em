@@ -15,10 +15,11 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
+    let sim_speed = NonZeroUsize::new(5).unwrap();
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 2.,
+        dt_safety_factor: 10.,
         spacer_region_widths: LayerWidths::splat(5),
         ..Default::default()
     };
@@ -64,7 +65,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let webgpu = WebGpu::default().await?;
     let backend = GpuBackend::WebGpu(webgpu);
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
-    let pipeline = FdtdLossyPipeline::new(&backend, NonZeroUsize::new(1).unwrap())?;
+    let pipeline = FdtdLossyPipeline::new(&backend, sim_speed)?;
 
     // Create viewer and set up camera
     let n_cells = gpu_data.n_cells;
@@ -77,10 +78,10 @@ pub async fn cube() -> anyhow::Result<()> {
     ).await?;
     testbed.window.set_samples(NumSamples::Four);
     testbed.window.set_ambient(0.5);
-    testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
+    testbed.set_clipping_planes(cell_size.smallest_element() / 100., cell_size.largest_element() * 1000.)
         .camera
         .look_at(grid_extents * 2., grid_center);
-    testbed.camera.set_up_axis(Vec3::Z);
+    testbed.camera.set_up_axis_dir(Vec3::Z);
 
     testbed.scene
         .add_light(

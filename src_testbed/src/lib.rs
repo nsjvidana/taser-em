@@ -168,11 +168,14 @@ impl VisualizationMode {
         n_cells: GridIndex,
         cell_size: Vect,
     ) {
-        let cell_positions = grid_cells_iter(n_cells)
-            .map(|i| (GridIndex::from_index_array(i.into()).as_vect() * cell_size)
-                .to_3d(Vec3::ZERO)
-            )
-        .collect::<Vec<_>>();
+        let mut cell_positions = vec![Vec3::ZERO; n_cells.into_array().iter().product::<u32>() as _];
+        grid_cells_iter(n_cells)
+            .for_each(|idx_tuple| {
+                let idx = GridIndex::from_index_array(idx_tuple.into());
+                let flat_idx = idx.to_flat_idx(n_cells);
+                cell_positions[flat_idx as usize] = (idx.as_vect() * cell_size)
+                    .to_3d(Vec3::ZERO);
+            });
 
         #[cfg(feature = "dim1")]
         {
@@ -202,7 +205,7 @@ impl VisualizationMode {
                     })
                     .collect();
                 instanced_obj.set_instances(instances);
-                instanced_obj.enable_backface_culling(true);
+                instanced_obj.enable_backface_culling(false);
             };
             match self {
                 #[cfg(feature = "dim2")]
