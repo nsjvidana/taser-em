@@ -189,12 +189,13 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
     // let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
-    let mut en_curl = Vec4::ZERO;
-    for i in 0..Axis::ALL_AXES.len() {
+    // let mut en_curl = Vec4::ZERO;
+    let mut curl_cmps = [0.; 4];
+    for i in 0..MAX_DIM {
         let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; }
+        if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
 
-        en_curl[axis] = compute_curl_old::<true>(
+        curl_cmps[i] = compute_curl_old::<true>(
             axis,
             grid.d,
             idx,
@@ -204,6 +205,7 @@ pub fn fdtd_lossy(
             en
         );
     }
+    let en_curl = Vec4::from(curl_cmps);
 
     let h_self = h.read(idx);
     let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
@@ -225,12 +227,13 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
     // let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
-    let mut h_curl = Vec4::ZERO;
+    // let mut h_curl = Vec4::ZERO;
+    let mut curl_cmps = [0.; 4];
     for i in 0..Axis::ALL_AXES.len() {
         let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; }
+        if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
 
-        h_curl[axis] = compute_curl_old::<false>(
+        curl_cmps[i] = compute_curl_old::<false>(
             axis,
             grid.d,
             idx,
@@ -240,6 +243,7 @@ pub fn fdtd_lossy(
             h
         );
     }
+    let h_curl = Vec4::from(curl_cmps);
 
     let dn_self = dn.read(idx);
     ints.en += en_self;
