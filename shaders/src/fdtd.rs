@@ -134,13 +134,156 @@ pub struct GpuDipole {
     // TODO: pub repeat_count: u32,
 }
 
+/// Polarization-agnostic N-dimensional FDTD shader with loss (conductivity)
+#[spirv_bindgen]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn fdtd_lossy(
+    #[spirv(global_invocation_id)] idx3: UVec3,
+    // Vector fields
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dn: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
+    // Field update terms
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] integrals: &mut [PmlIntegrals],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
+    // Sources
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] steps: &mut u32,
+    // Uniforms
+    #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters,
+) {
+    if idx3.cmpge(grid.n_cells3).any() { return; }
+    let idx = GridIndex::from_uvec3(idx3).to_flat_idx(GridIndex::from_uvec3(grid.n_cells3))
+        as usize;
+    let boundary_idx3 = grid.n_cells3 - 1;
+
+    // Get the source value at this timestep (working)
+    let steps_usize = *steps as usize;
+    let mut source_term = 0.;
+    for i in 0..dipoles.len() {
+        let GpuDipole {
+            vals_range: [start, end],
+            cell_idx,
+            t_start,
+        } = dipoles.read(i);
+        let t_start = t_start as usize;
+        let t = saturating_sub(steps_usize, t_start);
+        let [start, end] = [start as usize, end as usize];
+        let vals_i = start + t;
+        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
+        source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
+    }
+    let source_term = Vec4::new(source_term, source_term, source_term, 0.);
+
+    let coeffs = grid_coeffs.read(idx);
+    let mut ints = integrals.read(idx);
+
+    let en_self = en.read(idx);
+
+    let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
+    let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
+    // let en_curl = en_curl(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
+    let h_self = h.read(idx);
+    let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
+        source_term * grid.polarization_mode.is_te() as u32 as f32;
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    let h_self_new = {
+        ints.en_curl += en_curl;
+        let h_self_new = h_self_new + coeffs.h3 * ints.en_curl;
+        #[cfg(feature = "dim3")]
+        let h_self_new = {
+            ints.h += h_self;
+            h_self_new + coeffs.h4 * ints.h
+        };
+
+        h_self_new
+    };
+    h.write(idx, h_self_new.with_w(0.));
+    let h_self = h_self_new;
+
+    let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
+    let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
+    // let h_curl = h_curl(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
+    let dn_self = dn.read(idx);
+    ints.en += en_self;
+    let dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
+        coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en +
+        source_term * grid.polarization_mode.is_tm() as u32 as f32;
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    let dn_self_new = {
+        ints.h_curl += h_curl;
+        let dn_self_new = dn_self_new + coeffs.dn3 * ints.h_curl;
+        #[cfg(feature = "dim3")]
+        let dn_self_new = {
+            ints.dn += dn_self;
+            dn_self_new + coeffs.dn4 * ints.dn
+        };
+
+        dn_self_new
+    };
+    dn.write(idx, dn_self_new.with_w(0.));
+    let dn_self = dn_self_new;
+
+    let en_self_new = coeffs.en1 * dn_self;
+    en.write(idx, en_self_new.with_w(0.));
+
+    integrals.write(idx, ints);
+
+    if idx3 == UVec3::ZERO {
+        *steps += 1;
+    }
+}
+
+#[inline(always)]
+fn compute_curl<const FORWARDS: bool>(
+    idx: usize,
+    flat_idx_incrs: &UVec3,
+    d: &Vec3,
+    not_boundary: &UVec3,
+    v_field: &[Vec4],
+    v_self: &Vec4
+) -> Vec4 {
+    let flat_idx_incrs = flat_idx_incrs * not_boundary;
+    macro_rules! curl_diff {
+        ($field_elem:ident, $diff_elem:ident) => {{
+            let neighbor_idx =
+                if FORWARDS { (idx + flat_idx_incrs.$diff_elem as usize).min(v_field.len() - 1) }
+                else { saturating_sub(idx, flat_idx_incrs.$diff_elem as usize) };
+            let neighbor = v_field.read(neighbor_idx).$field_elem * not_boundary.$diff_elem as f32;
+            if FORWARDS { (neighbor - v_self.$field_elem) / d.$diff_elem }
+            else { (v_self.$field_elem - neighbor) / d.$diff_elem }
+        }};
+    }
+
+    Vec4::new(
+        cfg_select! {
+            feature = "dim1" => -curl_diff!(y, z),
+            feature = "dim2" => curl_diff!(z, y),
+            feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
+        },
+        cfg_select! {
+            feature = "dim1" => curl_diff!(x, z),
+            feature = "dim2" => -curl_diff!(z, x),
+            feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
+        },
+        cfg_select! {
+            feature = "dim1" => 0.,
+            any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
+        },
+        0.
+    )
+}
+
 /// N-dimensional FDTD shader with loss (conductivity)
 // TODO: try using Vect for the vector fields
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn fdtd_lossy(
+pub fn fdtd_lossy_old(
     #[spirv(global_invocation_id)] idx3: UVec3,
     // Vector fields
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h: &mut [Vec4],
@@ -194,7 +337,7 @@ pub fn fdtd_lossy(
             let h_axis = h_axes[i];
             if h_axis == Axis::INVALID { break; }
 
-            let en_curl = compute_curl::<true>(
+            let en_curl = compute_curl_old::<true>(
                 h_axis,
                 grid.d,
                 idx,
@@ -230,7 +373,7 @@ pub fn fdtd_lossy(
             let dn_axis = dn_axes[i];
             if dn_axis == Axis::INVALID { break; }
 
-            let h_curl = compute_curl::<false>(
+            let h_curl = compute_curl_old::<false>(
                 dn_axis,
                 grid.d,
                 idx,
@@ -279,7 +422,7 @@ pub fn fdtd_lossy(
 
 /// Forwards & backwards component-wise curl operator
 #[inline]
-fn compute_curl<const FORWARDS: bool>(
+fn compute_curl_old<const FORWARDS: bool>(
     axis: Axis,
     d: Vec3,
     idx: usize,

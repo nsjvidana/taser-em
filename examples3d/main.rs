@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 use kiss3d::prelude::Light;
 use kiss3d::window::NumSamples;
 use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode};
@@ -14,12 +14,13 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(5).unwrap();
+    let sim_speed = NonZeroUsize::new(12).unwrap();
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 10.,
-        spacer_region_widths: LayerWidths::splat(5),
+        cells_per_wavelength: 10,
+        material_resolution: NonZeroU32::new(5).unwrap(),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
