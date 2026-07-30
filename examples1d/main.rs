@@ -13,11 +13,11 @@ async fn main() {
 pub async fn single_slab() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(3).unwrap();
+    let sim_speed = NonZeroUsize::new(12).unwrap();
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 6.,
+        dt_safety_factor: 10.,
         cells_per_wavelength: 30,
         ..Default::default()
     };

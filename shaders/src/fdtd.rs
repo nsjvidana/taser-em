@@ -134,7 +134,7 @@ pub struct GpuDipole {
     // TODO: pub repeat_count: u32,
 }
 
-/// Polarization-agnostic N-dimensional FDTD shader with loss (conductivity)
+/// N-dimensional FDTD shader with loss (conductivity). Works with any polarization mode.
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
@@ -189,10 +189,9 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
     // let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
-    let h_axes: [Axis; MAX_DIM] = grid.polarization_mode.get_h_axes();
     let mut en_curl = Vec4::ZERO;
-    for i in 0..MAX_DIM {
-        let axis = h_axes[i];
+    for i in 0..Axis::ALL_AXES.len() {
+        let axis = Axis::ALL_AXES[i];
         if axis == Axis::INVALID { break; }
 
         en_curl[axis] = compute_curl_old::<true>(
@@ -208,7 +207,7 @@ pub fn fdtd_lossy(
 
     let h_self = h.read(idx);
     let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
-        source_term * grid.polarization_mode.is_te() as u32 as f32;
+        source_term;
     #[cfg(any(feature = "dim2", feature = "dim3"))]
     let h_self_new = {
         ints.en_curl += en_curl;
@@ -226,10 +225,9 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
     // let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
-    let dn_axes: [Axis; MAX_DIM] = grid.polarization_mode.get_dn_axes();
     let mut h_curl = Vec4::ZERO;
-    for i in 0..MAX_DIM {
-        let axis = dn_axes[i];
+    for i in 0..Axis::ALL_AXES.len() {
+        let axis = Axis::ALL_AXES[i];
         if axis == Axis::INVALID { break; }
 
         h_curl[axis] = compute_curl_old::<false>(
@@ -247,7 +245,7 @@ pub fn fdtd_lossy(
     ints.en += en_self;
     let dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
         coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en +
-        source_term * grid.polarization_mode.is_tm() as u32 as f32;
+        source_term;
     #[cfg(any(feature = "dim2", feature = "dim3"))]
     let dn_self_new = {
         ints.h_curl += h_curl;
