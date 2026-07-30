@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use crate::math::{saturating_sub, Axis, GridIndex, GridIndexExt, Real, SpatialAxis, MAX_DIM};
+use crate::math::*;
 
 /// Information describing the grid
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
@@ -176,8 +176,11 @@ pub fn fdtd_lossy(
         let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
         source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
     }
-    // TODO: make components zero depending on dimension
-    let source_term = Vec4::new(source_term, source_term, source_term, 0.);
+    let source_term = cfg_select! {
+        feature = "dim1" => Vec4::new(0., source_term, 0., 0.),
+        feature = "dim2" => Vec4::new(0., 0., source_term, 0.),
+        feature = "dim3" => Vec4::from((Vec3::splat(source_term), 0.)),
+    };
 
     let coeffs = grid_coeffs.read(idx);
     let mut ints = integrals.read(idx);
@@ -186,7 +189,6 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
     let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
-    // let en_curl = en_curl(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
     let h_self = h.read(idx);
     let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
         source_term * grid.polarization_mode.is_te() as u32 as f32;
@@ -207,7 +209,6 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
     let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
-    // let h_curl = h_curl(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
     let dn_self = dn.read(idx);
     ints.en += en_self;
     let dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
