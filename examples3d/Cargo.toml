@@ -8,7 +8,7 @@ edition.workspace = true
 
 [features]
 unsafe_remove_boundchecks = ["taser-em3d/unsafe_remove_boundchecks"]
-rayon = ["taser-em3d/rayon"]
+rayon = ["taser-em3d/rayon", "taser-em-testbed3d/rayon"]
 webgpu = ["taser-em3d/webgpu"]
 metal = ["taser-em3d/metal"]
 cpu = ["taser-em3d/cpu"]
