@@ -192,7 +192,7 @@ pub fn fdtd_lossy(
     for i in 0..MAX_DIM {
         let axis = Axis::ALL_AXES[i];
         if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
-        curl_cmps[i] = compute_curl_old::<true>(
+        curl_cmps[i] = curl_component::<true>(
             axis,
             grid.d,
             idx,
@@ -227,7 +227,7 @@ pub fn fdtd_lossy(
     for i in 0..Axis::ALL_AXES.len() {
         let axis = Axis::ALL_AXES[i];
         if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
-        curl_cmps[i] = compute_curl_old::<false>(
+        curl_cmps[i] = curl_component::<false>(
             axis,
             grid.d,
             idx,
@@ -267,46 +267,6 @@ pub fn fdtd_lossy(
     if idx3 == UVec3::ZERO {
         *steps += 1;
     }
-}
-
-#[inline(always)]
-fn compute_curl<const FORWARDS: bool>(
-    idx: usize,
-    flat_idx_incrs: &UVec3,
-    d: &Vec3,
-    not_boundary: &UVec3,
-    v_field: &[Vec4],
-    v_self: &Vec4
-) -> Vec4 {
-    let flat_idx_incrs = flat_idx_incrs * not_boundary;
-    macro_rules! curl_diff {
-        ($field_elem:ident, $diff_elem:ident) => {{
-            let neighbor_idx =
-                if FORWARDS { (idx + flat_idx_incrs.$diff_elem as usize).min(v_field.len() - 1) }
-                else { saturating_sub(idx, flat_idx_incrs.$diff_elem as usize) };
-            let neighbor = v_field.read(neighbor_idx).$field_elem * not_boundary.$diff_elem as f32;
-            if FORWARDS { (neighbor - v_self.$field_elem) / d.$diff_elem }
-            else { (v_self.$field_elem - neighbor) / d.$diff_elem }
-        }};
-    }
-
-    Vec4::new(
-        cfg_select! {
-            feature = "dim1" => -curl_diff!(y, z),
-            feature = "dim2" => curl_diff!(z, y),
-            feature = "dim3" => curl_diff!(z, y) - curl_diff!(y, z),
-        },
-        cfg_select! {
-            feature = "dim1" => curl_diff!(x, z),
-            feature = "dim2" => -curl_diff!(z, x),
-            feature = "dim3" => curl_diff!(x, z) - curl_diff!(z, x),
-        },
-        cfg_select! {
-            feature = "dim1" => 0.,
-            any(feature = "dim2", feature = "dim3") => curl_diff!(y, x) - curl_diff!(x, y),
-        },
-        0.
-    )
 }
 
 /// N-dimensional FDTD shader with loss (conductivity)
@@ -369,7 +329,7 @@ pub fn fdtd_lossy_old(
             let h_axis = h_axes[i];
             if h_axis == Axis::INVALID { break; }
 
-            let en_curl = compute_curl_old::<true>(
+            let en_curl = curl_component::<true>(
                 h_axis,
                 grid.d,
                 idx,
@@ -405,7 +365,7 @@ pub fn fdtd_lossy_old(
             let dn_axis = dn_axes[i];
             if dn_axis == Axis::INVALID { break; }
 
-            let h_curl = compute_curl_old::<false>(
+            let h_curl = curl_component::<false>(
                 dn_axis,
                 grid.d,
                 idx,
@@ -454,7 +414,7 @@ pub fn fdtd_lossy_old(
 
 /// Forwards & backwards component-wise curl operator
 #[inline]
-fn compute_curl_old<const FORWARDS: bool>(
+fn curl_component<const FORWARDS: bool>(
     axis: Axis,
     d: Vec3,
     idx: usize,
