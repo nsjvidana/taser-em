@@ -63,7 +63,7 @@ pub fn fdtd_lossy(
     let mut curl_cmps = [0.; 4];
     for i in 0..MAX_DIM {
         let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
+        if axis == Axis::INVALID { break; } // Removing this causes instability (probably a rust-gpu issue)
         curl_cmps[i] = curl_component::<true>(
             axis,
             grid.d,
@@ -71,7 +71,7 @@ pub fn fdtd_lossy(
             not_boundary,
             grid.flat_idx_incrs,
             en_self,
-            en
+            en,
         );
     }
     let en_curl = Vec4::from(curl_cmps);
@@ -96,9 +96,9 @@ pub fn fdtd_lossy(
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
     let mut curl_cmps = [0.; 4];
-    for i in 0..Axis::ALL_AXES.len() {
+    for i in 0..MAX_DIM {
         let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
+        if axis == Axis::INVALID { break; } // Removing this causes instability (probably a rust-gpu issue)
         curl_cmps[i] = curl_component::<false>(
             axis,
             grid.d,
@@ -106,7 +106,7 @@ pub fn fdtd_lossy(
             not_boundary,
             grid.flat_idx_incrs,
             h_self,
-            h
+            h,
         );
     }
     let h_curl = Vec4::from(curl_cmps);
@@ -142,37 +142,59 @@ pub fn fdtd_lossy(
 }
 
 /// Forwards & backwards component-wise curl operator
-#[inline]
 fn curl_component<const FORWARDS: bool>(
     axis: Axis,
     d: Vec3,
     idx: usize,
     not_boundary: UVec3,
     flat_idx_incrs: UVec3,
-    vect_self: Vec4,
-    vect_field: &[Vec4],
+    v_self: Vec4,
+    v: &[Vec4]
 ) -> Real {
+    let neighbors = get_curl_neighbors::<FORWARDS>(idx, not_boundary, flat_idx_incrs, v);
     let axis1 = axis.permute();
     let axis2 = axis1.permute();
-    let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
-        let neighbor_idx =
-            if FORWARDS { idx + (flat_idx_incrs[axis1] * not_boundary[axis1]) as usize }
-            else { idx - (flat_idx_incrs[axis1] * not_boundary[axis1]) as usize };
-        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis1] as Real;
 
-        if FORWARDS { (vect_neighbor[axis2] - vect_self[axis2]) / d[axis1] }
-        else { (vect_self[axis2] - vect_neighbor[axis2]) / d[axis1] }
+    let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
+        if FORWARDS { (neighbors[axis1 as usize][axis2] - v_self[axis2]) / d[axis1] }
+        else { (v_self[axis2] - neighbors[axis1 as usize][axis2]) / d[axis1] }
     } else { 0. };
     let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
-        let neighbor_idx =
-            if FORWARDS { idx + (flat_idx_incrs[axis2] * not_boundary[axis2]) as usize }
-            else { idx - (flat_idx_incrs[axis2] * not_boundary[axis2]) as usize };
-        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis2] as Real;
-
-        if FORWARDS { (vect_neighbor[axis1] - vect_self[axis1]) / d[axis2] }
-        else { (vect_self[axis1] - vect_neighbor[axis1]) / d[axis2] }
+        if FORWARDS { (neighbors[axis2 as usize][axis1] - v_self[axis1]) / d[axis2] }
+        else { (v_self[axis1] - neighbors[axis2 as usize][axis1]) / d[axis2] }
     } else { 0. };
     curl_term1 - curl_term2
+}
+
+fn get_curl_neighbors<const FORWARDS: bool>(
+    idx: usize,
+    not_boundary: UVec3,
+    flat_idx_incrs: UVec3,
+    vect_field: &[Vec4],
+) -> [Vec4; 3] {
+    macro_rules! get_neighbor {
+        ($axis: ident) => {{
+            let neighbor_idx =
+                if FORWARDS { idx + (flat_idx_incrs.$axis * not_boundary.$axis) as usize }
+                else { idx - (flat_idx_incrs.$axis * not_boundary.$axis) as usize };
+            vect_field.read(neighbor_idx) * not_boundary.$axis as Real
+        }};
+    }
+
+    [
+        cfg_select! {
+            not(feature = "dim1") => get_neighbor!(x),
+            _ => Vec4::ZERO
+        },
+        cfg_select! {
+            not(feature = "dim1") => get_neighbor!(y),
+            _ => Vec4::ZERO
+        },
+        cfg_select! {
+            not(feature = "dim2") => get_neighbor!(z),
+            _ => Vec4::ZERO
+        },
+    ]
 }
 
 /// Information describing the grid
