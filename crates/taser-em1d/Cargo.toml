@@ -16,9 +16,11 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = [
 default = ["dim1", "webgpu"]
 dim1 = []
 render = []
+unsafe_remove_boundchecks = ["taser-em-shaders/unsafe_remove_boundchecks"]
 rayon = ["dep:rayon"]
 webgpu = ["khal/webgpu"]
-cpu = ["khal/cpu", "taser-em-shaders/cpu"]
+metal = ["khal/metal"]
+cpu = ["taser-em-shaders/cpu", "khal/cpu"]
 cpu-parallel = ["cpu", "taser-em-shaders/cpu-parallel"]
 cuda = ["khal/cuda", "khal-builder/cuda", "taser-em-shaders/cuda"]
 

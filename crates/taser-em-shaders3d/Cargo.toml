@@ -16,8 +16,9 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = [
 [features]
 default = ["dim3"]
 dim3 = []
-cpu = ["khal-std/cpu"]
-cpu-parallel = ["khal-std/cpu-parallel"]
+unsafe_remove_boundchecks = ["khal-std/unsafe_remove_boundchecks"]
+cpu = ["khal-std/cpu", "khal/cpu"]
+cpu-parallel = ["cpu", "khal-std/cpu-parallel"]
 cuda = ["khal-std/cuda"]
 
 [lib]

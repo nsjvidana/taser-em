@@ -7,7 +7,13 @@ keywords.workspace = true
 edition.workspace = true
 
 [features]
+unsafe_remove_boundchecks = ["taser-em3d/unsafe_remove_boundchecks"]
 rayon = ["taser-em3d/rayon"]
+webgpu = ["taser-em3d/webgpu"]
+metal = ["taser-em3d/metal"]
+cpu = ["taser-em3d/cpu"]
+cpu-parallel = ["cpu", "taser-em3d/cpu-parallel"]
+cuda = ["taser-em3d/cuda"]
 
 [dependencies]
 taser-em-testbed3d.workspace = true

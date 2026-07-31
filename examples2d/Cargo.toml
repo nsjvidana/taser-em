@@ -6,6 +6,15 @@ categories.workspace = true
 keywords.workspace = true
 edition.workspace = true
 
+[features]
+unsafe_remove_boundchecks = ["taser-em2d/unsafe_remove_boundchecks"]
+rayon = ["taser-em2d/rayon"]
+webgpu = ["taser-em2d/webgpu"]
+metal = ["taser-em2d/metal"]
+cpu = ["taser-em2d/cpu"]
+cpu-parallel = ["cpu", "taser-em2d/cpu-parallel"]
+cuda = ["taser-em2d/cuda"]
+
 [dependencies]
 taser-em-testbed2d.workspace = true
 kiss3d.workspace = true
