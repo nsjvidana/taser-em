@@ -188,18 +188,15 @@ pub fn fdtd_lossy(
     let en_self = en.read(idx);
 
     let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
-    // let en_curl = compute_curl::<true>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, en, &en_self);
-    // let mut en_curl = Vec4::ZERO;
     let mut curl_cmps = [0.; 4];
     for i in 0..MAX_DIM {
         let axis = Axis::ALL_AXES[i];
         if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
-
         curl_cmps[i] = compute_curl_old::<true>(
             axis,
             grid.d,
             idx,
-            not_boundary.as_vec3(),
+            not_boundary,
             grid.flat_idx_incrs,
             en_self,
             en
@@ -226,18 +223,15 @@ pub fn fdtd_lossy(
     let h_self = h_self_new;
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
-    // let h_curl = compute_curl::<false>(idx, &grid.flat_idx_incrs, &grid.d, &not_boundary, h, &h_self);
-    // let mut h_curl = Vec4::ZERO;
     let mut curl_cmps = [0.; 4];
     for i in 0..Axis::ALL_AXES.len() {
         let axis = Axis::ALL_AXES[i];
         if axis == Axis::INVALID { break; } // Removing this breaks the stability for some reason (probably a rust-gpu issue)
-
         curl_cmps[i] = compute_curl_old::<false>(
             axis,
             grid.d,
             idx,
-            not_boundary.as_vec3(),
+            not_boundary,
             grid.flat_idx_incrs,
             h_self,
             h
@@ -370,7 +364,7 @@ pub fn fdtd_lossy_old(
     // H update
     let h_self = {
         let mut h_self = h.read(idx);
-        let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3)).as_vec3();
+        let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
         for i in 0..MAX_DIM {
             let h_axis = h_axes[i];
             if h_axis == Axis::INVALID { break; }
@@ -406,7 +400,7 @@ pub fn fdtd_lossy_old(
 
     let dn_self = {
         let mut dn_self = dn.read(idx);
-        let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO)).as_vec3();
+        let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
         for i in 0..MAX_DIM {
             let dn_axis = dn_axes[i];
             if dn_axis == Axis::INVALID { break; }
@@ -464,7 +458,7 @@ fn compute_curl_old<const FORWARDS: bool>(
     axis: Axis,
     d: Vec3,
     idx: usize,
-    not_boundary: Vec3,
+    not_boundary: UVec3,
     flat_idx_incrs: UVec3,
     vect_self: Vec4,
     vect_field: &[Vec4],
@@ -473,20 +467,18 @@ fn compute_curl_old<const FORWARDS: bool>(
     let axis2 = axis1.permute();
     let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
         let neighbor_idx =
-            if FORWARDS { idx + flat_idx_incrs[axis1] as usize }
-            else { idx.wrapping_sub(flat_idx_incrs[axis1] as usize) }
-                .min(vect_field.len() - 1);
-        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis1];
+            if FORWARDS { idx + (flat_idx_incrs[axis1] * not_boundary[axis1]) as usize }
+            else { idx - (flat_idx_incrs[axis1] * not_boundary[axis1]) as usize };
+        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis1] as Real;
 
         if FORWARDS { (vect_neighbor[axis2] - vect_self[axis2]) / d[axis1] }
         else { (vect_self[axis2] - vect_neighbor[axis2]) / d[axis1] }
     } else { 0. };
     let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
         let neighbor_idx =
-            if FORWARDS { idx + flat_idx_incrs[axis2] as usize }
-            else { idx.wrapping_sub(flat_idx_incrs[axis2] as usize) }
-                .min(vect_field.len() - 1);
-        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis2];
+            if FORWARDS { idx + (flat_idx_incrs[axis2] * not_boundary[axis2]) as usize }
+            else { idx - (flat_idx_incrs[axis2] * not_boundary[axis2]) as usize };
+        let vect_neighbor = vect_field.read(neighbor_idx) * not_boundary[axis2] as Real;
 
         if FORWARDS { (vect_neighbor[axis1] - vect_self[axis1]) / d[axis2] }
         else { (vect_self[axis1] - vect_neighbor[axis1]) / d[axis2] }
