@@ -3,7 +3,6 @@ use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
-use taser_em_shaders::fdtd::GpuPolarizationMode;
 use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt, GridIndexExt};
 
 #[cfg(feature = "rayon")]
@@ -57,15 +56,6 @@ impl PolarizationMode {
                 feature = "dim2" => Vec3::from((glamx::Vec4Swizzles::xy(*e), 0.)),
                 feature = "dim3" => glamx::Vec4Swizzles::xyz(*e),
             },
-        }
-    }
-}
-
-impl From<PolarizationMode> for GpuPolarizationMode {
-    fn from(value: PolarizationMode) -> Self {
-        match value {
-            PolarizationMode::TransverseMagnetic => GpuPolarizationMode::TM,
-            PolarizationMode::TransverseElectric => GpuPolarizationMode::TE,
         }
     }
 }

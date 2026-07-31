@@ -188,69 +188,6 @@ pub struct GridParameters {
     /// Spatial differentials (cell size)
     pub d: Vec3,
     pub _padding2: u32,
-    pub polarization_mode: GpuPolarizationMode,
-}
-
-#[derive(Copy, Clone, Pod, Zeroable, Eq, PartialEq)]
-#[repr(C)]
-pub struct GpuPolarizationMode {
-    h_axes: UVec3,
-    mode: u32,
-    dn_axes: UVec3,
-    _p0: u32,
-}
-
-impl GpuPolarizationMode {
-    const FIELD_AXES1: [Axis; MAX_DIM] = cfg_select! {
-        feature = "dim1" => [Axis::X, Axis::INVALID, Axis::INVALID],
-        feature = "dim2" => [Axis::X, Axis::Y, Axis::INVALID],
-        feature = "dim3" => [Axis::X, Axis::Y, Axis::Z],
-    };
-    const FIELD_AXES2: [Axis; MAX_DIM] = cfg_select! {
-        feature = "dim1" => [Axis::Y, Axis::INVALID, Axis::INVALID],
-        feature = "dim2" => [Axis::Z, Axis::INVALID, Axis::INVALID],
-        feature = "dim3" => Self::FIELD_AXES1,
-    };
-    pub const TM: Self = Self {
-        h_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES1) },
-        dn_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES2) },
-        mode: 0,
-        _p0: 0,
-    };
-    pub const TE: Self = Self {
-        h_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES2) },
-        dn_axes: unsafe { core::mem::transmute::<[Axis; MAX_DIM], UVec3>(Self::FIELD_AXES1) },
-        mode: 1,
-        _p0: 0
-    };
-
-    /// Is Transverse Magnetic
-    #[inline]
-    pub const fn is_tm(&self) -> bool {
-        self.mode == 0
-    }
-
-    /// Is Transverse Electric
-    #[inline]
-    pub const fn is_te(&self) -> bool {
-        self.mode == 1
-    }
-
-    #[inline]
-    pub const fn get_h_axes(&self) -> [Axis; MAX_DIM] {
-        unsafe { core::mem::transmute::<[u32; MAX_DIM], [Axis; MAX_DIM]>(self.h_axes.to_array()) }
-    }
-
-    #[inline]
-    pub const fn get_dn_axes(&self) -> [Axis; MAX_DIM] {
-        unsafe { core::mem::transmute::<[u32; MAX_DIM], [Axis; MAX_DIM]>(self.dn_axes.to_array()) }
-    }
-}
-
-impl Default for GpuPolarizationMode {
-    fn default() -> Self {
-        Self::TM
-    }
 }
 
 /// Update coefficients for H, D, and E fields with a UPML
