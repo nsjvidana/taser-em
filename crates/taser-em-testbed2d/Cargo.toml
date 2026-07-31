@@ -15,7 +15,7 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = [
 [features]
 default = ["dim2"]
 dim2 = []
-rayon = ["dep:rayon"]
+rayon = ["dep:rayon"] # rayon breaks the visualizer for some reason...
 
 [lib]
 name = "taser_em_testbed2d"

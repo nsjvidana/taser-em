@@ -1,9 +1,8 @@
 use std::num::{NonZeroU32, NonZeroUsize};
-
-use taser_em_testbed2d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode};
 use taser_em2d::prelude::*;
-use taser_em2d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
 use taser_em2d::re_exports::glamx::glam::*;
+use taser_em2d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
+use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
@@ -66,7 +65,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
+    let vis_mode = VisualizationMode::default();
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode).await?;
     testbed.window.set_ambient(0.5);
     testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
         .camera

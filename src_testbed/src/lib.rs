@@ -2,6 +2,7 @@ mod util;
 
 pub mod re_exports {
     pub use anyhow;
+    pub use kiss3d;
 }
 
 use glamx::*;
@@ -197,10 +198,12 @@ impl VisualizationMode {
                 color_mode: &mut ColorMode,
             | {
                 let cell_size_half3 = (cell_size / 2.).to_3d(Vec3::ZERO);
+                color_mode.prepare(&vec![]);
+                let color = color_mode.compute_color(Real::MIN);
                 *instances = to_parallel!(cell_positions.iter())
                     .map(|pos| {
                         InstanceData3d {
-                            color: color_mode.compute_color(Real::MIN),
+                            color,
                             position: pos + cell_size_half3,
                             ..Default::default()
                         }
@@ -261,11 +264,14 @@ impl VisualizationMode {
                 instances: &mut Vec<InstanceData3d>,
                 color_mode: &mut ColorMode,
             | {
-                for (inst, vector) in to_parallel!(instances.iter_mut())
-                    .zip(v_field)
-                {
-                    inst.color = color_mode.compute_color(polarization_mode.get_e_magnitude(vector));
-                }
+                let magnitudes = v_field.iter()
+                    .map(|v| polarization_mode.get_e_magnitude(v))
+                    .collect::<Vec<_>>();
+                color_mode.prepare(&magnitudes);
+                to_parallel!(instances.iter_mut().zip(magnitudes))
+                    .for_each(|(inst, mag)| {
+                        inst.color = color_mode.compute_color(mag);
+                    });
                 instanced_obj.set_instances(instances);
             };
             match self {
@@ -315,11 +321,11 @@ impl Default for VisualizationMode {
 /// How vector field magnitudes are colored
 #[derive(Copy, Clone, Debug)]
 pub enum ColorMode {
-    /// Automatically scale the maximum magnitude as the simulation progresses
+    /// Automatically scale the maximum magnitude as the simulation progresses.
     AutoScale {
         color_min: Color,
         color_max: Color,
-        v_max: Real
+        v_max: Real,
     },
     /// Set a fixed range of magnitudes for interpolating between colors
     FixedRange {
@@ -335,10 +341,26 @@ pub enum ColorMode {
 impl ColorMode {
     pub const DEFAULT_ALPHA: f32 = 0.5;
 
-    pub fn compute_color(&mut self, val: Real) -> Color {
+    /// Updates the state of `self` before computing the colors of `magnitudes`.
+    ///
+    /// Call this before calling `compute_color` on the elements of `magnitudes`.
+    pub fn prepare(&mut self, magnitudes: &Vec<Real>) {
+        match self {
+            ColorMode::AutoScale { v_max, .. } => {
+                let curr_max = magnitudes.iter()
+                    .copied()
+                    .max_by(|a, b| a.total_cmp(b));
+                if let Some(max_mag) = curr_max {
+                    *v_max = v_max.max(max_mag);
+                }
+            }
+            ColorMode::FixedRange { .. } => {}
+        }
+    }
+
+    pub fn compute_color(&self, val: Real) -> Color {
         match self {
             ColorMode::AutoScale { color_min, color_max, v_max } => {
-                *v_max = v_max.max(val);
                 lerp_colors((val / *v_max).clamp(0., 1.), *color_min, *color_max)
             }
             ColorMode::FixedRange { color_min, color_max, v_min, v_max } => {
@@ -370,9 +392,9 @@ impl Default for ColorMode {
         #[cfg(not(feature = "dim3"))]
         {
             ColorMode::AutoScale {
-                color_min: BLUE.with_alpha(Self::DEFAULT_ALPHA),
-                color_max: RED.with_alpha(Self::DEFAULT_ALPHA),
-                v_max: 0.
+                color_min: BLUE,
+                color_max: RED,
+                v_max: Real::MIN,
             }
         }
         #[cfg(feature = "dim3")]
@@ -380,7 +402,7 @@ impl Default for ColorMode {
             ColorMode::AutoScale {
                 color_min: TRANSPARENT,
                 color_max: RED.with_alpha(Self::DEFAULT_ALPHA),
-                v_max: 0.
+                v_max: Real::MIN
             }
         }
     }
