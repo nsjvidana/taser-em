@@ -198,7 +198,7 @@ impl VisualizationMode {
                 color_mode: &mut ColorMode,
             | {
                 let cell_size_half3 = (cell_size / 2.).to_3d(Vec3::ZERO);
-                color_mode.prepare(&vec![]);
+                color_mode.prepare(&[]);
                 let color = color_mode.compute_color(Real::MIN);
                 *instances = to_parallel!(cell_positions.iter())
                     .map(|pos| {
@@ -344,7 +344,7 @@ impl ColorMode {
     /// Updates the state of `self` before computing the colors of `magnitudes`.
     ///
     /// Call this before calling `compute_color` on the elements of `magnitudes`.
-    pub fn prepare(&mut self, magnitudes: &Vec<Real>) {
+    pub fn prepare(&mut self, magnitudes: &[Real]) {
         match self {
             ColorMode::AutoScale { v_max, .. } => {
                 let curr_max = magnitudes.iter()

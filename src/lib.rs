@@ -99,7 +99,7 @@ impl FdtdLossySimulation {
                             let pos = (regions_offset + position) / cell_size;
                             let cell_grid_idx = pos.as_grid_index();
                             debug_assert!(
-                                !pos.smallest_element().is_sign_negative() && !BoolVectExt::any(VectorValueExt::ge(pos.as_grid_index(), n_cells)),
+                                !pos.smallest_element().is_sign_negative() && !pos.as_grid_index().ge(n_cells).any(),
                                 "negative source position!"
                             );
                             let start = source_vals.len();

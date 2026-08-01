@@ -240,7 +240,7 @@ impl YeeGridMaterials {
             .map(|t| GridIndex::from_index_array(t.into()))
             .collect::<Vec<_>>();
         let old_n_cells3 = self.n_cells.n_cells_to_3d();
-        for i in 0..cell_count {
+        for (i, mat) in materials.iter_mut().enumerate() {
             let idx = GridIndex::from_flat_idx(i as u32, n_cells) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
@@ -256,7 +256,7 @@ impl YeeGridMaterials {
                 }
             }
             let n_sums = n_sums as f32;
-            materials[i] = ElectricMaterial {
+            *mat = ElectricMaterial {
                 mu_r: mat_sum.mu_r / n_sums,
                 eps_r: mat_sum.eps_r / n_sums,
                 sig: mat_sum.sig / n_sums,

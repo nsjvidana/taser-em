@@ -261,7 +261,7 @@ impl GridIndexExt for GridIndex {
     /// Converts a [`GridIndex`] to [`UVec3`]
     /// `mask` sets the components that `self` don't already have.
     ///
-    /// e.g. `grid_index_to_3d(k, UVec3::ONE)` would return `UVec3::new(1, 1, k)` in 1D.
+    /// e.g. `GridIndex::to_3d(k, UVec3::ONE)` would return `UVec3::new(1, 1, k)` in 1D.
     #[inline]
     #[allow(unused_variables)]
     fn to_3d(self, mask: UVec3) -> UVec3 {
