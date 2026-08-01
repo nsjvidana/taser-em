@@ -63,6 +63,58 @@ pub trait VectorValueExt: Sized {
     fn largest_element(self) -> Self::Element;
     fn smallest_element(self) -> Self::Element;
     fn ge(self, rhs: Self) -> Self::Boolean;
+    // TODO: fn mul_elements(&self) -> Self::Element;
+}
+
+macro_rules! impl_vector_value_ext {
+    ($v:ident, $elem:ty) => {
+        impl VectorValueExt for $v {
+            type Element = $elem;
+            type Boolean = BoolVect;
+
+            #[inline]
+            fn from_element(value: Self::Element) -> Self {
+                cfg_select! {
+                    feature = "dim1" => value,
+                    _ => Self::splat(value)
+                }
+            }
+
+            #[inline]
+            fn zero() -> Self {
+                Self::from_element(0 as $elem)
+            }
+
+            #[inline]
+            fn one() -> Self {
+                Self::from_element(1 as $elem)
+            }
+        
+            #[inline]
+            fn largest_element(self) -> Self::Element {
+                #[cfg(feature = "dim1")]
+                { self }
+                #[cfg(not(feature = "dim1"))]
+                self.max_element()
+            }
+        
+            #[inline]
+            fn smallest_element(self) -> Self::Element {
+                #[cfg(feature = "dim1")]
+                { self }
+                #[cfg(not(feature = "dim1"))]
+                self.min_element()
+            }
+        
+            #[inline]
+            fn ge(self, rhs: Self) -> Self::Boolean {
+                #[cfg(feature = "dim1")]
+                { self >= rhs }
+                #[cfg(not(feature = "dim1"))]
+                self.cmpge(rhs)
+            }
+        }
+    };
 }
 
 impl VectExt for Vect {
@@ -142,55 +194,7 @@ impl VectExt for Vect {
     }
 }
 
-impl VectorValueExt for Vect {
-    type Element = Real;
-    type Boolean = BoolVect;
-
-    /// Create a vector field element with all its components set to `value`
-    #[inline]
-    fn from_element(value: Self::Element) -> Self {
-        cfg_select! {
-            feature = "dim1" => value,
-            _ => Self::splat(value)
-        }
-    }
-
-    /// Create a vector field element with all its components set to `0.`
-    #[inline]
-    fn zero() -> Self {
-        Self::from_element(0.)
-    }
-
-    /// Create a vector field element with all its components set to `1.`
-    #[inline]
-    fn one() -> Self {
-        Self::from_element(1.)
-    }
-
-    #[inline]
-    fn largest_element(self) -> Self::Element {
-        #[cfg(feature = "dim1")]
-        { self }
-        #[cfg(not(feature = "dim1"))]
-        self.max_element()
-    }
-
-    #[inline]
-    fn smallest_element(self) -> Self::Element {
-        #[cfg(feature = "dim1")]
-        { self }
-        #[cfg(not(feature = "dim1"))]
-        self.min_element()
-    }
-
-    #[inline]
-    fn ge(self, rhs: Self) -> Self::Boolean {
-        #[cfg(feature = "dim1")]
-        { self >= rhs }
-        #[cfg(not(feature = "dim1"))]
-        self.cmpge(rhs)
-    }
-}
+impl_vector_value_ext!(Vect, Real);
 
 pub trait GridIndexExt: VectorValueExt {
     fn div_ceil(self, rhs: GridIndex) -> GridIndex;
@@ -314,51 +318,7 @@ impl GridIndexExt for GridIndex {
     }
 }
 
-impl VectorValueExt for GridIndex {
-    type Element = Index;
-    type Boolean = BoolVect;
-
-    /// Create a vector field element with all its components set to `value`
-    #[inline]
-    fn from_element(value: Self::Element) -> Self {
-        cfg_select! {
-            feature = "dim1" => value,
-            _ => Self::splat(value)
-        }
-    }
-    /// Create a vector field element with all its components set to `0.`
-    #[inline]
-    fn zero() -> Self {
-        Self::from_element(0)
-    }
-    /// Create a vector field element with all its components set to `1.`
-    #[inline]
-    fn one() -> Self {
-        Self::from_element(1)
-    }
-    #[inline]
-    fn largest_element(self) -> Self::Element {
-        #[cfg(feature = "dim1")]
-        { self }
-        #[cfg(not(feature = "dim1"))]
-        self.max_element()
-    }
-    #[inline]
-    fn smallest_element(self) -> Self::Element {
-        #[cfg(feature = "dim1")]
-        { self }
-        #[cfg(not(feature = "dim1"))]
-        self.min_element()
-    }
-
-    #[inline]
-    fn ge(self, rhs: Self) -> Self::Boolean {
-        #[cfg(feature = "dim1")]
-        { self >= rhs }
-        #[cfg(not(feature = "dim1"))]
-        self.cmpge(rhs)
-    }
-}
+impl_vector_value_ext!(GridIndex, Index);
 
 pub trait BoolVectExt {
     fn any(self) -> bool;
