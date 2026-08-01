@@ -70,6 +70,15 @@ pub trait VectorValueExt: Sized {
         F: FnMut(Self::Element) -> Self::Element;
 }
 
+macro_rules! dim1_or_else {
+    ($dim1:expr, $or_else:expr) => {
+        cfg_select! {
+            feature = "dim1" => { $dim1 }
+            _ => { $or_else }
+        }
+    };
+}
+
 macro_rules! impl_vector_value_ext {
     ($v:ident, $elem:ty) => {
         impl VectorValueExt for $v {
@@ -78,60 +87,38 @@ macro_rules! impl_vector_value_ext {
 
             #[inline]
             fn from_element(value: Self::Element) -> Self {
-                cfg_select! {
-                    feature = "dim1" => value,
-                    _ => Self::splat(value)
-                }
+                dim1_or_else!(value, Self::splat(value))
             }
 
             #[inline]
-            fn zero() -> Self {
-                Self::from_element(0 as $elem)
-            }
+            fn zero() -> Self { Self::from_element(0 as $elem) }
 
             #[inline]
-            fn one() -> Self {
-                Self::from_element(1 as $elem)
-            }
+            fn one() -> Self { Self::from_element(1 as $elem) }
         
             #[inline]
             fn largest_element(self) -> Self::Element {
-                #[cfg(feature = "dim1")]
-                { self }
-                #[cfg(not(feature = "dim1"))]
-                self.max_element()
+                dim1_or_else!(self, self.max_element())
             }
         
             #[inline]
             fn smallest_element(self) -> Self::Element {
-                #[cfg(feature = "dim1")]
-                { self }
-                #[cfg(not(feature = "dim1"))]
-                self.min_element()
+                dim1_or_else!(self, self.min_element())
             }
         
             #[inline]
             fn ge(self, rhs: Self) -> Self::Boolean {
-                #[cfg(feature = "dim1")]
-                { self >= rhs }
-                #[cfg(not(feature = "dim1"))]
-                self.cmpge(rhs)
+                dim1_or_else!(self >= rhs, self.cmpge(rhs))
             }
 
             #[inline]
             fn sum_elements(self) -> Self::Element {
-                cfg_select! {
-                    feature = "dim1" => { self }
-                    _ => self.element_sum()
-                }
+                dim1_or_else!(self, self.element_sum())
             }
 
             #[inline]
             fn mul_elements(self) -> Self::Element {
-                cfg_select! {
-                    feature = "dim1" => { self }
-                    _ => self.element_product()
-                }
+                dim1_or_else!(self, self.element_product())
             }
 
             #[inline]
@@ -139,10 +126,7 @@ macro_rules! impl_vector_value_ext {
             fn map_elements<F>(self, mut f: F) -> Self
                 where F: FnMut(Self::Element) -> Self::Element
             {
-                cfg_select! {
-                    feature = "dim1" => { f(self) }
-                    _ => self.map(f)
-                }
+                dim1_or_else!(f(self), self.map(f))
             }
         }
     };
