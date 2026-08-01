@@ -23,7 +23,7 @@ cuda = ["khal-std/cuda"]
 
 [lib]
 name = "taser_em_shaders2d"
-path = "../../shaders/src/lib.rs"
+path = "../../src_shaders/src/lib.rs"
 required-features = ["dim2"]
 
 [dependencies]
