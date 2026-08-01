@@ -3,7 +3,7 @@ use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
-use taser_em_shaders::math::{Axis, GridIndex, Index, Real, SpatialAxis, Vect, DIM, MAX_DIM, VectExt, VectorValueExt, GridIndexExt};
+use taser_em_shaders::math::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -233,16 +233,15 @@ impl YeeGridMaterials {
 
         let n_cells = self.n_cells.div_ceil(GridIndex::from_element(downscale_factor));
         let cell_size = self.cell_size * downscale_factor as f32;
-        let cell_count = n_cells.into_array().iter()
-            .product::<Index>();
-        let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count as usize];
+        let cell_count = n_cells.mul_elements() as usize;
+        let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
         let kernel_cells = grid_cells_iter(GridIndex::from_index_array([downscale_factor; DIM]))
             .map(|t| GridIndex::from_index_array(t.into()))
             .collect::<Vec<_>>();
         let old_n_cells3 = self.n_cells.n_cells_to_3d();
         for i in 0..cell_count {
-            let idx = GridIndex::from_flat_idx(i, n_cells) * downscale_factor;
+            let idx = GridIndex::from_flat_idx(i as u32, n_cells) * downscale_factor;
             let mut mat_sum = ElectricMaterial::ZERO;
             let mut n_sums = 0;
             for k in kernel_cells.iter() {
@@ -257,7 +256,7 @@ impl YeeGridMaterials {
                 }
             }
             let n_sums = n_sums as f32;
-            materials[i as usize] = ElectricMaterial {
+            materials[i] = ElectricMaterial {
                 mu_r: mat_sum.mu_r / n_sums,
                 eps_r: mat_sum.eps_r / n_sums,
                 sig: mat_sum.sig / n_sums,

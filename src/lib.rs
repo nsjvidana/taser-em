@@ -21,8 +21,7 @@ use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
 use taser_em_shaders::fdtd::{GpuDipole, GridParameters, PmlCoefficients, PmlIntegrals};
-use taser_em_shaders::math::{Axis, BoolVectExt, GridIndexExt, VectExt, VectorValueExt};
-use taser_em_shaders::math::{GridIndex, Index, Real, SpatialAxis, Vect, DIM};
+use taser_em_shaders::math::*;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 
@@ -130,9 +129,7 @@ impl FdtdLossySimulation {
                 incrs
             };
 
-            let cell_count = n_cells.into_array()
-                .iter()
-                .product::<Index>() as usize;
+            let cell_count = n_cells.mul_elements() as usize;
             let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
             FdtdLossyGpuData {
                 h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
@@ -366,12 +363,11 @@ impl FdtdStability {
     }
 
     pub fn cfl_condition(&self, cell_size: Vect) -> Real {
-        let cell_size_term = cell_size.into_array()
-            .map(|v| {
+        let cell_size_term = cell_size
+            .map_elements(|v| {
                 v.powi(2).recip()
             })
-            .iter()
-            .sum::<Real>()
+            .sum_elements()
             .sqrt();
         let safety_factor = self.dt_safety_factor.max(1.);
         1. / (C_0 * cell_size_term * safety_factor)

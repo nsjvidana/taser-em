@@ -63,7 +63,11 @@ pub trait VectorValueExt: Sized {
     fn largest_element(self) -> Self::Element;
     fn smallest_element(self) -> Self::Element;
     fn ge(self, rhs: Self) -> Self::Boolean;
-    // TODO: fn mul_elements(&self) -> Self::Element;
+    fn sum_elements(self) -> Self::Element;
+    fn mul_elements(self) -> Self::Element;
+    fn map_elements<F>(self, f: F) -> Self
+    where
+        F: FnMut(Self::Element) -> Self::Element;
 }
 
 macro_rules! impl_vector_value_ext {
@@ -112,6 +116,33 @@ macro_rules! impl_vector_value_ext {
                 { self >= rhs }
                 #[cfg(not(feature = "dim1"))]
                 self.cmpge(rhs)
+            }
+
+            #[inline]
+            fn sum_elements(self) -> Self::Element {
+                cfg_select! {
+                    feature = "dim1" => { self }
+                    _ => self.element_sum()
+                }
+            }
+
+            #[inline]
+            fn mul_elements(self) -> Self::Element {
+                cfg_select! {
+                    feature = "dim1" => { self }
+                    _ => self.element_product()
+                }
+            }
+
+            #[inline]
+            #[allow(unused_mut)]
+            fn map_elements<F>(self, mut f: F) -> Self
+                where F: FnMut(Self::Element) -> Self::Element
+            {
+                cfg_select! {
+                    feature = "dim1" => { f(self) }
+                    _ => self.map(f)
+                }
             }
         }
     };

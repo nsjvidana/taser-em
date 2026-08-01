@@ -12,9 +12,9 @@ use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Wi
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
-use taser_em::shaders::math::{GridIndex, GridIndexExt, Vect};
+use taser_em::shaders::math::*;
 use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability};
-use taser_em::prelude::{PolarizationMode, Real, VectExt};
+use taser_em::prelude::{PolarizationMode, Real, VectExt, VectorValueExt};
 use crate::util::lerp_colors;
 
 #[cfg(not(feature = "dim1"))]
@@ -171,7 +171,7 @@ impl VisualizationMode {
         n_cells: GridIndex,
         cell_size: Vect,
     ) {
-        let mut cell_positions = vec![Vec3::ZERO; n_cells.into_array().iter().product::<u32>() as _];
+        let mut cell_positions = vec![Vec3::ZERO; n_cells.mul_elements() as _];
         grid_cells_iter(n_cells)
             .for_each(|idx_tuple| {
                 let idx = GridIndex::from_index_array(idx_tuple.into());
