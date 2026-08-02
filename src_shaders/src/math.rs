@@ -365,7 +365,7 @@ pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
-    INVALID = u32::MAX
+    INVALID = u32::MAX // TODO: try removing this?
 }
 
 impl Axis {
@@ -411,10 +411,14 @@ impl From<SpatialAxis> for Axis {
     #[allow(unused_variables)]
     #[inline]
     fn from(value: SpatialAxis) -> Self {
-        #[cfg(feature = "dim1")]
-        { Axis::Z }
-        #[cfg(not(feature = "dim1"))]
-        unsafe { core::mem::transmute::<SpatialAxis, Axis>(value) }
+        match value {
+            #[cfg(not(feature = "dim1"))]
+            SpatialAxis::X => Axis::X,
+            #[cfg(not(feature = "dim1"))]
+            SpatialAxis::Y => Axis::Y,
+            #[cfg(not(feature = "dim2"))]
+            SpatialAxis::Z => Axis::Z,
+        }
     }
 }
 
