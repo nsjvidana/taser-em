@@ -382,16 +382,6 @@ impl Axis {
     pub fn permute(&self) -> Self {
         Self::PERMUTATION[*self as usize]
     }
-
-    /// Transmutes `idx` into an [`Axis`]
-    /// 
-    /// # Safety
-    /// Will cause undefined behavior if `idx` isn't `0`, `1`, or `2`.
-    /// [`Axis::try_from()`] is a safer alternative to this function.
-    #[inline]
-    pub unsafe fn from_index_unchecked(idx: u32) -> Self {
-        unsafe { core::mem::transmute::<u32, Self>(idx) }
-    }
 }
 
 impl TryFrom<u32> for Axis {
@@ -465,35 +455,26 @@ impl SpatialAxis {
         #[cfg(not(feature = "dim1"))]
         { (axis as usize) < DIM }
     }
-
-    /// # Safety
-    /// User must ensure `SpatialAxis::is_spatial_axis(axis) == true`.
-    #[inline]
-    #[allow(unused_variables)]
-    pub unsafe fn from_axis_unchecked(axis: Axis) -> Self {
-        #[cfg(feature = "dim1")]
-        { Self::Z }
-        #[cfg(not(feature = "dim1"))]
-        unsafe { core::mem::transmute::<Axis, Self>(axis) }
-    }
 }
 
 impl TryFrom<Axis> for SpatialAxis {
     type Error = ();
     #[inline]
     fn try_from(axis: Axis) -> Result<Self, Self::Error> {
-        #[cfg(feature = "dim1")]
         match axis {
-            Axis::Z => Ok(SpatialAxis::Z),
-            _ => Err(())
-        }
-        #[cfg(not(feature = "dim1"))]
-        match axis {
+            Axis::X => cfg_select! {
+                feature = "dim1" => Err(()),
+                _ => Ok(Self::X),
+            },
+            Axis::Y => cfg_select! {
+                feature = "dim1" => Err(()),
+                _ => Ok(Self::Y),
+            },
             Axis::Z => cfg_select! {
                 feature = "dim2" => Err(()),
-                feature = "dim3" => Ok(SpatialAxis::Z),
+                _ => Ok(Self::Z),
             },
-            _ => unsafe { Ok(core::mem::transmute::<Axis, SpatialAxis>(axis)) }
+            Axis::INVALID => Err(())
         }
     }
 }
@@ -502,7 +483,18 @@ impl TryFrom<u32> for SpatialAxis {
     type Error = ();
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            v if v < DIM as u32 => unsafe { Ok(core::mem::transmute::<u32, SpatialAxis>(value)) },
+            0 => cfg_select! {
+                feature = "dim1" => Ok(Self::Z),
+                _ => Ok(Self::X),
+            },
+            1 => cfg_select! {
+                feature = "dim1" => Err(()),
+                _ => Ok(Self::Y),
+            },
+            2 => cfg_select! {
+                feature = "dim3" => Ok(Self::Z),
+                _ => Err(()),
+            },
             _ => Err(())
         }
     }
