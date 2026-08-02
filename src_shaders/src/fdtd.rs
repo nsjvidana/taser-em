@@ -60,22 +60,14 @@ pub fn fdtd_lossy(
     let en_self = en.read(idx);
 
     let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
-    let mut curl_cmps = [0.; 4];
-    for i in 0..MAX_DIM {
-        let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; } // Removing this causes instability (probably a rust-gpu issue)
-        curl_cmps[i] = curl_component::<true>(
-            axis,
-            grid.d,
-            idx,
-            not_boundary,
-            grid.flat_idx_incrs,
-            en_self,
-            en,
-        );
-    }
-    let en_curl = Vec4::from(curl_cmps);
-
+    let en_curl = compute_curl::<true>(
+        grid.d,
+        idx,
+        not_boundary,
+        grid.flat_idx_incrs,
+        en_self,
+        en
+    );
     let h_self = h.read(idx);
     let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
         source_term;
@@ -95,22 +87,14 @@ pub fn fdtd_lossy(
     let h_self = h_self_new;
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
-    let mut curl_cmps = [0.; 4];
-    for i in 0..MAX_DIM {
-        let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; } // Removing this causes instability (probably a rust-gpu issue)
-        curl_cmps[i] = curl_component::<false>(
-            axis,
-            grid.d,
-            idx,
-            not_boundary,
-            grid.flat_idx_incrs,
-            h_self,
-            h,
-        );
-    }
-    let h_curl = Vec4::from(curl_cmps);
-
+    let h_curl = compute_curl::<false>(
+        grid.d,
+        idx,
+        not_boundary,
+        grid.flat_idx_incrs,
+        h_self,
+        h
+    );
     let dn_self = dn.read(idx);
     ints.en += en_self;
     let dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
@@ -139,6 +123,31 @@ pub fn fdtd_lossy(
     if idx3 == UVec3::ZERO {
         *steps += 1;
     }
+}
+
+fn compute_curl<const FORWARDS: bool>(
+    d: Vec3,
+    idx: usize,
+    not_boundary: UVec3,
+    flat_idx_incrs: UVec3,
+    v_self: Vec4,
+    v: &[Vec4]
+) -> Vec4 {
+    let mut curl_cmps = [0.; 4];
+    for i in 0..MAX_DIM {
+        let axis = Axis::ALL_AXES[i];
+        if axis == Axis::INVALID { break; } // Removing this causes instability (probably a rust-gpu issue)
+        curl_cmps[i] = curl_component::<FORWARDS>(
+            axis,
+            d,
+            idx,
+            not_boundary,
+            flat_idx_incrs,
+            v_self,
+            v,
+        );
+    }
+    Vec4::from(curl_cmps)
 }
 
 /// Forwards & backwards component-wise curl operator
