@@ -7,6 +7,7 @@ keywords.workspace = true
 edition.workspace = true
 
 [features]
+default = ["webgpu"]
 unsafe_remove_boundchecks = ["taser-em1d/unsafe_remove_boundchecks"]
 rayon = ["taser-em1d/rayon", "taser-em-testbed1d/rayon"]
 webgpu = ["taser-em1d/webgpu"]
