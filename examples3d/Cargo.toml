@@ -9,7 +9,8 @@ edition.workspace = true
 [features]
 default = ["webgpu", "rayon"] # enable rayon since 3D has several more cells to deal with.
 unsafe_remove_boundchecks = ["taser-em3d/unsafe_remove_boundchecks"]
-rayon = ["taser-em3d/rayon", "taser-em-testbed3d/rayon"]
+#rayon = ["taser-em3d/rayon", "taser-em-testbed3d/rayon"]
+rayon = ["taser-em3d/rayon"] # Testbed rayon is broken at the moment
 webgpu = ["taser-em3d/webgpu"]
 metal = ["taser-em3d/metal"]
 cpu = ["taser-em3d/cpu"]
