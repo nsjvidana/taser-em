@@ -58,6 +58,6 @@ taser-em-testbed2d = { git = "https://github.com/nsjvidana/taser-em.git" }
 # References
 The following resources were imperative to designing this simulation API:
 - [EMPossible's FDTD course](https://empossible.net/academics/emp5304/) (EMP-5304) serves as the backbbone
-  of this project, as all update equations and stability improvements were derived by these lectures.
+  of this project, as all diagonal anisotropy update equations and stability improvements were derived from these lectures.
 - [khal](https://github.com/dimforge/khal/) provides an amazing unified interface for compiling Rust shaders for multiple GPU backends.
 - The rest of the [dimforge](https://github.com/dimforge) tools (e.g. parry3d's geometry, kiss3d's renderer)
