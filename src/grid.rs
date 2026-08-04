@@ -419,16 +419,16 @@ impl PmlCoefficientsGrid {
 
 /// The widths of layers of cells at the boundary of the simulation. (e.g. PMLs)
 ///
-/// Stores the "low" and "high" widths on each axis.
+/// Stores the widths of a layer at the "low-end" and "high-ends" on each axis.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct LayerWidths {
     pub widths: [LoHiWidths; MAX_DIM]
 }
 
 impl LayerWidths {
-    /// [`LayerWidths`] with widths along all axes set to `width`.
+    /// [`LayerWidths`] with `lo` and `hi` widths along all spatial axes set to `width`.
     #[inline]
-    pub fn splat(width: Index) -> Self {
+    pub fn splat_spatial(width: Index) -> Self {
         let mut selff = Self {
             widths: core::array::repeat(LoHiWidths::default()),
         };
@@ -442,16 +442,16 @@ impl LayerWidths {
     /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
     pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
         let mut n_cells = n_cells.into_array();
-        for (n_cells_i, lo_hi_widths) in n_cells.iter_mut()
-            .zip(self.iter_axes())
+        for (n_cells_cmp, lo_hi_widths_cmp) in n_cells.iter_mut()
+            .zip(self.iter_spatial_axes())
         {
-            *n_cells_i += lo_hi_widths.lo + lo_hi_widths.hi;
+            *n_cells_cmp += lo_hi_widths_cmp.lo + lo_hi_widths_cmp.hi;
         }
         GridIndex::from_index_array(n_cells)
     }
 
     #[inline]
-    pub fn iter_axes(&self) -> impl Iterator<Item = &LoHiWidths> {
+    pub fn iter_spatial_axes(&self) -> impl Iterator<Item = &LoHiWidths> {
         SpatialAxis::ALL_SPATIAL
             .map(|axis| &self.widths[Axis::from(axis) as usize])
             .into_iter()

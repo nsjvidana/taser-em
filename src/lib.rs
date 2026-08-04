@@ -327,7 +327,7 @@ impl PmlParameters {
     /// A convenient constructor for a [`PmlParameters`] with some generally stable values.
     pub fn new(dt: Real) -> Self {
         Self {
-            widths: LayerWidths::splat(12),
+            widths: LayerWidths::splat_spatial(12),
             sig_max: FdtdStability::pml_sig_max(dt),
             grading_order: NonZeroI32::new(3).unwrap(),
         }
@@ -351,7 +351,7 @@ pub struct FdtdStability {
     pub source_resolution: Index,
     #[derivative(Default(value = "NonZeroU32::new(3).unwrap()"))]
     pub material_resolution: NonZeroU32,
-    #[derivative(Default(value = "LayerWidths::splat(10)"))]
+    #[derivative(Default(value = "LayerWidths::splat_spatial(10)"))]
     pub spacer_region_widths: LayerWidths,
 }
 
