@@ -14,11 +14,11 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(80).unwrap();
+    let sim_speed = NonZeroUsize::new(15).unwrap();
 
     // Simulation parameters w/ default stability values.
     let mut stability = FdtdStability {
-        dt_safety_factor: 10.,
+        dt_safety_factor: 8.,
         material_resolution: NonZeroU32::new(3).unwrap(),
         ..Default::default()
     };
@@ -28,10 +28,10 @@ pub async fn cube() -> anyhow::Result<()> {
     let fdtd_params = FdtdParameters {
         cell_size,
         dt,
-        material_discretization: MaterialDiscretization::Smooth {
-            resolution: stability.material_resolution
-        },
-        // material_discretization: MaterialDiscretization::Rough,
+        // material_discretization: MaterialDiscretization::Smooth {
+        //     resolution: stability.material_resolution
+        // },
+        material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let pml_params = PmlParameters::new(dt);
