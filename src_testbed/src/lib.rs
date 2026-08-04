@@ -8,7 +8,7 @@ pub mod re_exports {
 use glamx::*;
 use kiss3d::camera::Projection;
 use kiss3d::color::*;
-use kiss3d::prelude::{Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
+use kiss3d::prelude::{AlphaMode, Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
@@ -125,15 +125,12 @@ impl FdtdTestbedViewer {
         &mut self,
         v_field: &[Vec4],
     ) -> bool {
-        let continue_rendering = self.window.render_3d(&mut self.scene, &mut self.camera).await;
-
         self.visualization_mode.visualize(
             v_field,
             &mut self.window,
             self.polarization_mode
         );
-
-        continue_rendering
+        self.window.render_3d(&mut self.scene, &mut self.camera).await
     }
 }
 
@@ -165,6 +162,27 @@ pub enum VisualizationMode {
 }
 
 impl VisualizationMode {
+    pub fn default_with_color_mode(color_mode: ColorMode) -> Self {
+        cfg_select! {
+            feature = "dim1" => Self::LineGraph {
+                color: color_mode.compute_color(Real::MAX),
+                max_magnitude: 1.,
+                graph_max_magnitude: 0.,
+                positions: vec![],
+            },
+            feature = "dim2" => Self::Quads {
+                color_mode,
+                instanced_quad: SceneNode3d::default(),
+                instances: vec![],
+            },
+            feature = "dim3" => Self::Cubes {
+                color_mode,
+                instanced_cube: SceneNode3d::default(),
+                instances: vec![],
+            }
+        }
+    }
+
     pub fn initialize(
         &mut self,
         #[cfg_attr(feature = "dim1", allow(unused_variables))] scene: &mut SceneNode3d,
@@ -209,6 +227,8 @@ impl VisualizationMode {
                         }
                     })
                     .collect();
+                instanced_obj.set_alpha_mode(AlphaMode::Mask(0.1));
+                // instanced_obj.set_alpha_mode(AlphaMode::Blend);
                 instanced_obj.set_instances(instances);
                 instanced_obj.enable_backface_culling(false);
             };

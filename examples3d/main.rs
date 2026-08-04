@@ -1,7 +1,7 @@
 use std::num::{NonZeroU32, NonZeroUsize};
-use kiss3d::prelude::Light;
 use kiss3d::window::NumSamples;
-use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode};
+use kiss3d::color::*;
+use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode, ColorMode};
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
 use taser_em3d::re_exports::glamx::glam::*;
@@ -14,13 +14,12 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(12).unwrap();
+    let sim_speed = NonZeroUsize::new(80).unwrap();
 
     // Simulation parameters w/ default stability values.
-    let stability = FdtdStability {
+    let mut stability = FdtdStability {
         dt_safety_factor: 10.,
-        cells_per_wavelength: 10,
-        material_resolution: NonZeroU32::new(5).unwrap(),
+        material_resolution: NonZeroU32::new(3).unwrap(),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -40,7 +39,7 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute cube dimensions
     let wavelen = C_0 / f_max;
-    let cube_extents = [Vect::from_element(-20.), Vect::from_element(-20. + wavelen * 0.1)];
+    let cube_extents = [Vect::from_element(-20.), Vect::from_element(-20. + wavelen)];
     // construct the cube
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -52,11 +51,14 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source = Source::Dipole {
-        position: cube_extents[0] - Vect::Z * wavelen * 0.25,
+        position: cube_extents[0] - wavelen,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt)
     };
     simulation.add_source(source);
+    stability.spacer_region_widths[Axis::X].lo = 3; // Source is far enough from device, so shrink spacers.
+    stability.spacer_region_widths[Axis::Y].lo = 3;
+    stability.spacer_region_widths[Axis::Z].lo = 3;
 
     let sim_bb = simulation.compute_bounding_box();
     println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
@@ -68,27 +70,30 @@ pub async fn cube() -> anyhow::Result<()> {
     let pipeline = FdtdLossyPipeline::new(&backend, sim_speed)?;
 
     // Create viewer and set up camera
-    let n_cells = gpu_data.n_cells;
-    let grid_extents = n_cells.as_vect() * cell_size;
-    let grid_center = grid_extents / 2.;
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,
-        VisualizationMode::default()
+        VisualizationMode::default_with_color_mode(
+            ColorMode::FixedRange {
+                v_min: 0.,
+                v_max: 0.3,
+                color_min: TRANSPARENT,
+                color_max: RED
+            }
+        )
     ).await?;
     testbed.window.set_samples(NumSamples::Four);
     testbed.window.set_ambient(0.5);
+    let n_cells = gpu_data.n_cells;
+    let grid_extents = n_cells.as_vect() * cell_size;
+    let grid_center = grid_extents / 2.;
     testbed.set_clipping_planes(cell_size.smallest_element() / 100., cell_size.largest_element() * 1000.)
         .camera
-        .look_at(grid_extents * 2., grid_center);
+        .look_at(
+            Vec3::new(-grid_extents.x * 2., -grid_extents.y * 2., grid_extents.z * 2.),
+            grid_center
+        );
     testbed.camera.set_up_axis_dir(Vec3::Z);
-
-    testbed.scene
-        .add_light(
-            Light::directional(Vec3::new(-0.5, -0.8, -0.4))
-                .with_intensity(2.2)
-        )
-        .set_position(grid_extents * 2.);
 
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; gpu_data.dn.buffer.len()];
@@ -96,9 +101,15 @@ pub async fn cube() -> anyhow::Result<()> {
         backend.synchronize()?;
         gpu_data.dn.read(&backend, &mut dn_field).await?;
         pipeline.submit_steps(&backend, &mut gpu_data, None, |encoder, gpu_data| {
-            gpu_data.dn.encode_copy_cmd(encoder)
+            gpu_data.dn.encode_copy_cmd(encoder)?;
+            gpu_data.steps.encode_copy_cmd(encoder)
         })?;
     }
+
+    let mut steps = vec![0];
+    gpu_data.steps.read(&backend, &mut steps).await?;
+    println!("Simulated time: {} ns", dt * steps[0] as f32 * 1e9);
+    println!("steps: {}", steps[0]);
 
     Ok(())
 }
