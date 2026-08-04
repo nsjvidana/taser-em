@@ -3,8 +3,9 @@ use kiss3d::window::NumSamples;
 use kiss3d::color::*;
 use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode, ColorMode};
 use taser_em3d::prelude::*;
-use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
+use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend};
 use taser_em3d::re_exports::glamx::glam::*;
+use taser_em3d::re_exports::khal;
 
 #[kiss3d::main]
 async fn main() {
@@ -14,11 +15,11 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(15).unwrap();
+    let sim_speed = NonZeroUsize::new(3).unwrap();
 
     // Simulation parameters w/ default stability values.
     let mut stability = FdtdStability {
-        dt_safety_factor: 8.,
+        dt_safety_factor: 7.,
         material_resolution: NonZeroU32::new(3).unwrap(),
         ..Default::default()
     };
@@ -28,10 +29,10 @@ pub async fn cube() -> anyhow::Result<()> {
     let fdtd_params = FdtdParameters {
         cell_size,
         dt,
-        // material_discretization: MaterialDiscretization::Smooth {
-        //     resolution: stability.material_resolution
-        // },
-        material_discretization: MaterialDiscretization::Rough,
+        material_discretization: MaterialDiscretization::Smooth {
+            resolution: stability.material_resolution
+        },
+        // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let pml_params = PmlParameters::new(dt);
@@ -64,8 +65,16 @@ pub async fn cube() -> anyhow::Result<()> {
     println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
 
     // Set up buffers and pipeline
-    let webgpu = WebGpu::default().await?;
-    let backend = GpuBackend::WebGpu(webgpu);
+    let (backend, backend_name) = cfg_select! {
+        feature = "webgpu" => {{
+            let webgpu = khal::backend::WebGpu::default().await?;
+            (GpuBackend::WebGpu(webgpu), "WebGPU")
+        }}
+        feature = "metal" => {todo!()}
+        feature = "cpu" => { (GpuBackend::Cpu, "CPU") }
+        feature = "cuda" => {todo!()}
+    };
+    println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let pipeline = FdtdLossyPipeline::new(&backend, sim_speed)?;
 
@@ -76,7 +85,7 @@ pub async fn cube() -> anyhow::Result<()> {
         VisualizationMode::default_with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.3,
+                v_max: 0.2,
                 color_min: TRANSPARENT,
                 color_max: RED
             }

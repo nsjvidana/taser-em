@@ -4,6 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
+use khal_std::sync::workgroup_memory_barrier_with_group_sync;
 use crate::math::*;
 
 /// N-dimensional FDTD shader with loss (conductivity). Works with any polarization mode.
@@ -46,6 +47,14 @@ pub fn fdtd_lossy(
         let enable = (cell_idx as usize == idx) && (curr_step >= t_start) && (vals_i <= end);
         source_term += source_vals.read(vals_i.min(end) as usize) * enable as u32 as f32
     }
+    #[cfg(not(any(target_arch = "spirv", target_arch = "nvptx64")))]
+    {
+        if source_term != 0. && idx == 0 {
+            khal_std::println!("source still injecting");
+        }
+        workgroup_memory_barrier_with_group_sync();
+    }
+    // TODO: inject source in different fields depending on polarization mode
     let source_term = cfg_select! {
         feature = "dim1" => Vec4::new(0., source_term, 0., 0.),
         feature = "dim2" => Vec4::new(0., 0., source_term, 0.),

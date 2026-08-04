@@ -1,6 +1,7 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::glamx::glam::*;
+use taser_em2d::re_exports::khal;
 use taser_em2d::re_exports::khal::backend::{Backend, Buffer, GpuBackend, WebGpu};
 use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
 
@@ -12,7 +13,7 @@ async fn main() {
 pub async fn single_rod() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(12).unwrap();
+    let sim_speed = NonZeroUsize::new(5).unwrap();
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -56,8 +57,16 @@ pub async fn single_rod() -> anyhow::Result<()> {
     simulation.add_source(source);
     
     // Set up buffers and pipeline
-    let webgpu = WebGpu::default().await?;
-    let backend = GpuBackend::WebGpu(webgpu);
+    let (backend, backend_name) = cfg_select! {
+        feature = "webgpu" => {{
+            let webgpu = khal::backend::WebGpu::default().await?;
+            (GpuBackend::WebGpu(webgpu), "WebGPU")
+        }}
+        feature = "metal" => {todo!()}
+        feature = "cpu" => { (GpuBackend::Cpu, "CPU") }
+        feature = "cuda" => {todo!()}
+    };
+    println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let pipeline = FdtdLossyPipeline::new(&backend, sim_speed)?;
     

@@ -379,7 +379,7 @@ impl Axis {
     /// # Panics
     /// Out of bounds access when `self == Axis::INVALID`
     #[inline]
-    pub fn permute(&self) -> Self {
+    pub const fn permute(&self) -> Self {
         Self::PERMUTATION[*self as usize]
     }
 }

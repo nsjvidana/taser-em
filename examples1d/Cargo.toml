@@ -18,9 +18,12 @@ cpu-parallel = ["cpu", "taser-em1d/cpu-parallel"]
 cuda = ["taser-em1d/cuda"]
 
 [dependencies]
-taser-em1d.workspace = true
 taser-em-testbed1d.workspace = true
 kiss3d.workspace = true
+
+[dependencies.taser-em1d]
+path = "../crates/taser-em1d"
+default-features = false
 
 [[bin]]
 name = "examples1d"

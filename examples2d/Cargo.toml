@@ -23,6 +23,7 @@ kiss3d.workspace = true
 
 [dependencies.taser-em2d]
 path = "../crates/taser-em2d"
+default-features = false
 
 [[bin]]
 name = "examples2d"
