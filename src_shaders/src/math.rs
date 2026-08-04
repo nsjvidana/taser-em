@@ -530,9 +530,22 @@ impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 impl_vector_indexing!(Vect, Real, SpatialAxis, DIM);
 impl_vector_indexing!(GridIndex, Index, SpatialAxis, DIM);
 
-/// A saturating_sub implementation that computes `a - b`.
-/// Because Rust-GPU doesn't have the core library's saturating_sub() implemented yet, we have this function.
-#[inline]
-pub fn saturating_sub(a: usize, b: usize) -> usize {
-    if a > b { a.wrapping_sub(b) } else { 0 }
+/// A trait that computes `a.saturating_sub(b)` on the GPU.
+/// Rust-GPU doesn't have the core library's `saturating_sub()` implemented yet, so we have this trait.
+pub trait GpuSaturatingSub {
+    fn gpu_saturating_sub(self, rhs: Self) -> Self;
+}
+
+impl GpuSaturatingSub for u32 {
+    #[inline]
+    fn gpu_saturating_sub(self, rhs: Self) -> Self {
+        if self > rhs { self.wrapping_sub(rhs) } else { 0 }
+    }
+}
+
+impl GpuSaturatingSub for usize {
+    #[inline]
+    fn gpu_saturating_sub(self, rhs: Self) -> Self {
+        if self > rhs { self.wrapping_sub(rhs) } else { 0 }
+    }
 }

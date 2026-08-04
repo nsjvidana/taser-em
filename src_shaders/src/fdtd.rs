@@ -22,7 +22,7 @@ pub fn fdtd_lossy(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
     // Sources
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] steps: &mut u32,
     // Uniforms
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters,
@@ -33,25 +33,23 @@ pub fn fdtd_lossy(
     let boundary_idx3 = grid.n_cells3 - 1;
 
     // Get the source value at this timestep (working)
-    let steps_usize = *steps as usize;
     let mut source_term = 0.;
+    let curr_step = *steps;
     for i in 0..dipoles.len() {
         let GpuDipole {
             vals_range: [start, end],
             cell_idx,
             t_start,
         } = dipoles.read(i);
-        let t_start = t_start as usize;
-        let t = saturating_sub(steps_usize, t_start);
-        let [start, end] = [start as usize, end as usize];
+        let t = curr_step.gpu_saturating_sub(t_start);
         let vals_i = start + t;
-        let enable = cell_idx as usize == idx && steps_usize >= t_start && vals_i <= end;
-        source_term += source_vals.read(vals_i.min(end)) * enable as u32 as f32;
+        let enable = (cell_idx as usize == idx) && (curr_step >= t_start) && (vals_i <= end);
+        source_term += source_vals.read(vals_i.min(end) as usize) * enable as u32 as f32
     }
     let source_term = cfg_select! {
         feature = "dim1" => Vec4::new(0., source_term, 0., 0.),
         feature = "dim2" => Vec4::new(0., 0., source_term, 0.),
-        feature = "dim3" => Vec4::from((Vec3::splat(source_term), 0.)),
+        feature = "dim3" => Vec4::new(source_term, source_term, source_term, 0.),
     };
 
     let coeffs = grid_coeffs.read(idx);
@@ -83,7 +81,7 @@ pub fn fdtd_lossy(
 
         h_self_new
     };
-    h.write(idx, h_self_new.with_w(0.));
+    h.write(idx, h_self_new);
     let h_self = h_self_new;
 
     let not_boundary = UVec3::from(idx3.cmpgt(UVec3::ZERO));
@@ -112,11 +110,11 @@ pub fn fdtd_lossy(
 
         dn_self_new
     };
-    dn.write(idx, dn_self_new.with_w(0.));
+    dn.write(idx, dn_self_new);
     let dn_self = dn_self_new;
 
     let en_self_new = coeffs.en1 * dn_self;
-    en.write(idx, en_self_new.with_w(0.));
+    en.write(idx, en_self_new);
 
     integrals.write(idx, ints);
 
