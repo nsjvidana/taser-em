@@ -191,13 +191,11 @@ impl VisualizationMode {
         cell_size: Vect,
     ) {
         let mut cell_positions = vec![Vec3::ZERO; n_cells.mul_elements() as _];
-        grid_cells_iter(n_cells)
-            .for_each(|idx_tuple| {
-                let idx = GridIndex::from_index_array(idx_tuple.into());
-                let flat_idx = idx.to_flat_idx(n_cells);
-                cell_positions[flat_idx as usize] = (idx.as_vect() * cell_size)
-                    .to_3d(Vec3::ZERO);
-            });
+        for idx_tuple in grid_cells_iter(n_cells) {
+            let cell_idx = GridIndex::from_index_array(idx_tuple.into());
+            let flat_idx = cell_idx.to_flat_idx(n_cells);
+            cell_positions[flat_idx as usize] = (cell_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
+        }
 
         #[cfg(feature = "dim1")]
         {
@@ -219,7 +217,8 @@ impl VisualizationMode {
                 let cell_size_half3 = (cell_size / 2.).to_3d(Vec3::ZERO);
                 color_mode.prepare(&[]);
                 let color = color_mode.compute_color(Real::MIN);
-                *instances = to_parallel!(cell_positions.iter())
+
+                *instances = par_iter!(cell_positions)
                     .map(|pos| {
                         InstanceData3d {
                             color,
@@ -288,7 +287,9 @@ impl VisualizationMode {
                     .map(|v| polarization_mode.get_e_magnitude(v))
                     .collect::<Vec<_>>();
                 color_mode.prepare(&magnitudes);
-                to_parallel!(instances.iter_mut().zip(magnitudes))
+
+                par_iter_mut!(instances)
+                    .zip(into_par_iter!(magnitudes))
                     .for_each(|(inst, mag)| {
                         inst.color = color_mode.compute_color(mag);
                     });
@@ -405,12 +406,31 @@ impl Default for ColorMode {
 }
 
 #[macro_export]
-#[doc(hidden)]
-macro_rules! to_parallel {
-    ($iter:expr) => {
+macro_rules! into_par_iter {
+    ($coll:expr) => {
         cfg_select! {
-            feature = "rayon" => ParallelBridge::par_bridge($iter),
-            _ => $iter,
+            feature = "rayon" => $coll.into_par_iter(),
+            _ => $coll.into_iter()
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! par_iter_mut {
+    ($coll:expr) => {
+        cfg_select! {
+            feature = "rayon" => $coll.par_iter_mut(),
+            _ => $coll.iter_mut()
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! par_iter {
+    ($coll:expr) => {
+        cfg_select! {
+            feature = "rayon" => $coll.par_iter(),
+            _ => $coll.iter()
         }
     };
 }

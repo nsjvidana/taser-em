@@ -145,7 +145,6 @@ impl FdtdLossySimulation {
                     n_cells3: n_cells.n_cells_to_3d(),
                     d: cell_size.to_3d(Vec3::ZERO),
                     polarization_mode_index: polarization_mode.into(),
-                    // _padding0: 0,
                     _padding1: 0,
                     _padding2: 0,
                 }.create_gpu_uniform(backend)?,
@@ -494,7 +493,7 @@ impl Default for Source {
 
 
 /// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
-/// The cell positions are given as tuples.
+/// The cell positions are given as tuples but AREN'T IN ORDER
 pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
     cfg_select! {
         feature = "dim1" => itertools::iproduct!(0..n_cells),

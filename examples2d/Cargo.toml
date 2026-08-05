@@ -9,8 +9,7 @@ edition.workspace = true
 [features]
 default = ["webgpu"]
 unsafe_remove_boundchecks = ["taser-em2d/unsafe_remove_boundchecks"]
-#rayon = ["taser-em2d/rayon", "taser-em-testbed2d/rayon"]
-rayon = ["taser-em2d/rayon"] # Testbed rayon is broken at the moment
+rayon = ["taser-em2d/rayon", "taser-em-testbed2d/rayon"]
 webgpu = ["taser-em2d/webgpu"]
 metal = ["taser-em2d/metal"]
 cpu = ["taser-em2d/cpu"]
