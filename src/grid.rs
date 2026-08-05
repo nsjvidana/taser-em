@@ -1,4 +1,4 @@
-use crate::{grid_cells_iter, to_parallel, ElectricMaterial, PmlParameters, C_0, EPS_0};
+use crate::{grid_cells_iter, par_iter_mut, ElectricMaterial, PmlParameters, C_0, EPS_0};
 use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
@@ -209,7 +209,8 @@ impl YeeGridMaterials {
         };
 
         let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
-        to_parallel!(mats.iter_mut().enumerate())
+        par_iter_mut!(mats)
+            .enumerate()
             .for_each(|(i, mat)| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
                 let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
@@ -346,7 +347,8 @@ impl PmlCoefficientsGrid {
         let inv_dt = dt.recip();
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         let c0_dt = C_0 * dt;
-        to_parallel!(coeffs.iter_mut().enumerate())
+        par_iter_mut!(coeffs)
+            .enumerate()
             .for_each(|(i, coeff)| {
                 let idx = GridIndex::from_flat_idx(i as u32, n_cells);
 

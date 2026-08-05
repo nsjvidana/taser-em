@@ -1,16 +1,5 @@
 #[macro_export]
 #[doc(hidden)]
-macro_rules! to_parallel {
-    ($iter:expr) => {
-        cfg_select! {
-            feature = "rayon" => ParallelBridge::par_bridge($iter),
-            _ => $iter,
-        }
-    };
-}
-
-#[macro_export]
-#[doc(hidden)]
 macro_rules! into_par_iter {
     ($coll:expr) => {
         cfg_select! {
