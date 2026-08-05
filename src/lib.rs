@@ -109,7 +109,7 @@ impl FdtdLossySimulation {
                                 vals_start: start as u32,
                                 vals_end: source_vals.len() as u32 - 1,
                                 t_start: (t_start / dt) as u32,
-                                moment: *moment,
+                                moment: Vec4::from((*moment, 0.)),
                             })
                         },
                         _ => None
@@ -436,7 +436,7 @@ pub enum Source {
         t_start: f32,
         /// Signal data points
         vals: Vec<f32>,
-        moment: Vec4,
+        moment: Vec3,
     },
     /// A plane wave traveling along an axis (positive direction)
     PlaneWave {

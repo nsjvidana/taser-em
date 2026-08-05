@@ -53,7 +53,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
         position: slab_extents[0] - wavelen * 3.,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec4::Y
+        moment: Vec3::Y
     };
     simulation.add_source(source);
 

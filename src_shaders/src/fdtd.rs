@@ -38,13 +38,13 @@ pub fn fdtd_lossy(
         let dipole = dipoles.read(i);
         let t = curr_step.gpu_saturating_sub(dipole.t_start);
         let vals_i = dipole.vals_start + t;
+
         let enable = (dipole.cell_idx as usize == idx) &&
             (curr_step >= dipole.t_start) &&
             (vals_i <= dipole.vals_end);
-        source_term += match enable {
-            true => source_vals.read(vals_i.min(dipole.vals_end) as usize) * dipole.moment,
-            false => Vec4::ZERO
-        };
+        source_term += source_vals.read(vals_i.min(dipole.vals_end) as usize) *
+            enable as u32 as f32 *
+            dipole.moment;
     }
 
     let coeffs = grid_coeffs.read(idx);
@@ -114,6 +114,7 @@ pub fn fdtd_lossy(
     }
 }
 
+/// Forwards & backwards discrete curl
 fn compute_curl<const FORWARDS: bool>(
     d: Vec3,
     idx: usize,
@@ -147,7 +148,7 @@ fn curl_component<const FORWARDS: bool>(
     not_boundary: UVec3,
     flat_idx_incrs: UVec3,
     v_self: Vec4,
-    v: &[Vec4]
+    v: &[Vec4],
 ) -> Real {
     let neighbors = get_curl_neighbors::<FORWARDS>(idx, not_boundary, flat_idx_incrs, v);
     let axis1 = axis.permute();
@@ -222,7 +223,7 @@ impl PolarizationModeIndex {
     pub const TE: Self = Self(1);
 
     #[inline]
-    pub fn inject_h_source(&self, v: &mut Vec4, src_term: Vec4) {
+    pub fn inject_h_source(self, v: &mut Vec4, src_term: Vec4) {
         cfg_select! {
             feature = "dim3" => *v += src_term * (self.0 == 1) as u32 as f32,
             _ => *v += src_term
@@ -230,7 +231,7 @@ impl PolarizationModeIndex {
     }
 
     #[inline]
-    pub fn inject_dn_source(&self, v: &mut Vec4, src_term: Vec4) {
+    pub fn inject_dn_source(self, v: &mut Vec4, src_term: Vec4) {
         cfg_select! {
             feature = "dim3" => *v += src_term * (self.0 == 0) as u32 as f32,
             _ => *v += src_term

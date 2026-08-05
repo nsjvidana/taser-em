@@ -14,11 +14,11 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(3).unwrap();
+    let sim_speed = NonZeroUsize::new(6).unwrap();
 
     // Simulation parameters w/ default stability values.
     let mut stability = FdtdStability {
-        dt_safety_factor: 7.,
+        dt_safety_factor: 8.,
         material_resolution: NonZeroU32::new(3).unwrap(),
         ..Default::default()
     };
@@ -39,22 +39,25 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute cube dimensions
     let wavelen = C_0 / f_max;
-    let cube_extents = [Vect::from_element(-20.), Vect::from_element(-20. + wavelen)];
+    let box_min = Vect::from_element(-20.);
+    let box_max = box_min + Vect::from_element(wavelen);
+    let box_extents = box_max - box_min;
+    let box_center = (box_min + box_max) / 2.;
     // construct the cube
     let mat = ElectricMaterial {
-        eps_r: Vec3::splat(7.),
+        eps_r: Vec3::splat(3.),
         mu_r: Vec3::splat(1.),
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
     };
-    simulation.material_regions.fill_region(cube_extents[0], cube_extents[1], mat);
+    simulation.material_regions.fill_region(box_min, box_max, mat);
 
     // Compute source position and gaussian curve data points
     let source = Source::Dipole {
-        position: cube_extents[0] - wavelen,
+        position: box_center - (box_extents.with_yz(Vec2::ZERO) / 2.) - Vec3::ZERO.with_x(wavelen),
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec4::Z
+        moment: Vec3::Z
     };
     simulation.add_source(source);
     stability.spacer_region_widths[Axis::X].lo = 3; // Source is far enough from device, so shrink spacers.
@@ -85,7 +88,7 @@ pub async fn cube() -> anyhow::Result<()> {
         VisualizationMode::default_with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.2,
+                v_max: 0.05,
                 color_min: TRANSPARENT,
                 color_max: RED
             }
