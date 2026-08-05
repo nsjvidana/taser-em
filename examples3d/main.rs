@@ -32,7 +32,7 @@ pub async fn cube() -> anyhow::Result<()> {
         //     resolution: stability.material_resolution
         // },
         material_discretization: MaterialDiscretization::Rough,
-        polarization_mode: PolarizationMode::TransverseMagnetic
+        polarization_mode: PolarizationMode::TransverseElectric
     };
     let pml_params = PmlParameters::new(dt);
     let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);
