@@ -159,14 +159,14 @@ fn curl_component<const FORWARDS: bool>(
     let axis2 = axis1.permute();
 
     let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
-        if FORWARDS { (neighbors[axis1 as usize][axis2] - v_self[axis2]) / d[axis1] }
-        else { (v_self[axis2] - neighbors[axis1 as usize][axis2]) / d[axis1] }
+        (neighbors[axis1 as usize][axis2] - v_self[axis2]) / d[axis1]
     } else { 0. };
     let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
-        if FORWARDS { (neighbors[axis2 as usize][axis1] - v_self[axis1]) / d[axis2] }
-        else { (v_self[axis1] - neighbors[axis2 as usize][axis1]) / d[axis2] }
+        (neighbors[axis2 as usize][axis1] - v_self[axis1]) / d[axis2]
     } else { 0. };
-    curl_term1 - curl_term2
+    
+    if FORWARDS { curl_term1 - curl_term2 }
+        else { curl_term2 - curl_term1 }
 }
 
 fn get_curl_neighbors<const FORWARDS: bool>(
@@ -213,8 +213,6 @@ pub struct GridParameters {
     /// Spatial differentials (cell size)
     pub d: Vec3,
     pub _padding2: u32,
-    // pub polarization_mode_index: PolarizationModeIndex,
-    // pub _padding3: [u32; 3]
 }
 
 /// A newtype of an index representing the polarization mode.
