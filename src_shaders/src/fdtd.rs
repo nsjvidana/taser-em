@@ -47,14 +47,6 @@ pub fn fdtd_lossy(
         let enable = (cell_idx as usize == idx) && (curr_step >= t_start) && (vals_i <= end);
         source_term += source_vals.read(vals_i.min(end) as usize) * enable as u32 as f32
     }
-    #[cfg(not(any(target_arch = "spirv", target_arch = "nvptx64")))]
-    {
-        if source_term != 0. && idx == 0 {
-            khal_std::println!("source still injecting");
-        }
-        workgroup_memory_barrier_with_group_sync();
-    }
-    // TODO: inject source in different fields depending on polarization mode
     let source_term = cfg_select! {
         feature = "dim1" => Vec4::new(0., source_term, 0., 0.),
         feature = "dim2" => Vec4::new(0., 0., source_term, 0.),
@@ -76,19 +68,17 @@ pub fn fdtd_lossy(
         en
     );
     let h_self = h.read(idx);
-    let h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
-        source_term;
+    let mut h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl;
+        grid.polarization_mode_index.inject_h_source(&mut h_self_new, source_term);
     #[cfg(any(feature = "dim2", feature = "dim3"))]
-    let h_self_new = {
+    {
         ints.en_curl += en_curl;
-        let h_self_new = h_self_new + coeffs.h3 * ints.en_curl;
+        h_self_new += coeffs.h3 * ints.en_curl;
         #[cfg(feature = "dim3")]
-        let h_self_new = {
+        {
             ints.h += h_self;
-            h_self_new + coeffs.h4 * ints.h
-        };
-
-        h_self_new
+            h_self_new += coeffs.h4 * ints.h;
+        }
     };
     h.write(idx, h_self_new);
     let h_self = h_self_new;
@@ -104,20 +94,18 @@ pub fn fdtd_lossy(
     );
     let dn_self = dn.read(idx);
     ints.en += en_self;
-    let dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
-        coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en +
-        source_term;
+    let mut dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
+        coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en;
+        grid.polarization_mode_index.inject_dn_source(&mut dn_self_new, source_term);
     #[cfg(any(feature = "dim2", feature = "dim3"))]
-    let dn_self_new = {
+    {
         ints.h_curl += h_curl;
-        let dn_self_new = dn_self_new + coeffs.dn3 * ints.h_curl;
+        dn_self_new += coeffs.dn3 * ints.h_curl;
         #[cfg(feature = "dim3")]
-        let dn_self_new = {
+        {
             ints.dn += dn_self;
-            dn_self_new + coeffs.dn4 * ints.dn
-        };
-
-        dn_self_new
+            dn_self_new += coeffs.dn4 * ints.dn
+        }
     };
     dn.write(idx, dn_self_new);
     let dn_self = dn_self_new;
@@ -220,12 +208,42 @@ pub struct GridParameters {
     /// Increments by 1 in i/j/k indices for flat indexing. Used for accessing
     /// data from neighboring cells.
     pub flat_idx_incrs: UVec3,
-    pub _padding0: u32,
+    pub polarization_mode_index: PolarizationModeIndex,
     pub n_cells3: UVec3,
     pub _padding1: u32,
     /// Spatial differentials (cell size)
     pub d: Vec3,
     pub _padding2: u32,
+    // pub polarization_mode_index: PolarizationModeIndex,
+    // pub _padding3: [u32; 3]
+}
+
+/// A newtype of an index representing the polarization mode.
+///
+/// Use a `into()`/`from()` conversion or its constants to safely construct this type.
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[repr(transparent)]
+pub struct PolarizationModeIndex(u32);
+
+impl PolarizationModeIndex {
+    pub const TM: Self = Self(0);
+    pub const TE: Self = Self(1);
+
+    #[inline]
+    pub fn inject_h_source(&self, v: &mut Vec4, src_term: Vec4) {
+        cfg_select! {
+            feature = "dim3" => *v += src_term * (self.0 == 1) as u32 as f32,
+            _ => *v += src_term
+        }
+    }
+
+    #[inline]
+    pub fn inject_dn_source(&self, v: &mut Vec4, src_term: Vec4) {
+        cfg_select! {
+            feature = "dim3" => *v += src_term * (self.0 == 0) as u32 as f32,
+            _ => *v += src_term
+        }
+    }
 }
 
 /// Update coefficients for H, D, and E fields with a UPML

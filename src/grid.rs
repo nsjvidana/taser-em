@@ -7,7 +7,7 @@ use taser_em_shaders::math::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::PmlCoefficients;
+use taser_em_shaders::fdtd::{PmlCoefficients, PolarizationModeIndex};
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
@@ -16,17 +16,16 @@ use taser_em_shaders::fdtd::PmlCoefficients;
 /// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
 /// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
 #[derive(Copy, Clone, Debug, Default)]
-#[repr(u32)]
 pub enum PolarizationMode {
-    /// 1D: Ey, Hx
-    /// 2D: Ex, Ey, Hz
-    /// 3D: All axes
-    #[default]
-    TransverseMagnetic = 0,
     /// 1D: Ex, Hy
     /// 2D: Ez, Hx, Hy
     /// 3D: All axes
-    TransverseElectric = 1,
+    #[default]
+    TransverseElectric,
+    /// 1D: Ey, Hx
+    /// 2D: Ex, Ey, Hz
+    /// 3D: All axes
+    TransverseMagnetic,
 }
 
 impl PolarizationMode {
@@ -56,6 +55,15 @@ impl PolarizationMode {
                 feature = "dim2" => Vec3::from((glamx::Vec4Swizzles::xy(*e), 0.)),
                 feature = "dim3" => glamx::Vec4Swizzles::xyz(*e),
             },
+        }
+    }
+}
+
+impl From<PolarizationMode> for PolarizationModeIndex {
+    fn from(value: PolarizationMode) -> Self {
+        match value {
+            PolarizationMode::TransverseMagnetic => PolarizationModeIndex::TM,
+            PolarizationMode::TransverseElectric => PolarizationModeIndex::TE,
         }
     }
 }

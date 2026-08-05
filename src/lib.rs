@@ -80,7 +80,7 @@ impl FdtdLossySimulation {
         stability: &FdtdStability,
     ) -> GpuResult<FdtdLossyGpuData> {
         let FdtdParameters {
-            cell_size, dt, ..
+            cell_size, dt, polarization_mode, ..
         } = self.fdtd_parameters;
 
         let sim_bb = self.compute_bounding_box();
@@ -144,7 +144,10 @@ impl FdtdLossySimulation {
                     flat_idx_incrs,
                     n_cells3: n_cells.n_cells_to_3d(),
                     d: cell_size.to_3d(Vec3::ZERO),
-                    ..Default::default()
+                    polarization_mode_index: polarization_mode.into(),
+                    // _padding0: 0,
+                    _padding1: 0,
+                    _padding2: 0,
                 }.create_gpu_uniform(backend)?,
                 thread_count: n_cells.n_cells_to_3d().to_array(),
                 n_cells
