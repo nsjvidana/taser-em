@@ -9,6 +9,39 @@ macro_rules! to_parallel {
     };
 }
 
+#[macro_export]
+#[doc(hidden)]
+macro_rules! into_par_iter {
+    ($coll:expr) => {
+        cfg_select! {
+            feature = "rayon" => $coll.into_par_iter(),
+            _ => $coll.into_iter()
+        }
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! par_iter_mut {
+    ($coll:expr) => {
+        cfg_select! {
+            feature = "rayon" => $coll.par_iter_mut(),
+            _ => $coll.iter_mut()
+        }
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! par_iter {
+    ($coll:expr) => {
+        cfg_select! {
+            feature = "rayon" => $coll.par_iter(),
+            _ => $coll.iter()
+        }
+    };
+}
+
 /// Attempt to generate a mesh from an arbitrary shape
 #[cfg(feature = "render")]
 pub fn generate_mesh(shape: &dyn parry3d::shape::Shape) -> Option<(Vec<glamx::Vec3>, Vec<[u32; 3]>)> {

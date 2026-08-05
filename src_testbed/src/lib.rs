@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::*;
-use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability};
+use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability, par_iter, par_iter_mut, into_par_iter};
 use taser_em::prelude::{PolarizationMode, Real, VectExt, VectorValueExt};
 use crate::util::lerp_colors;
 
@@ -403,34 +403,4 @@ impl Default for ColorMode {
             }
         }
     }
-}
-
-#[macro_export]
-macro_rules! into_par_iter {
-    ($coll:expr) => {
-        cfg_select! {
-            feature = "rayon" => $coll.into_par_iter(),
-            _ => $coll.into_iter()
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! par_iter_mut {
-    ($coll:expr) => {
-        cfg_select! {
-            feature = "rayon" => $coll.par_iter_mut(),
-            _ => $coll.iter_mut()
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! par_iter {
-    ($coll:expr) => {
-        cfg_select! {
-            feature = "rayon" => $coll.par_iter(),
-            _ => $coll.iter()
-        }
-    };
 }
