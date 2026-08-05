@@ -419,8 +419,8 @@ impl PmlCoefficientsGrid {
                             coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
                         }
                     }
-                    coeff.en1[axis] = mats[i].eps_r[axis].recip();
                 }
+                coeff.en1 = Vec4::from((mats[i].eps_r.recip(), 0.));
             });
 
         (*regions_offset, Self { n_cells, coeffs, })

@@ -28,36 +28,31 @@ pub fn fdtd_lossy(
     #[spirv(uniform, descriptor_set = 0, binding = 8)] grid: &GridParameters,
 ) {
     if idx3.cmpge(grid.n_cells3).any() { return; }
-    let idx = GridIndex::from_uvec3(idx3).to_flat_idx(GridIndex::from_uvec3(grid.n_cells3))
-        as usize;
-    let boundary_idx3 = grid.n_cells3 - 1;
+    let idx = GridIndex::from_uvec3(idx3)
+        .to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
 
     // Get the source value at this timestep (working)
-    let mut source_term = 0.;
+    let mut source_term = Vec4::ZERO;
     let curr_step = *steps;
     for i in 0..dipoles.len() {
-        let GpuDipole {
-            vals_range: [start, end],
-            cell_idx,
-            t_start,
-        } = dipoles.read(i);
-        let t = curr_step.gpu_saturating_sub(t_start);
-        let vals_i = start + t;
-        let enable = (cell_idx as usize == idx) && (curr_step >= t_start) && (vals_i <= end);
-        source_term += source_vals.read(vals_i.min(end) as usize) * enable as u32 as f32
+        let dipole = dipoles.read(i);
+        let t = curr_step.gpu_saturating_sub(dipole.t_start);
+        let vals_i = dipole.vals_start + t;
+        let enable = (dipole.cell_idx as usize == idx) &&
+            (curr_step >= dipole.t_start) &&
+            (vals_i <= dipole.vals_end);
+        source_term += match enable {
+            true => source_vals.read(vals_i.min(dipole.vals_end) as usize) * dipole.moment,
+            false => Vec4::ZERO
+        };
     }
-    let source_term = cfg_select! {
-        feature = "dim1" => Vec4::new(0., source_term, 0., 0.),
-        feature = "dim2" => Vec4::new(0., 0., source_term, 0.),
-        feature = "dim3" => Vec4::new(source_term, source_term, source_term, 0.),
-    };
 
     let coeffs = grid_coeffs.read(idx);
     let mut ints = integrals.read(idx);
 
     let en_self = en.read(idx);
 
-    let not_boundary = UVec3::from(idx3.cmplt(boundary_idx3));
+    let not_boundary = UVec3::from(idx3.cmplt(grid.n_cells3 - 1));
     let en_curl = compute_curl::<true>(
         grid.d,
         idx,
@@ -164,7 +159,7 @@ fn curl_component<const FORWARDS: bool>(
     let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
         (neighbors[axis2 as usize][axis1] - v_self[axis1]) / d[axis2]
     } else { 0. };
-    
+
     if FORWARDS { curl_term1 - curl_term2 }
         else { curl_term2 - curl_term1 }
 }
@@ -291,7 +286,9 @@ pub struct PmlIntegrals {
 #[repr(C)]
 pub struct GpuDipole {
     pub cell_idx: u32,
-    pub vals_range: [u32; 2],
+    pub vals_start: u32,
+    pub vals_end: u32,
     pub t_start: u32,
+    pub moment: Vec4,
     // TODO: pub repeat_count: u32,
 }

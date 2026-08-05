@@ -28,10 +28,10 @@ pub async fn cube() -> anyhow::Result<()> {
     let fdtd_params = FdtdParameters {
         cell_size,
         dt,
-        material_discretization: MaterialDiscretization::Smooth {
-            resolution: stability.material_resolution
-        },
-        // material_discretization: MaterialDiscretization::Rough,
+        // material_discretization: MaterialDiscretization::Smooth {
+        //     resolution: stability.material_resolution
+        // },
+        material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let pml_params = PmlParameters::new(dt);
@@ -53,7 +53,8 @@ pub async fn cube() -> anyhow::Result<()> {
     let source = Source::Dipole {
         position: cube_extents[0] - wavelen,
         t_start: 0.,
-        vals: Source::gaussian_max_f(f_max, 1., dt)
+        vals: Source::gaussian_max_f(f_max, 1., dt),
+        moment: Vec4::Z
     };
     simulation.add_source(source);
     stability.spacer_region_widths[Axis::X].lo = 3; // Source is far enough from device, so shrink spacers.

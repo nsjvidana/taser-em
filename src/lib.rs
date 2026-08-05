@@ -95,7 +95,7 @@ impl FdtdLossySimulation {
             let mut dipoles = self.sources.iter()
                 .filter_map(|source| {
                     match source {
-                        Source::Dipole { position, t_start, vals } => {
+                        Source::Dipole { position, t_start, vals, moment } => {
                             let pos = (regions_offset + position) / cell_size;
                             let cell_grid_idx = pos.as_grid_index();
                             debug_assert!(
@@ -106,8 +106,10 @@ impl FdtdLossySimulation {
                             source_vals.extend_from_slice(vals);
                             Some(GpuDipole {
                                 cell_idx: cell_grid_idx.to_flat_idx(n_cells),
-                                vals_range: [start as u32, source_vals.len() as u32 - 1],
+                                vals_start: start as u32,
+                                vals_end: source_vals.len() as u32 - 1,
                                 t_start: (t_start / dt) as u32,
+                                moment: *moment,
                             })
                         },
                         _ => None
@@ -433,7 +435,8 @@ pub enum Source {
         /// How long to wait until the source should enable (in seconds)
         t_start: f32,
         /// Signal data points
-        vals: Vec<f32>
+        vals: Vec<f32>,
+        moment: Vec4,
     },
     /// A plane wave traveling along an axis (positive direction)
     PlaneWave {
@@ -480,17 +483,6 @@ impl Source {
         vals
     }
 }
-
-impl Default for Source {
-    fn default() -> Self {
-        Self::Dipole {
-            position: Default::default(),
-            t_start: Default::default(),
-            vals: Default::default(),
-        }
-    }
-}
-
 
 /// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
 /// The cell positions are given as tuples but AREN'T IN ORDER

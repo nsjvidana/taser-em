@@ -52,7 +52,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let source = Source::Dipole {
         position: slab_extents[0] - wavelen * 0.5,
         t_start: 0.,
-        vals: Source::gaussian_max_f(f_max, 1., dt)
+        vals: Source::gaussian_max_f(f_max, 1., dt),
+        moment: Vec4::Z
     };
     simulation.add_source(source);
     
