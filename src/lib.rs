@@ -439,7 +439,7 @@ pub enum Source {
         moment: Vec3,
     },
     /// A plane wave traveling along an axis (positive direction)
-    PlaneWave {
+    PlaneWave { // TODO: Implement plane wave in shader
         /// The axis along which the plane wave will travel.
         axis: SpatialAxis,
         /// How long to wait until the source should enable (in seconds)

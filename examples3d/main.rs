@@ -60,9 +60,6 @@ pub async fn cube() -> anyhow::Result<()> {
         moment: Vec3::Z
     };
     simulation.add_source(source);
-    stability.spacer_region_widths[Axis::X].lo = 3; // Source is far enough from device, so shrink spacers.
-    stability.spacer_region_widths[Axis::Y].lo = 3;
-    stability.spacer_region_widths[Axis::Z].lo = 3;
 
     let sim_bb = simulation.compute_bounding_box();
     println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
@@ -85,7 +82,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,
-        VisualizationMode::default_with_color_mode(
+        VisualizationMode::default().with_color(
             ColorMode::FixedRange {
                 v_min: 0.,
                 v_max: 0.05,

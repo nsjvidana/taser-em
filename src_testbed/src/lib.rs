@@ -163,24 +163,29 @@ pub enum VisualizationMode {
 }
 
 impl VisualizationMode {
-    pub fn default_with_color_mode(color_mode: ColorMode) -> Self {
+    /// Return a new [`Self`] with a new [`Color`] / [`ColorMode`]
+    pub fn with_color(mut self, #[cfg(feature = "dim1")] color: Color, #[cfg(not(feature = "dim1"))] color_mode: ColorMode) -> Self {
         cfg_select! {
-            feature = "dim1" => Self::LineGraph {
-                color: color_mode.compute_color(Real::MIN),
-                max_magnitude: 1.,
-                graph_max_magnitude: 0.,
-                positions: vec![],
-            },
-            feature = "dim2" => Self::Quads {
-                color_mode,
-                instanced_quad: SceneNode3d::default(),
-                instances: vec![],
-            },
-            feature = "dim3" => Self::Cubes {
-                color_mode,
-                instanced_cube: SceneNode3d::default(),
-                instances: vec![],
-                alpha_mode: AlphaMode::Mask(0.1),
+            feature = "dim1" => {
+                let Self::LineGraph {
+                    color: self_color, ..
+                } = &mut self;
+                *self_color = color;
+                self
+            }
+            feature = "dim2" => {
+                let Self::Quads {
+                    color_mode: self_color_mode, ..
+                } = &mut self;
+                *self_color_mode = color_mode;
+                self
+            }
+            feature = "dim3" => {
+                let Self::Cubes {
+                    color_mode: self_color_mode, ..
+                } = &mut self;
+                *self_color_mode = color_mode;
+                self
             }
         }
     }
@@ -312,7 +317,25 @@ impl VisualizationMode {
 
 impl Default for VisualizationMode {
     fn default() -> Self {
-        Self::default_with_color_mode(ColorMode::default())
+        cfg_select! {
+            feature = "dim1" => Self::LineGraph {
+                color: RED,
+                max_magnitude: 1.,
+                graph_max_magnitude: 0.,
+                positions: vec![],
+            },
+            feature = "dim2" => Self::Quads {
+                color_mode: ColorMode::default(),
+                instanced_quad: SceneNode3d::default(),
+                instances: vec![],
+            },
+            feature = "dim3" => Self::Cubes {
+                color_mode: ColorMode::default(),
+                instanced_cube: SceneNode3d::default(),
+                instances: vec![],
+                alpha_mode: AlphaMode::Mask(0.1),
+            }
+        }
     }
 }
 
