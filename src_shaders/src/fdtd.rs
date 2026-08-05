@@ -1,11 +1,10 @@
 #![allow(clippy::needless_range_loop)]
 
+use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-use khal_std::sync::workgroup_memory_barrier_with_group_sync;
-use crate::math::*;
 
 /// N-dimensional FDTD shader with loss (conductivity). Works with any polarization mode.
 #[spirv_bindgen]

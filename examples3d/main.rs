@@ -1,11 +1,10 @@
-use std::num::{NonZeroU32, NonZeroUsize};
-use kiss3d::window::NumSamples;
 use kiss3d::color::*;
-use taser_em_testbed3d::{FdtdTestbedViewer, re_exports::anyhow, VisualizationMode, ColorMode};
+use std::num::{NonZeroU32, NonZeroUsize};
 use taser_em3d::prelude::*;
-use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend};
 use taser_em3d::re_exports::glamx::glam::*;
 use taser_em3d::re_exports::khal;
+use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend};
+use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
@@ -91,7 +90,6 @@ pub async fn cube() -> anyhow::Result<()> {
             }
         )
     ).await?;
-    testbed.window.set_samples(NumSamples::Four);
     testbed.window.set_ambient(0.5);
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
