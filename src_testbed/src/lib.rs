@@ -7,8 +7,7 @@ pub mod re_exports {
 
 use glamx::*;
 use kiss3d::camera::Projection;
-use kiss3d::color::*;
-use kiss3d::prelude::{AlphaMode, Camera3d, Color, GpuMesh3d, OrbitCamera3d, SceneNode3d, Window};
+use kiss3d::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
@@ -158,6 +157,7 @@ pub enum VisualizationMode {
         instanced_cube: SceneNode3d,
         instances: Vec<InstanceData3d>,
         color_mode: ColorMode,
+        alpha_mode: AlphaMode
     },
 }
 
@@ -179,6 +179,7 @@ impl VisualizationMode {
                 color_mode,
                 instanced_cube: SceneNode3d::default(),
                 instances: vec![],
+                alpha_mode: AlphaMode::Mask(0.1),
             }
         }
     }
@@ -227,8 +228,6 @@ impl VisualizationMode {
                         }
                     })
                     .collect();
-                instanced_obj.set_alpha_mode(AlphaMode::Mask(0.1));
-                // instanced_obj.set_alpha_mode(AlphaMode::Blend);
                 instanced_obj.set_instances(instances);
                 instanced_obj.enable_backface_culling(false);
             };
@@ -242,10 +241,11 @@ impl VisualizationMode {
                 },
                 #[cfg(feature = "dim3")]
                 VisualizationMode::Cubes {
-                    instanced_cube, instances, color_mode
+                    instanced_cube, instances, color_mode, alpha_mode
                 } => {
                     *instanced_cube = scene
-                        .add_cube(cell_size.x, cell_size.y, cell_size.z);
+                        .add_cube(cell_size.x, cell_size.y, cell_size.z)
+                        .set_alpha_mode(*alpha_mode);
                     initialize_instances(instanced_cube, instances, color_mode)
                 }
             }
@@ -301,7 +301,7 @@ impl VisualizationMode {
                 } => update_colors(instanced_quad, instances, color_mode),
                 #[cfg(feature = "dim3")]
                 VisualizationMode::Cubes {
-                    instanced_cube, instances, color_mode
+                    instanced_cube, instances, color_mode, ..
                 } => update_colors(instanced_cube, instances, color_mode),
             }
         }
@@ -310,31 +310,7 @@ impl VisualizationMode {
 
 impl Default for VisualizationMode {
     fn default() -> Self {
-        #[cfg(feature = "dim1")]
-        {
-            Self::LineGraph {
-                color: RED,
-                max_magnitude: 1.,
-                graph_max_magnitude: 0.,
-                positions: vec![],
-            }
-        }
-        #[cfg(feature = "dim2")]
-        {
-            Self::Quads {
-                instanced_quad: Default::default(),
-                color_mode: Default::default(),
-                instances: Vec::new(),
-            }
-        }
-        #[cfg(feature = "dim3")]
-        {
-            Self::Cubes {
-                color_mode: Default::default(),
-                instanced_cube: Default::default(),
-                instances: vec![],
-            }
-        }
+        Self::default_with_color_mode(ColorMode::default())
     }
 }
 

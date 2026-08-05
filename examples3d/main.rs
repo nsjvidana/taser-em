@@ -94,7 +94,8 @@ pub async fn cube() -> anyhow::Result<()> {
     let n_cells = gpu_data.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
-    testbed.set_clipping_planes(cell_size.smallest_element() / 100., cell_size.largest_element() * 1000.)
+    testbed
+        .set_clipping_planes(cell_size.smallest_element() / 100., cell_size.largest_element() * 1000.)
         .camera
         .look_at(
             Vec3::new(-grid_extents.x * 2., -grid_extents.y * 2., grid_extents.z * 2.),
