@@ -20,6 +20,7 @@ use crate::util::lerp_colors;
 use kiss3d::prelude::InstanceData3d;
 
 #[cfg(feature = "rayon")]
+#[allow(unused_imports)]
 use rayon::prelude::*;
 
 pub struct FdtdTestbedViewer {
@@ -165,7 +166,7 @@ impl VisualizationMode {
     pub fn default_with_color_mode(color_mode: ColorMode) -> Self {
         cfg_select! {
             feature = "dim1" => Self::LineGraph {
-                color: color_mode.compute_color(Real::MAX),
+                color: color_mode.compute_color(Real::MIN),
                 max_magnitude: 1.,
                 graph_max_magnitude: 0.,
                 positions: vec![],
