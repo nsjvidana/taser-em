@@ -86,7 +86,7 @@ impl MaterialRegions {
         material: ElectricMaterial
     ) -> &mut Self {
         let region_dims = end - start;
-        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.largest_element()));
+        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element()));
 
         let shape = SharedShape::new(Cuboid::new(half_extents));
         let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
@@ -239,9 +239,9 @@ impl YeeGridMaterials {
     ) -> YeeGridMaterials {
         let downscale_factor = downscale_factor.get();
 
-        let n_cells = self.n_cells.div_ceil(GridIndex::from_element(downscale_factor));
+        let n_cells = self.n_cells.div_ceil(GridIndex::splat(downscale_factor));
         let cell_size = self.cell_size * downscale_factor as f32;
-        let cell_count = n_cells.mul_elements() as usize;
+        let cell_count = n_cells.element_product() as usize;
         let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
         let kernel_cells = grid_cells_iter(GridIndex::from_index_array([downscale_factor; DIM]))

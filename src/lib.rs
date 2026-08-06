@@ -100,7 +100,7 @@ impl FdtdLossySimulation {
                             let pos = (regions_offset + position) / cell_size;
                             let cell_grid_idx = pos.as_grid_index();
                             debug_assert!(
-                                !pos.smallest_element().is_sign_negative() && !pos.as_grid_index().ge(n_cells).any(),
+                                !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
                                 "negative source position!"
                             );
                             let start = source_vals.len();
@@ -140,7 +140,7 @@ impl FdtdLossySimulation {
                 _padding2: 0,
             };
 
-            let cell_count = n_cells.mul_elements() as usize;
+            let cell_count = n_cells.element_product() as usize;
             let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
             FdtdLossyGpuData {
                 // Uniforms / thread-independent vars
@@ -380,10 +380,10 @@ impl FdtdStability {
 
     pub fn cfl_condition(&self, cell_size: Vect) -> Real {
         let cell_size_term = cell_size
-            .map_elements(|v| {
+            .map(|v| {
                 v.powi(2).recip()
             })
-            .sum_elements()
+            .element_sum()
             .sqrt();
         let safety_factor = self.dt_safety_factor.max(1.);
         1. / (C_0 * cell_size_term * safety_factor)

@@ -40,8 +40,8 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute cube dimensions
     let wavelen = C_0 / f_max;
-    let box_min = Vect::from_element(-20.);
-    let box_max = box_min + Vect::from_element(wavelen);
+    let box_min = Vect::splat(-20.);
+    let box_max = box_min + Vect::splat(wavelen);
     let box_extents = box_max - box_min;
     let box_center = (box_min + box_max) / 2.;
     // construct the cube
@@ -98,7 +98,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
     testbed
-        .set_clipping_planes(cell_size.smallest_element() / 100., cell_size.largest_element() * 1000.)
+        .set_clipping_planes(cell_size.min_element() / 100., cell_size.max_element() * 1000.)
         .camera
         .look_at(
             Vec3::new(-grid_extents.x * 2., -grid_extents.y * 2., grid_extents.z * 2.),

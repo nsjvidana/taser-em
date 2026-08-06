@@ -196,7 +196,7 @@ impl VisualizationMode {
         n_cells: GridIndex,
         cell_size: Vect,
     ) {
-        let mut cell_positions = vec![Vec3::ZERO; n_cells.mul_elements() as _];
+        let mut cell_positions = vec![Vec3::ZERO; n_cells.element_product() as _];
         for idx_tuple in grid_cells_iter(n_cells) {
             let cell_idx = GridIndex::from_index_array(idx_tuple.into());
             let flat_idx = cell_idx.to_flat_idx(n_cells);

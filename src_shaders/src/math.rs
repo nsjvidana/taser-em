@@ -54,21 +54,19 @@ pub trait VectExt: VectorValueExt {
 }
 
 /// A trait with functions for general vector values
-// TODO: rename methods to exact names as glam's inherent methods.
-//       Rust's method resolution rules will work w/ it.
 pub trait VectorValueExt: Sized {
     type Element;
     type Boolean;
-    fn from_element(value: Self::Element) -> Self;
+    fn splat(value: Self::Element) -> Self;
     fn zero() -> Self;
     fn one() -> Self;
-    fn largest_element(self) -> Self::Element;
-    fn smallest_element(self) -> Self::Element;
-    fn ge(self, rhs: Self) -> Self::Boolean;
+    fn max_element(self) -> Self::Element;
+    fn min_element(self) -> Self::Element;
+    fn cmpge(self, rhs: Self) -> Self::Boolean;
     fn cmpeq(self, rhs: Self) -> Self::Boolean;
-    fn sum_elements(self) -> Self::Element;
-    fn mul_elements(self) -> Self::Element;
-    fn map_elements<F>(self, f: F) -> Self
+    fn element_sum(self) -> Self::Element;
+    fn element_product(self) -> Self::Element;
+    fn map<F>(self, f: F) -> Self
     where
         F: FnMut(Self::Element) -> Self::Element;
 }
@@ -89,28 +87,28 @@ macro_rules! impl_vector_value_ext {
             type Boolean = BoolVect;
 
             #[inline]
-            fn from_element(value: Self::Element) -> Self {
+            fn splat(value: Self::Element) -> Self {
                 dim1_or_else!(value, Self::splat(value))
             }
 
             #[inline]
-            fn zero() -> Self { Self::from_element(0 as $elem) }
+            fn zero() -> Self { Self::splat(0 as $elem) }
 
             #[inline]
-            fn one() -> Self { Self::from_element(1 as $elem) }
+            fn one() -> Self { Self::splat(1 as $elem) }
         
             #[inline]
-            fn largest_element(self) -> Self::Element {
+            fn max_element(self) -> Self::Element {
                 dim1_or_else!(self, self.max_element())
             }
         
             #[inline]
-            fn smallest_element(self) -> Self::Element {
+            fn min_element(self) -> Self::Element {
                 dim1_or_else!(self, self.min_element())
             }
         
             #[inline]
-            fn ge(self, rhs: Self) -> Self::Boolean {
+            fn cmpge(self, rhs: Self) -> Self::Boolean {
                 dim1_or_else!(self >= rhs, self.cmpge(rhs))
             }
 
@@ -120,18 +118,18 @@ macro_rules! impl_vector_value_ext {
             }
 
             #[inline]
-            fn sum_elements(self) -> Self::Element {
+            fn element_sum(self) -> Self::Element {
                 dim1_or_else!(self, self.element_sum())
             }
 
             #[inline]
-            fn mul_elements(self) -> Self::Element {
+            fn element_product(self) -> Self::Element {
                 dim1_or_else!(self, self.element_product())
             }
 
             #[inline]
             #[allow(unused_mut)]
-            fn map_elements<F>(self, mut f: F) -> Self
+            fn map<F>(self, mut f: F) -> Self
                 where F: FnMut(Self::Element) -> Self::Element
             {
                 dim1_or_else!(f(self), self.map(f))

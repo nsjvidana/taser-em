@@ -39,7 +39,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute slab dimensions
     let wavelen = C_0 / f_max;
-    let slab_extents = [Vect::from_element(-20.), Vect::from_element(-20. + wavelen * 0.5)];
+    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.5)];
     // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -80,7 +80,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let vis_mode = VisualizationMode::default();
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode).await?;
     testbed.window.set_ambient(0.5);
-    testbed.set_clipping_planes(cell_size.smallest_element() / 3., cell_size.largest_element() * 1000.)
+    testbed.set_clipping_planes(cell_size.min_element() / 3., cell_size.max_element() * 1000.)
         .camera
         .look_at(
             grid_center.to_3d(Vec3::Z * grid_extents.length() * 3.),
