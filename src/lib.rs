@@ -5,6 +5,7 @@ pub mod util;
 pub mod re_exports {
     pub use glamx;
     pub use khal;
+    pub use anyhow;
 }
 
 pub use taser_em_shaders as shaders;

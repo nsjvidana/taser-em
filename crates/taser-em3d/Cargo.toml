@@ -38,6 +38,7 @@ rayon = { workspace = true, optional = true }
 itertools.workspace = true
 include_dir.workspace = true
 derivative.workspace = true
+anyhow.workspace = true
 
 [build-dependencies]
 khal-builder.workspace = true

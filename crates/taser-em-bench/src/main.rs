@@ -1,0 +1,52 @@
+use std::num::NonZeroUsize;
+use taser_em2d::prelude::*;
+use taser_em2d::re_exports::anyhow;
+use taser_em2d::re_exports::khal::backend::{Backend, GpuBackend};
+
+const WARM_UP: u32 = 10;
+const BENCH: u32 = 2000;
+
+fn main() -> anyhow::Result<()> {
+    pollster::block_on(bench())
+}
+
+async fn bench() -> anyhow::Result<()> {
+    let stability = FdtdStability::default();
+    let sim_params = FdtdParameters {
+        cell_size: Vect::one(),
+        dt: 1.,
+        polarization_mode: PolarizationMode::TransverseElectric,
+        material_discretization: MaterialDiscretization::Rough
+    };
+    let pml_params = PmlParameters::new(1.);
+    let sim = FdtdLossySimulation::new(sim_params, pml_params);
+
+    let backend = taser_em2d::prelude::create_backend().await?;
+
+    let start = std::time::Instant::now();
+    let mut gpu_data = sim.finalize(&backend, &stability)?;
+    let startup_dur = start.elapsed();
+
+    let pipeline = FdtdLossyPipeline::new(&backend, NonZeroUsize::new(1).unwrap())?;
+    for _ in 0..WARM_UP {
+        backend.synchronize()?;
+        pipeline.submit_steps(&backend, &mut gpu_data, None, |_,_| {Ok(())})?;
+    }
+
+    let start = std::time::Instant::now();
+    for _ in 0..BENCH {
+        backend.synchronize()?;
+        pipeline.submit_steps(&backend, &mut gpu_data, None, |_,_| {Ok(())})?;
+    }
+    let dur = start.elapsed();
+
+    println!("==========2D FDTD Benchmark==========");
+    let backend_name = backend_name(&backend);
+    println!("Running on backend: {backend_name}");
+    println!("Rayon: {}", cfg!(feature = "rayon"));
+    println!("Num cells: {}", gpu_data.n_cells.n_cells_to_3d().element_product());
+    println!("Num trials: {BENCH}");
+    println!("Startup time: {:?}", startup_dur);
+    println!("Average time per step: {:?}", dur / BENCH);
+    Ok(())
+}

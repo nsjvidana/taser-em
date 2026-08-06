@@ -1,0 +1,24 @@
+[package]
+name = "taser-em-bench"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+
+[features]
+default = ["webgpu", "rayon"]
+unsafe_remove_boundchecks = ["taser-em2d/unsafe_remove_boundchecks"]
+rayon = ["taser-em2d/rayon"]
+webgpu = ["taser-em2d/webgpu"]
+metal = ["taser-em2d/metal"]
+cpu = ["taser-em2d/cpu"]
+cpu-parallel = ["cpu", "taser-em2d/cpu-parallel"]
+cuda = ["taser-em2d/cuda"]
+
+[dependencies]
+pollster.workspace = true
+
+[dependencies.taser-em2d]
+path = "../taser-em2d"
+default-features = false

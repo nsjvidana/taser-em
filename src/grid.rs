@@ -15,12 +15,11 @@ use taser_em_shaders::fdtd::{PmlCoefficients, PolarizationModeIndex};
 ///
 /// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
 /// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub enum PolarizationMode {
     /// 1D: Ex, Hy
     /// 2D: Ez, Hx, Hy
     /// 3D: All axes
-    #[default]
     TransverseElectric,
     /// 1D: Ey, Hx
     /// 2D: Ex, Ey, Hz

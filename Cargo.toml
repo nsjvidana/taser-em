@@ -12,6 +12,7 @@ members = [
     "crates/taser-em-shaders3d",
     "crates/taser-em-testbed3d",
     "examples3d",
+    "crates/taser-em-bench",
 ]
 resolver = "2"
 
@@ -41,6 +42,7 @@ itertools = "0.15"
 include_dir = "0.7"
 derivative = "2"
 anyhow = "1"
+pollster = { version = "0.4", features = ["macro"] }
 
 # Internal crates
 taser-em1d = { version = "0.1.0", path = "crates/taser-em1d" }
