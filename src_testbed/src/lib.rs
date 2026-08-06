@@ -13,7 +13,7 @@ use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::*;
 use taser_em::*;
-use taser_em::prelude::{PolarizationMode, Real, VectExt, VectorValueExt};
+use taser_em::prelude::*;
 use crate::util::lerp_colors;
 
 #[cfg(not(feature = "dim1"))]

@@ -1,6 +1,6 @@
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::anyhow;
-use taser_em2d::re_exports::khal::backend::Backend;
+use taser_em2d::re_exports::khal::backend::{Backend, Encoder};
 use taser_em2d::re_exports::khal::Shader;
 
 const WARM_UP: u32 = 10;
@@ -31,13 +31,21 @@ async fn bench() -> anyhow::Result<()> {
     let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, 1)?;
     for _ in 0..WARM_UP {
         backend.synchronize()?;
-        pipeline.submit_steps(&backend, &mut gpu_data, None, |_,_| {Ok(())})?;
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("2d fdtd bench", None);
+        pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
+        drop(pass);
+        backend.submit(encoder)?;
     }
 
     let start = std::time::Instant::now();
     for _ in 0..BENCH {
         backend.synchronize()?;
-        pipeline.submit_steps(&backend, &mut gpu_data, None, |_,_| {Ok(())})?;
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("2d fdtd bench", None);
+        pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
+        drop(pass);
+        backend.submit(encoder)?;
     }
     let dur = start.elapsed();
 

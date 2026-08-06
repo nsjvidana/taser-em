@@ -17,7 +17,7 @@ use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGridMate
 use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuTimestamps};
+use khal::backend::*;
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
@@ -242,20 +242,14 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         })
     }
 
-    // TODO: make this only record dispatches in a GpuPass instead of submitting directly
-    pub fn submit_steps(
+    pub fn dispatch_steps(
         &mut self,
-        backend: &GpuBackend,
+        pass: &mut GpuPass,
         gpu_data: &mut FdtdLossyGpuData,
-        timestamps: Option<&mut GpuTimestamps>,
-        encoding_fn: impl Fn(&mut GpuEncoder, &mut FdtdLossyGpuData) -> GpuResult<()> // TODO: make optional
     ) -> GpuResult<()> {
-        let timestamps = timestamps.filter(|ts| ts.is_idle());
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("fdtd_lossy", timestamps);
         for _ in 0..self.num_steps_per_submission {
             self.boundary_condition.call(
-                &mut pass,
+                pass,
                 &gpu_data.grid_params,
                 &mut gpu_data.h.buffer,
                 &mut gpu_data.dn.buffer,
@@ -263,7 +257,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 gpu_data.thread_count
             )?;
             self.compute_source_terms.call(
-                &mut pass,
+                pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
                 &gpu_data.grid_params,
                 &gpu_data.steps.buffer,
@@ -272,7 +266,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &gpu_data.dipoles,
             )?;
             self.update.call(
-                &mut pass,
+                pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
                 &gpu_data.grid_params,
                 &mut gpu_data.steps.buffer,
@@ -284,9 +278,6 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &gpu_data.source_terms,
             )?;
         }
-        drop(pass);
-        encoding_fn(&mut encoder, gpu_data)?;
-        backend.submit(encoder)?;
         Ok(())
     }
 }

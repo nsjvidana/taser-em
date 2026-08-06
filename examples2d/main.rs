@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::glamx::glam::*;
 use taser_em2d::re_exports::khal;
-use taser_em2d::re_exports::khal::backend::{Backend, Buffer, GpuBackend};
+use taser_em2d::re_exports::khal::backend::*;
 use taser_em2d::re_exports::khal::Shader;
 use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
 
@@ -93,10 +93,14 @@ pub async fn single_rod() -> anyhow::Result<()> {
     while testbed.render_frame(&dn_field).await {
         backend.synchronize()?;
         gpu_data.dn.read(&backend, &mut dn_field).await?;
-        pipeline.submit_steps(&backend, &mut gpu_data, None, |encoder, gpu_data| {
-            gpu_data.dn.encode_copy_cmd(encoder)?;
-            gpu_data.steps.encode_copy_cmd(encoder)
-        })?;
+
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("2d fdtd example", None);
+        pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
+        drop(pass);
+        gpu_data.dn.encode_copy_cmd(&mut encoder)?;
+        gpu_data.steps.encode_copy_cmd(&mut encoder)?;
+        backend.submit(encoder)?;
     }
     let mut steps = vec![0];
     gpu_data.steps.read(&backend, &mut steps).await?;
