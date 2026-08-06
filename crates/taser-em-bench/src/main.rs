@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::anyhow;
-use taser_em2d::re_exports::khal::backend::{Backend, GpuBackend};
+use taser_em2d::re_exports::khal::backend::Backend;
 
 const WARM_UP: u32 = 10;
 const BENCH: u32 = 2000;

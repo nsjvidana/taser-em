@@ -474,7 +474,7 @@ impl TryFrom<Axis> for SpatialAxis {
                 feature = "dim2" => Err(()),
                 _ => Ok(Self::Z),
             },
-            Axis::INVALID => Err(())
+            _ => Err(())
         }
     }
 }
