@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::*;
-use taser_em::{grid_cells_iter, FdtdLossySimulation, FdtdStability, par_iter, par_iter_mut, into_par_iter};
+use taser_em::*;
 use taser_em::prelude::{PolarizationMode, Real, VectExt, VectorValueExt};
 use crate::util::lerp_colors;
 

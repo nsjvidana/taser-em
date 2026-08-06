@@ -1,5 +1,5 @@
 use kiss3d::color::*;
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::NonZeroU32;
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::glamx::glam::*;
 use taser_em3d::re_exports::khal;
@@ -18,7 +18,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let sim_speed = 6;
 
     // Simulation parameters w/ default stability values.
-    let mut stability = FdtdStability {
+    let stability = FdtdStability {
         dt_safety_factor: 8.,
         material_resolution: NonZeroU32::new(3).unwrap(),
         ..Default::default()

@@ -1,4 +1,4 @@
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::NonZeroU32;
 use taser_em1d::prelude::*;
 use taser_em1d::re_exports::glamx::glam::*;
 use taser_em1d::re_exports::khal;

@@ -21,7 +21,7 @@ use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEn
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
-use taser_em_shaders::fdtd::{FdtdLossyUpdate, FdtdSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals};
+use taser_em_shaders::fdtd::{GpuLossyUpdate, GpuComputeSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals};
 use taser_em_shaders::math::*;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -227,8 +227,8 @@ impl FdtdLossySimulation {
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
 pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     boundary_condition: BC,
-    compute_source_terms: FdtdSourceTerms,
-    update: FdtdLossyUpdate,
+    compute_source_terms: GpuComputeSourceTerms,
+    update: GpuLossyUpdate,
     pub num_steps_per_submission: usize,
 }
 
@@ -236,8 +236,8 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> GpuResult<Self> {
         Ok(Self {
             boundary_condition,
-            compute_source_terms: FdtdSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
-            update: FdtdLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+            update: GpuLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             num_steps_per_submission,
         })
     }

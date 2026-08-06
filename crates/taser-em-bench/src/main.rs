@@ -1,4 +1,3 @@
-use std::num::NonZeroUsize;
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::anyhow;
 use taser_em2d::re_exports::khal::backend::Backend;

@@ -1,5 +1,4 @@
 #![allow(clippy::needless_range_loop)]
-// TODO: prefix all kernels w/ "gpu_"
 use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
@@ -35,7 +34,7 @@ pub fn gpu_pec_boundary(
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn fdtd_source_terms(
+pub fn gpu_compute_source_terms(
     #[spirv(global_invocation_id)] idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &u32,
@@ -75,7 +74,7 @@ pub fn fdtd_source_terms(
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn fdtd_lossy_update(
+pub fn gpu_lossy_update(
     #[spirv(global_invocation_id)] idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &mut u32,
