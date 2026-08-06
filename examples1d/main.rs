@@ -1,7 +1,6 @@
 use std::num::NonZeroU32;
 use taser_em1d::prelude::*;
 use taser_em1d::re_exports::glamx::glam::*;
-use taser_em1d::re_exports::khal;
 use taser_em1d::re_exports::khal::backend::*;
 use taser_em1d::re_exports::khal::Shader;
 use taser_em_testbed1d::{FdtdTestbedViewer, VisualizationMode};
@@ -59,15 +58,8 @@ pub async fn single_slab() -> anyhow::Result<()> {
     simulation.add_source(source);
 
     // Set up buffers and pipeline
-    let (backend, backend_name) = cfg_select! {
-        feature = "webgpu" => {{
-            let webgpu = khal::backend::WebGpu::default().await?;
-            (GpuBackend::WebGpu(webgpu), "WebGPU")
-        }}
-        feature = "metal" => {todo!()}
-        feature = "cpu" => { (GpuBackend::Cpu, "CPU") }
-        feature = "cuda" => {todo!()}
-    };
+    let backend = taser_em1d::prelude::create_backend().await?;
+    let backend_name = taser_em1d::prelude::backend_name(&backend);
     println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;

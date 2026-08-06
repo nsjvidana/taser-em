@@ -1,8 +1,7 @@
-use kiss3d::color::*;
+use kiss3d::prelude::*;
 use std::num::NonZeroU32;
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::glamx::glam::*;
-use taser_em3d::re_exports::khal;
 use taser_em3d::re_exports::khal::backend::*;
 use taser_em3d::re_exports::khal::Shader;
 use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
@@ -66,15 +65,8 @@ pub async fn cube() -> anyhow::Result<()> {
     println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
 
     // Set up buffers and pipeline
-    let (backend, backend_name) = cfg_select! {
-        feature = "webgpu" => {{
-            let webgpu = khal::backend::WebGpu::default().await?;
-            (GpuBackend::WebGpu(webgpu), "WebGPU")
-        }}
-        feature = "metal" => {todo!()}
-        feature = "cpu" => { (GpuBackend::Cpu, "CPU") }
-        feature = "cuda" => {todo!()}
-    };
+    let backend = taser_em3d::prelude::create_backend().await?;
+    let backend_name = taser_em3d::prelude::backend_name(&backend);
     println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
