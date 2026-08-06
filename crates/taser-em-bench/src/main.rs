@@ -2,6 +2,7 @@ use std::num::NonZeroUsize;
 use taser_em2d::prelude::*;
 use taser_em2d::re_exports::anyhow;
 use taser_em2d::re_exports::khal::backend::Backend;
+use taser_em2d::re_exports::khal::Shader;
 
 const WARM_UP: u32 = 10;
 const BENCH: u32 = 2000;
@@ -27,7 +28,8 @@ async fn bench() -> anyhow::Result<()> {
     let mut gpu_data = sim.finalize(&backend, &stability)?;
     let startup_dur = start.elapsed();
 
-    let pipeline = FdtdLossyPipeline::new(&backend, NonZeroUsize::new(1).unwrap())?;
+    let boundary_condition = PECBoundary::from_backend(&backend)?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, 1)?;
     for _ in 0..WARM_UP {
         backend.synchronize()?;
         pipeline.submit_steps(&backend, &mut gpu_data, None, |_,_| {Ok(())})?;

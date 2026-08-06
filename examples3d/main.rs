@@ -4,6 +4,7 @@ use taser_em3d::prelude::*;
 use taser_em3d::re_exports::glamx::glam::*;
 use taser_em3d::re_exports::khal;
 use taser_em3d::re_exports::khal::backend::{Backend, Buffer, GpuBackend};
+use taser_em3d::re_exports::khal::Shader;
 use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]
@@ -14,7 +15,7 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = NonZeroUsize::new(6).unwrap();
+    let sim_speed = 6;
 
     // Simulation parameters w/ default stability values.
     let mut stability = FdtdStability {
@@ -76,7 +77,8 @@ pub async fn cube() -> anyhow::Result<()> {
     };
     println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
-    let pipeline = FdtdLossyPipeline::new(&backend, sim_speed)?;
+    let boundary_condition = PECBoundary::from_backend(&backend)?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
 
     // Create viewer and set up camera
     let mut testbed = FdtdTestbedViewer::new(

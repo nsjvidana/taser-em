@@ -1,5 +1,5 @@
 #![allow(clippy::needless_range_loop)]
-
+// TODO: prefix all kernels w/ "gpu_"
 use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
@@ -10,7 +10,7 @@ use khal_std::macros::{spirv, spirv_bindgen};
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn pec_boundary(
+pub fn gpu_pec_boundary(
     #[spirv(global_invocation_id)] idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     // Vector fields

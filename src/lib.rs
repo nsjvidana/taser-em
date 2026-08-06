@@ -10,18 +10,18 @@ pub mod re_exports {
 
 pub use taser_em_shaders as shaders;
 
-use std::num::{NonZeroI32, NonZeroU32, NonZeroUsize};
+use std::num::{NonZeroI32, NonZeroU32};
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGridMaterials};
 use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
-use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuTimestamps};
+use khal::backend::{Backend, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuTimestamps};
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
-use taser_em_shaders::fdtd::{GpuDipole, GridParameters, PmlCoefficients, PmlIntegrals};
+use taser_em_shaders::fdtd::{FdtdLossyUpdate, FdtdSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals};
 use taser_em_shaders::math::*;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -131,26 +131,33 @@ impl FdtdLossySimulation {
                 }
                 incrs
             };
+            let grid_params = GridParameters {
+                flat_idx_incrs,
+                n_cells3: n_cells.n_cells_to_3d(),
+                d: cell_size.to_3d(Vec3::ZERO),
+                polarization_mode_index: polarization_mode.into(),
+                _padding1: 0,
+                _padding2: 0,
+            };
 
             let cell_count = n_cells.mul_elements() as usize;
             let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
             FdtdLossyGpuData {
+                // Uniforms / thread-independent vars
+                grid_params: grid_params.create_gpu_uniform(backend)?,
+                steps: 0.create_gpu_buffer_readable(backend)?,
+                // Vector fields
                 h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
                 en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
-                grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
+                // For computing source terms
                 dipoles: dipoles.create_gpu_buffer(backend)?,
                 source_vals: source_vals.create_gpu_buffer(backend)?,
-                steps: 0.create_gpu_buffer_readable(backend)?,
-                grid_params: GridParameters {
-                    flat_idx_incrs,
-                    n_cells3: n_cells.n_cells_to_3d(),
-                    d: cell_size.to_3d(Vec3::ZERO),
-                    polarization_mode_index: polarization_mode.into(),
-                    _padding1: 0,
-                    _padding2: 0,
-                }.create_gpu_uniform(backend)?,
+                // For update equation terms
+                source_terms: zeroed_vector_field.create_gpu_buffer(backend)?,
+                int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
+                grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
+                // Misc data
                 thread_count: n_cells.n_cells_to_3d().to_array(),
                 n_cells
             }
@@ -191,9 +198,10 @@ impl FdtdLossySimulation {
         let n_cells_vec3 = (simulation_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
         let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
 
-        let n_cells_spacer = stability.spacer_region_widths
+        let mut n_cells = stability.spacer_region_widths
             .sum_with_n_cells(materials_n_cells);
-        self.pml_parameters.widths.sum_with_n_cells(n_cells_spacer)
+        n_cells = self.pml_parameters.widths.sum_with_n_cells(n_cells);
+        LayerWidths::splat_spatial(1).sum_with_n_cells(n_cells)
     }
 
     /// Compute the bounding box surrounding all objects and sources in the simulation.
@@ -216,42 +224,64 @@ impl FdtdLossySimulation {
     }
 }
 
-pub struct FdtdLossyPipeline {
-    kernel: FdtdWithLoss,
-    num_steps_per_submission: usize,
+/// The shader pipeline for running diagonal anisotropy simulation with UPML.
+pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
+    boundary_condition: BC,
+    compute_source_terms: FdtdSourceTerms,
+    update: FdtdLossyUpdate,
+    pub num_steps_per_submission: usize,
 }
 
-impl FdtdLossyPipeline {
-    pub fn new(backend: &GpuBackend, num_steps_per_submission: NonZeroUsize) -> GpuResult<Self> {
+impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
+    pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> GpuResult<Self> {
         Ok(Self {
-            kernel: FdtdWithLoss::from_backend(backend)?,
-            num_steps_per_submission: num_steps_per_submission.get(),
+            boundary_condition,
+            compute_source_terms: FdtdSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+            update: FdtdLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            num_steps_per_submission,
         })
     }
 
+    // TODO: make this only record dispatches in a GpuPass instead of submitting directly
     pub fn submit_steps(
-        &self,
+        &mut self,
         backend: &GpuBackend,
         gpu_data: &mut FdtdLossyGpuData,
         timestamps: Option<&mut GpuTimestamps>,
-        encoding_fn: impl Fn(&mut GpuEncoder, &mut FdtdLossyGpuData) -> GpuResult<()>
+        encoding_fn: impl Fn(&mut GpuEncoder, &mut FdtdLossyGpuData) -> GpuResult<()> // TODO: make optional
     ) -> GpuResult<()> {
         let timestamps = timestamps.filter(|ts| ts.is_idle());
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("fdtd_lossy", timestamps);
         for _ in 0..self.num_steps_per_submission {
-            self.kernel.call(
+            self.boundary_condition.call(
+                &mut pass,
+                &gpu_data.grid_params,
+                &mut gpu_data.h.buffer,
+                &mut gpu_data.dn.buffer,
+                &mut gpu_data.en.buffer,
+                gpu_data.thread_count
+            )?;
+            self.compute_source_terms.call(
                 &mut pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
+                &gpu_data.grid_params,
+                &gpu_data.steps.buffer,
+                &mut gpu_data.source_terms,
+                &gpu_data.source_vals,
+                &gpu_data.dipoles,
+            )?;
+            self.update.call(
+                &mut pass,
+                DispatchGrid::ThreadCount(gpu_data.thread_count),
+                &gpu_data.grid_params,
+                &mut gpu_data.steps.buffer,
                 &mut gpu_data.h.buffer,
                 &mut gpu_data.dn.buffer,
                 &mut gpu_data.en.buffer,
                 &mut gpu_data.int_terms,
                 &gpu_data.grid_coeffs,
-                &gpu_data.dipoles,
-                &gpu_data.source_vals,
-                &mut gpu_data.steps.buffer,
-                &gpu_data.grid_params,
+                &gpu_data.source_terms,
             )?;
         }
         drop(pass);
@@ -260,31 +290,6 @@ impl FdtdLossyPipeline {
         Ok(())
     }
 }
-
-macro_rules! shader_struct {
-    ($name:ident, $inner:ty) => {
-        #[derive(Shader)]
-        pub struct $name {
-            kernel: $inner
-        }
-
-        impl AsRef<$inner> for $name {
-            fn as_ref(&self) -> &$inner {
-                &self.kernel
-            }
-        }
-
-        impl std::ops::Deref for $name {
-            type Target = $inner;
-
-            fn deref(&self) -> &Self::Target {
-                &self.kernel
-            }
-        }
-    };
-}
-
-shader_struct!(FdtdWithLoss, taser_em_shaders::fdtd::FdtdLossy);
 
 #[derive(Clone, Debug)]
 pub struct FdtdParameters {
@@ -304,17 +309,23 @@ pub enum MaterialDiscretization {
 
 /// Buffers and data needed for running the shader
 pub struct FdtdLossyGpuData {
+    // Uniforms / thread-independent vars
+    pub grid_params: GpuBuffer<GridParameters>,
+    pub steps: GpuBufferReadable<u32>,
+    // Vector fields
     pub h: GpuBufferReadable<Vec4>,
     pub dn: GpuBufferReadable<Vec4>,
     pub en: GpuBufferReadable<Vec4>,
-    pub int_terms: GpuBuffer<PmlIntegrals>,
-    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
+    // For computing source terms
     pub dipoles: GpuBuffer<GpuDipole>,
     pub source_vals: GpuBuffer<f32>,
-    pub steps: GpuBufferReadable<u32>,
-    pub grid_params: GpuBuffer<GridParameters>,
+    // For update equation terms
+    pub source_terms: GpuBuffer<Vec4>,
+    pub int_terms: GpuBuffer<PmlIntegrals>,
+    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
+    // Misc data
     pub thread_count: [u32; 3],
-    pub n_cells: GridIndex,
+    pub n_cells: GridIndex
 }
 
 /// Parameters judging how the PML will be constructed in the simulation
@@ -482,6 +493,46 @@ impl Source {
             t += dt;
         }
         vals
+    }
+}
+
+pub trait BoundaryCondition {
+    // TODO: might need different parameters for anisotropy...
+    fn call(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        dn: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> GpuResult<()>;
+}
+
+#[derive(Shader)]
+pub struct PECBoundary {
+    kernel: GpuPecBoundary
+}
+
+impl BoundaryCondition for PECBoundary {
+    fn call(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        dn: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3]
+    ) -> GpuResult<()>
+    {
+        self.kernel.call(
+            pass,
+            DispatchGrid::ThreadCount(thread_count),
+            grid,
+            h,
+            dn,
+            en
+        )
     }
 }
 
