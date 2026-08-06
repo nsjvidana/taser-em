@@ -18,13 +18,14 @@ pub fn gpu_pec_boundary(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] dn: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &mut [Vec4],
 ) {
-    let lo_boundary = idx3.cmpeq(UVec3::ZERO).any();
-    let hi_boundary = idx3.cmpeq(grid.n_cells3 - 1).any();
+    let cell_idx = GridIndex::from_uvec3(idx3);
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let lo_boundary = cell_idx.cmpeq(GridIndex::zero()).any();
+    let hi_boundary = cell_idx.cmpeq(n_cells - 1).any();
     let out_of_bounds = idx3.cmpge(grid.n_cells3).any();
     if !(lo_boundary || hi_boundary) || out_of_bounds { return; }
 
-    let idx = GridIndex::from_uvec3(idx3)
-        .to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
+    let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
     h.write(idx, Vec4::ZERO);
     dn.write(idx, Vec4::ZERO);
     en.write(idx, Vec4::ZERO);
@@ -43,10 +44,11 @@ pub fn fdtd_source_terms(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
     // TODO: #[spirv(storage_buffer, descriptor_set = 0, binding = )] plane_waves: &[GpuPlaneWave],
 ) {
-    if skip_update(idx3, grid.n_cells3) { return; }
+    let cell_idx = GridIndex::from_uvec3(idx3);
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    if skip_update(cell_idx, n_cells, idx3, grid.n_cells3) { return; }
 
-    let idx = GridIndex::from_uvec3(idx3)
-        .to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let mut source_term = Vec4::ZERO;
     let curr_step = *steps;
@@ -86,10 +88,11 @@ pub fn fdtd_lossy_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[Vec4],
 ) {
-    if skip_update(idx3, grid.n_cells3) { return; }
+    let cell_idx = GridIndex::from_uvec3(idx3);
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    if skip_update(cell_idx, n_cells, idx3, grid.n_cells3) { return; }
 
-    let idx = GridIndex::from_uvec3(idx3)
-        .to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let source_term = source_terms.read(idx);
     let coeffs = grid_coeffs.read(idx);
@@ -149,15 +152,16 @@ pub fn fdtd_lossy_update(
 
     integrals.write(idx, ints);
 
-    if idx3 == UVec3::ZERO {
+    if cell_idx == GridIndex::one() {
         *steps += 1;
     }
 }
 
-fn skip_update(idx3: UVec3, n_cells3: UVec3) -> bool {
-    let lo_boundary = idx3.cmpeq(UVec3::ZERO).any();
-    let hi_bound_or_out_of_bounds = idx3.cmpge(n_cells3 - 1).any();
-    lo_boundary || hi_bound_or_out_of_bounds
+fn skip_update(cell_idx: GridIndex, n_cells: GridIndex, idx3: UVec3, n_cells3: UVec3) -> bool {
+    let lo_boundary = cell_idx.cmpeq(GridIndex::zero()).any();
+    let hi_boundary = cell_idx.cmpeq(n_cells - 1).any();
+    let out_of_bounds = idx3.cmpge(n_cells3).any();
+    lo_boundary || hi_boundary || out_of_bounds
 }
 
 /// Forwards & backwards discrete curl

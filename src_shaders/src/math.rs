@@ -54,6 +54,8 @@ pub trait VectExt: VectorValueExt {
 }
 
 /// A trait with functions for general vector values
+// TODO: rename methods to exact names as glam's inherent methods.
+//       Rust's method resolution rules will work w/ it.
 pub trait VectorValueExt: Sized {
     type Element;
     type Boolean;
@@ -63,6 +65,7 @@ pub trait VectorValueExt: Sized {
     fn largest_element(self) -> Self::Element;
     fn smallest_element(self) -> Self::Element;
     fn ge(self, rhs: Self) -> Self::Boolean;
+    fn cmpeq(self, rhs: Self) -> Self::Boolean;
     fn sum_elements(self) -> Self::Element;
     fn mul_elements(self) -> Self::Element;
     fn map_elements<F>(self, f: F) -> Self
@@ -109,6 +112,11 @@ macro_rules! impl_vector_value_ext {
             #[inline]
             fn ge(self, rhs: Self) -> Self::Boolean {
                 dim1_or_else!(self >= rhs, self.cmpge(rhs))
+            }
+
+            #[inline]
+            fn cmpeq(self, rhs: Self) -> Self::Boolean {
+                dim1_or_else!(self == rhs, self.cmpeq(rhs))
             }
 
             #[inline]

@@ -326,10 +326,15 @@ impl PmlCoefficientsGrid {
 
         // PML conductivity terms (1D slices along each axis)
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
+            let hi_boundary = (n_cells3[axis] - 1)*2;
+            let lo_boundary = 0;
+            const HALF_CELL: Index = 1;
+            const ONE_CELL: Index = HALF_CELL*2;
             (0..n_cells3[axis]*2)
                 .map(|i| {
-                    let lo_dist = i as Real;
-                    let hi_dist = ((n_cells3[axis]*2 - 1) - i) as Real;
+                    if i == lo_boundary || i >= hi_boundary { return 0. }
+                    let lo_dist = i.abs_diff(lo_boundary + ONE_CELL) as Real;
+                    let hi_dist = i.abs_diff(hi_boundary - HALF_CELL) as Real;
                     let lo_t = (1. - lo_dist / (pml_widths[axis].lo*2) as Real)
                         .clamp(0., 1.);
                     let hi_t = (1. - hi_dist / (pml_widths[axis].hi*2) as Real)
