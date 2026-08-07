@@ -53,11 +53,12 @@ pub async fn cube() -> anyhow::Result<()> {
     simulation.material_regions.fill_region(box_min, box_max, mat);
 
     // Compute source position and gaussian curve data points
-    let source = Source::Dipole {
-        position: box_center - (box_extents.with_yz(Vec2::ZERO) / 2.) - Vec3::ZERO.with_x(wavelen),
-        t_start: 0.,
+    let source = Source::PlaneWave {
+        spatial_axis: SpatialAxis::X,
+        position: box_center.x - (box_extents.x / 2.) - wavelen,
+        direction: WaveDirection::Positive,
+        t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec3::Z
     };
     simulation.add_source(source);
 

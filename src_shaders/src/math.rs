@@ -506,6 +506,17 @@ impl TryFrom<u32> for SpatialAxis {
     }
 }
 
+impl Default for SpatialAxis {
+    fn default() -> Self {
+        Self::try_from(0).unwrap()
+    }
+}
+
+// SAFETY: SpatialAxis has a zero variant for every dim feature.
+unsafe impl Zeroable for SpatialAxis {}
+// SAFETY: SpatialAxis has u32 representation, and u32 is also POD.
+unsafe impl Pod for SpatialAxis {}
+
 macro_rules! impl_vector_indexing {
     ($v:ident, $elem_ty:ty, $axis_ty:ty, $dims: expr) => {
         impl core::ops::Index<$axis_ty> for $v {

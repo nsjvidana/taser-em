@@ -250,10 +250,10 @@ pub struct GridParameters {
     pub flat_idx_incrs: UVec3,
     pub polarization_mode_index: PolarizationModeIndex,
     pub n_cells3: UVec3,
-    pub _padding1: u32,
+    pub half_dt: Real,
     /// Spatial differentials (cell size)
     pub d: Vec3,
-    pub _padding2: u32,
+    pub _padding0: u32,
 }
 
 /// A newtype of an index representing the polarization mode.
@@ -327,7 +327,7 @@ pub struct PmlIntegrals {
     pub dn: Vec4,
 }
 
-/// An electric dipole source
+/// A dipole source
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct GpuDipole {
@@ -337,4 +337,26 @@ pub struct GpuDipole {
     pub t_start: u32,
     pub moment: Vec4,
     // TODO: pub repeat_count: u32,
+}
+
+/// A plane wave source
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct GpuPlaneWave {
+    pub axis: SpatialAxis,
+    pub direction: i32,
+    pub position_idx: u32,
+    pub vals_start: u32,
+    pub vals_end: u32,
+    pub t_start: u32,
+    pub _padding0: [u32; 2],
+    // TODO: pub repeat_count: u32,
+}
+
+/// Coefficients for resolving plane wave correction terms
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct PlaneWaveCoeffs {
+    pub half_cell_delay_coeff: Vec3, // t + ...(refractive_idx / (2. * C_0)) * d[axis]... + grid.half_dt;
+    pub val_coeff: Real, // -sqrt(eps_r / mu_r)... * src_val
 }

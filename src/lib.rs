@@ -21,7 +21,7 @@ use khal::backend::*;
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
-use taser_em_shaders::fdtd::{GpuLossyUpdate, GpuComputeSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals};
+use taser_em_shaders::fdtd::{GpuLossyUpdate, GpuComputeSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals, GpuPlaneWave};
 use taser_em_shaders::math::*;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -95,29 +95,54 @@ impl FdtdLossySimulation {
             let regions_offset = Vect::from_vec3(regions_offset);
             let mut dipoles = self.sources.iter()
                 .filter_map(|source| {
-                    match source {
-                        Source::Dipole { position, t_start, vals, moment } => {
-                            let pos = (regions_offset + position) / cell_size;
-                            let cell_grid_idx = pos.as_grid_index();
-                            debug_assert!(
-                                !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
-                                "negative source position!"
-                            );
-                            let start = source_vals.len();
-                            source_vals.extend_from_slice(vals);
-                            Some(GpuDipole {
-                                cell_idx: cell_grid_idx.to_flat_idx(n_cells),
-                                vals_start: start as u32,
-                                vals_end: source_vals.len() as u32 - 1,
-                                t_start: (t_start / dt) as u32,
-                                moment: Vec4::from((*moment, 0.)),
-                            })
-                        },
-                        _ => None
-                    }
+                    let Source::Dipole { position, t_start, vals, moment } = source else {
+                        return None;
+                    };
+                    let pos = (regions_offset + position) / cell_size;
+                    let cell_grid_idx = pos.as_grid_index();
+                    debug_assert!(
+                        !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
+                        "negative source position!"
+                    );
+                    let start = source_vals.len();
+                    source_vals.extend_from_slice(vals);
+                    Some(GpuDipole {
+                        cell_idx: cell_grid_idx.to_flat_idx(n_cells),
+                        vals_start: start as u32,
+                        vals_end: source_vals.len() as u32 - 1,
+                        t_start: (t_start / dt) as u32,
+                        moment: Vec4::from((*moment, 0.)),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut plane_waves = self.sources.iter()
+                .filter_map(|source| {
+                    let Source::PlaneWave {
+                        spatial_axis, position, direction, t_start, vals
+                    } = source else { return None; };
+                    let axis = Axis::from(*spatial_axis);
+                    let pos = (regions_offset[axis] + position) / cell_size[*spatial_axis];
+                    let position_idx = pos as Index;
+                    debug_assert!(
+                        !pos.is_sign_negative() && !GridIndex::splat(position_idx).cmpge(n_cells).any(),
+                        "negative source position!"
+                    );
+
+                    let start = source_vals.len();
+                    source_vals.extend_from_slice(vals);
+                    Some(GpuPlaneWave {
+                        axis: *spatial_axis,
+                        direction: *direction as i32,
+                        position_idx,
+                        vals_start: start as u32,
+                        vals_end: source_vals.len() as u32 - 1,
+                        t_start: (t_start / dt) as u32,
+                        _padding0: [0; 2]
+                    })
                 })
                 .collect::<Vec<_>>();
             if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
+            if plane_waves.is_empty() { plane_waves.push(GpuPlaneWave::default()) }
             if source_vals.is_empty() { source_vals.push(0.0); }
 
             let flat_idx_incrs = {
@@ -136,8 +161,8 @@ impl FdtdLossySimulation {
                 n_cells3: n_cells.n_cells_to_3d(),
                 d: cell_size.to_3d(Vec3::ZERO),
                 polarization_mode_index: polarization_mode.into(),
-                _padding1: 0,
-                _padding2: 0,
+                half_dt: dt / 2.,
+                _padding0: 0,
             };
 
             let cell_count = n_cells.element_product() as usize;
@@ -430,24 +455,31 @@ impl ElectricMaterial {
 
 /// Inject energy into the simulation in various ways.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Source {
-    /// Electric Dipole
+    /// Dipole (magnetic or electric).
     Dipole {
-        /// The position in space where the source should be injected
+        /// The position in space where the source should be injected.
         position: Vect,
-        /// How long to wait until the source should enable (in seconds)
+        /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
         t_start: f32,
-        /// Signal data points
+        /// Signal data points.
         vals: Vec<f32>,
+        /// The axis on which the dipole moves. **Must** be a **unit vector** (unless
+        /// you want to scale `vals` by the magnitude of `moment`).
         moment: Vec3,
     },
-    /// A plane wave traveling along an axis (positive direction)
+    /// A plane wave traveling along an axis (positive direction).
     PlaneWave { // TODO: Implement plane wave in shader
-        /// The axis along which the plane wave will travel.
-        axis: SpatialAxis,
-        /// How long to wait until the source should enable (in seconds)
+        /// The spatial axis along which the plane wave will travel.
+        spatial_axis: SpatialAxis,
+        /// Position of the plane wave, along `spatial_axis`, in world coordinates.
+        position: Real,
+        /// The direction along `spatial_axis` the wave will travel in.
+        direction: WaveDirection,
+        /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
         t_start: f32,
-        /// Signal data points
+        /// Signal data points.
         vals: Vec<f32>
     }
 }
@@ -485,6 +517,13 @@ impl Source {
         }
         vals
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(i32)]
+pub enum WaveDirection {
+    Positive = 1,
+    Negative = -1,
 }
 
 pub trait BoundaryCondition {
