@@ -90,7 +90,7 @@ pub fn gpu_compute_source_terms(
             }};
         }
 
-        let cell_pos_idx = cell_idx[spatial_axis];
+        let cell_pos_idx = cell_idx.dyn_idx(spatial_axis);
         let is_tf = cell_pos_idx == position_idx; // if cell is on total-field edge
         let is_sf = cell_pos_idx as i32 == position_idx as i32 - direction; // if cell is on scattered-field edge
         // Future source value (to simulate total-field quantities when computing curl)
