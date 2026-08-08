@@ -183,6 +183,7 @@ pub fn gpu_lossy_update(
         en
     );
     let h_self = h.read(idx);
+    #[cfg_attr(feature = "dim1", allow(unused_mut))]
     let mut h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
         h_source_term;
     #[cfg(any(feature = "dim2", feature = "dim3"))]
@@ -207,6 +208,7 @@ pub fn gpu_lossy_update(
     );
     let dn_self = dn.read(idx);
     ints.en += en_self;
+    #[cfg_attr(feature = "dim1", allow(unused_mut))]
     let mut dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
         coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en +
         dn_source_term;
