@@ -560,6 +560,50 @@ impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 impl_vector_indexing!(Vect, Real, SpatialAxis, DIM);
 impl_vector_indexing!(GridIndex, Index, SpatialAxis, DIM);
 
+/// A trait for indexing w/ a dynamic index.
+///
+///
+/// Since SPIR-V's "OpVectorExtractDynamic" / "OpVectorInsertDynamic" isn't available with khal,
+/// we have this trait.
+pub trait GpuDynamicIndex<Idx: ?Sized> {
+    type Output: ?Sized;
+
+    fn dyn_idx(&self, index: Idx) -> Self::Output;
+    fn dyn_insert(&mut self, index: Idx, val: Self::Output);
+}
+
+macro_rules! impl_vector_gpu_indexing {
+    ($v:ident, $elem_ty:ty, $axis_ty:ty, $to_array_fn:ident, $from_array_fn:ident) => {
+        impl GpuDynamicIndex<$axis_ty> for $v {
+            type Output = $elem_ty;
+
+            #[inline]
+            fn dyn_idx(&self, index: $axis_ty) -> Self::Output {
+                let self_copy = (*self).$to_array_fn();
+                self_copy[index as usize]
+            }
+
+            #[inline]
+            fn dyn_insert(&mut self, index: $axis_ty, val: Self::Output) {
+                let mut self_copy = (*self).$to_array_fn();
+                self_copy[index as usize] = val;
+                *self = <$v>::$from_array_fn(self_copy);
+            }
+        }
+    };
+}
+
+// impl_vector_gpu_indexing!(Index, Index, Axis, to_array, from_arr);
+// impl_vector_gpu_indexing!(Real, Real, Axis, to_array, from_arr);
+impl_vector_gpu_indexing!(UVec2, Index, Axis, to_array, from);
+impl_vector_gpu_indexing!(Vec2, Real, Axis, to_array, from);
+impl_vector_gpu_indexing!(UVec3, Index, Axis, to_array, from);
+impl_vector_gpu_indexing!(Vec3, Real, Axis, to_array, from);
+impl_vector_gpu_indexing!(Vec4, Real, Axis, to_array, from);
+
+impl_vector_gpu_indexing!(Vect, Real, SpatialAxis, into_array, from_array);
+impl_vector_gpu_indexing!(GridIndex, Index, SpatialAxis, into_array, from_index_array);
+
 /// A trait that computes `a.saturating_sub(b)` on the GPU.
 /// Rust-GPU doesn't have the core library's `saturating_sub()` implemented yet, so we have this trait.
 pub trait GpuSaturatingSub {
