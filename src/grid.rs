@@ -445,6 +445,14 @@ impl PlaneWaveCoefficientsGrid {
         par_iter_mut!(coeffs)
             .enumerate()
             .for_each(|(i, c)| {
+                let cell_idx = GridIndex::from_flat_idx(i as Index, mat_grid.n_cells);
+                let is_tfsf_cell = plane_waves.iter()
+                    .any(|w| {
+                        let cell_pos_idx = cell_idx[w.spatial_axis];
+                        cell_pos_idx == w.position_idx
+                    });
+                if !is_tfsf_cell { return; } // Skip cells that don't need their coeffs computed
+
                 let mat = &mat_grid.materials[i];
                 // TODO: Things to try: negate half_dt here
                 //                      negate 1st term of t_offset
