@@ -572,6 +572,31 @@ pub trait GpuDynamicIndex<Idx: ?Sized> {
     fn dyn_insert(&mut self, index: Idx, val: Self::Output);
 }
 
+
+macro_rules! impl_vector_gpu_indexing_1d {
+    ($v:ident, $elem_ty:ty, $axis_ty:ty) => {
+        impl GpuDynamicIndex<$axis_ty> for $v {
+            type Output = $elem_ty;
+
+            #[inline]
+            fn dyn_idx(&self, index: $axis_ty) -> Self::Output {
+                let self_copy = [*self];
+                self_copy[index as usize]
+            }
+
+            #[inline]
+            fn dyn_insert(&mut self, index: $axis_ty, val: Self::Output) {
+                let mut self_copy = [*self];
+                self_copy[index as usize] = val;
+                *self = self_copy[0];
+            }
+        }
+    };
+}
+
+impl_vector_gpu_indexing_1d!(Index, Index, Axis);
+impl_vector_gpu_indexing_1d!(Real, Real, Axis);
+
 macro_rules! impl_vector_gpu_indexing {
     ($v:ident, $elem_ty:ty, $axis_ty:ty, $to_array_fn:ident, $from_array_fn:ident) => {
         impl GpuDynamicIndex<$axis_ty> for $v {
@@ -593,8 +618,6 @@ macro_rules! impl_vector_gpu_indexing {
     };
 }
 
-// impl_vector_gpu_indexing!(Index, Index, Axis, to_array, from_arr);
-// impl_vector_gpu_indexing!(Real, Real, Axis, to_array, from_arr);
 impl_vector_gpu_indexing!(UVec2, Index, Axis, to_array, from);
 impl_vector_gpu_indexing!(Vec2, Real, Axis, to_array, from);
 impl_vector_gpu_indexing!(UVec3, Index, Axis, to_array, from);
