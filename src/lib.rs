@@ -13,7 +13,7 @@ pub use taser_em_shaders as shaders;
 use std::num::{NonZeroI32, NonZeroU32};
 
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
-use crate::grid::{LayerWidths, MaterialRegions, PmlCoefficientsGrid, YeeGridMaterials};
+use crate::grid::{LayerWidths, MaterialRegions, PlaneWaveCoefficientsGrid, PmlCoefficientsGrid, YeeGridMaterials};
 use crate::prelude::{GpuResult, PolarizationMode};
 use derivative::Derivative;
 use glamx::{UVec3, Vec3, Vec4};
@@ -21,7 +21,7 @@ use khal::backend::*;
 use khal::re_exports::include_dir::{include_dir, Dir};
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
-use taser_em_shaders::fdtd::{GpuLossyUpdate, GpuComputeSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals, GpuPlaneWave};
+use taser_em_shaders::fdtd::{GpuLossyUpdate, GpuComputeSourceTerms, GpuDipole, GpuPecBoundary, GridParameters, PmlCoefficients, PmlIntegrals, GpuPlaneWave, PlaneWaveCoeffs, SourceTerms};
 use taser_em_shaders::math::*;
 
 pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
@@ -90,102 +90,111 @@ impl FdtdLossySimulation {
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
         let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
 
-        let buffers = {
-            let mut source_vals: Vec<Real> = vec![];
-            let regions_offset = Vect::from_vec3(regions_offset);
-            let mut dipoles = self.sources.iter()
-                .filter_map(|source| {
-                    let Source::Dipole { position, t_start, vals, moment } = source else {
-                        return None;
-                    };
-                    let pos = (regions_offset + position) / cell_size;
-                    let cell_grid_idx = pos.as_grid_index();
-                    debug_assert!(
-                        !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
-                        "negative source position!"
-                    );
-                    let start = source_vals.len();
-                    source_vals.extend_from_slice(vals);
-                    Some(GpuDipole {
-                        cell_idx: cell_grid_idx.to_flat_idx(n_cells),
-                        vals_start: start as u32,
-                        vals_end: source_vals.len() as u32 - 1,
-                        t_start: (t_start / dt) as u32,
-                        moment: Vec4::from((*moment, 0.)),
-                    })
+        let mut source_vals: Vec<Real> = vec![];
+        let regions_offset = Vect::from_vec3(regions_offset);
+        let mut dipoles = self.sources.iter()
+            .filter_map(|source| {
+                let Source::Dipole { position, t_start, vals, moment } = source else {
+                    return None;
+                };
+                let pos = (regions_offset + position) / cell_size;
+                let cell_grid_idx = pos.as_grid_index();
+                debug_assert!(
+                    !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
+                    "negative source position!"
+                );
+                let start = source_vals.len();
+                source_vals.extend_from_slice(vals);
+                Some(GpuDipole {
+                    cell_idx: cell_grid_idx.to_flat_idx(n_cells),
+                    vals_start: start as u32,
+                    vals_end: source_vals.len() as u32 - 1,
+                    t_start: (t_start / dt) as u32,
+                    moment: Vec4::from((*moment, 0.)),
                 })
-                .collect::<Vec<_>>();
-            let mut plane_waves = self.sources.iter()
-                .filter_map(|source| {
-                    let Source::PlaneWave {
-                        spatial_axis, position, direction, t_start, vals
-                    } = source else { return None; };
-                    let axis = Axis::from(*spatial_axis);
-                    let pos = (regions_offset[axis] + position) / cell_size[*spatial_axis];
-                    let position_idx = pos as Index;
-                    debug_assert!(
-                        !pos.is_sign_negative() && !GridIndex::splat(position_idx).cmpge(n_cells).any(),
-                        "negative source position!"
-                    );
+            })
+            .collect::<Vec<_>>();
+        let mut plane_waves = self.sources.iter()
+            .filter_map(|source| {
+                let Source::PlaneWave {
+                    spatial_axis, position, direction, t_start, vals
+                } = source else { return None; };
+                let axis = Axis::from(*spatial_axis);
+                let pos = (regions_offset[axis] + position) / cell_size[*spatial_axis];
+                let position_idx = pos as Index;
+                debug_assert!(
+                    !pos.is_sign_negative() && !GridIndex::splat(position_idx).cmpge(n_cells).any(),
+                    "negative source position!"
+                );
 
-                    let start = source_vals.len();
-                    source_vals.extend_from_slice(vals);
-                    Some(GpuPlaneWave {
-                        spatial_axis: *spatial_axis,
-                        direction: *direction as i32,
-                        position_idx,
-                        vals_start: start as u32,
-                        vals_end: source_vals.len() as u32 - 1,
-                        t_start: (t_start / dt) as u32,
-                        _padding0: [0; 2]
-                    })
+                let start = source_vals.len();
+                source_vals.extend_from_slice(vals);
+                Some(GpuPlaneWave {
+                    spatial_axis: *spatial_axis,
+                    direction: *direction as i32,
+                    position_idx,
+                    vals_start: start as u32,
+                    vals_end: source_vals.len() as u32 - 1,
+                    t_start: (t_start / dt) as u32,
+                    _padding0: [0; 2]
                 })
-                .collect::<Vec<_>>();
-            if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
-            if plane_waves.is_empty() { plane_waves.push(GpuPlaneWave::default()) }
-            if source_vals.is_empty() { source_vals.push(0.0); }
+            })
+            .collect::<Vec<_>>();
+        if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
+        if plane_waves.is_empty() { plane_waves.push(GpuPlaneWave::default()) }
+        if source_vals.is_empty() { source_vals.push(0.0); }
 
-            let flat_idx_incrs = {
-                let mut incrs = UVec3::ZERO;
-                for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
-                    .zip(SpatialAxis::ALL_AXES)
-                {
-                    let mut grid_incr = GridIndex::default();
-                    grid_incr[spatial_axis] = 1;
-                    incrs[axis] = grid_incr.to_flat_idx(n_cells);
-                }
-                incrs
-            };
-            let grid_params = GridParameters {
-                flat_idx_incrs,
-                n_cells3: n_cells.n_cells_to_3d(),
-                d: cell_size.to_3d(Vec3::ZERO),
-                polarization_mode_index: polarization_mode.into(),
-                half_dt: dt / 2.,
-                _padding0: 0,
-            };
+        let plane_wave_coeffs_grid = PlaneWaveCoefficientsGrid::new(
+            &grid_mats, &plane_waves, dt / 2.
+        );
 
-            let cell_count = n_cells.element_product() as usize;
-            let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
-            FdtdLossyGpuData {
-                // Uniforms / thread-independent vars
-                grid_params: grid_params.create_gpu_uniform(backend)?,
-                steps: 0.create_gpu_buffer_readable(backend)?,
-                // Vector fields
-                h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-                // For computing source terms
-                dipoles: dipoles.create_gpu_buffer(backend)?,
-                source_vals: source_vals.create_gpu_buffer(backend)?,
-                // For update equation terms
-                source_terms: zeroed_vector_field.create_gpu_buffer(backend)?,
-                int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
-                grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
-                // Misc data
-                thread_count: n_cells.n_cells_to_3d().to_array(),
-                n_cells
+        let flat_idx_incrs = {
+            let mut incrs = UVec3::ZERO;
+            for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
+                .zip(SpatialAxis::ALL_AXES)
+            {
+                let mut grid_incr = GridIndex::default();
+                grid_incr[spatial_axis] = 1;
+                incrs[axis] = grid_incr.to_flat_idx(n_cells);
             }
+            incrs
+        };
+
+        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
+        let grid_params = GridParameters {
+            flat_idx_incrs,
+            n_cells3: n_cells.n_cells_to_3d(),
+            dt,
+            d: cell_size3,
+            inv_dt: dt.recip(),
+            polarization_mode_index: polarization_mode.into(),
+            _padding0: 0,
+            inv_d: cell_size3.recip(),
+        };
+
+        let cell_count = n_cells.element_product() as usize;
+        let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
+
+        let buffers = FdtdLossyGpuData {
+            // Uniforms / thread-independent vars
+            grid_params: grid_params.create_gpu_uniform(backend)?,
+            steps: 0.create_gpu_buffer_readable(backend)?,
+            // Vector fields
+            h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+            dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+            en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+            // For computing source terms
+            dipoles: dipoles.create_gpu_buffer(backend)?,
+            plane_waves: plane_waves.create_gpu_buffer(backend)?,
+            source_vals: source_vals.create_gpu_buffer(backend)?,
+            plane_wave_coeffs: plane_wave_coeffs_grid.coeffs.create_gpu_buffer(backend)?,
+            // For update equation terms
+            source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
+            int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
+            grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
+            // Misc data
+            thread_count: n_cells.n_cells_to_3d().to_array(),
+            n_cells
         };
 
         Ok(buffers)
@@ -289,6 +298,8 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &mut gpu_data.source_terms,
                 &gpu_data.source_vals,
                 &gpu_data.dipoles,
+                &gpu_data.plane_waves,
+                &gpu_data.plane_wave_coeffs,
             )?;
             self.update.call(
                 pass,
@@ -334,14 +345,16 @@ pub struct FdtdLossyGpuData {
     pub en: GpuBufferReadable<Vec4>,
     // For computing source terms
     pub dipoles: GpuBuffer<GpuDipole>,
+    pub plane_waves: GpuBuffer<GpuPlaneWave>,
+    pub plane_wave_coeffs: GpuBuffer<PlaneWaveCoeffs>,
     pub source_vals: GpuBuffer<f32>,
     // For update equation terms
-    pub source_terms: GpuBuffer<Vec4>,
+    pub source_terms: GpuBuffer<SourceTerms>,
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
     // Misc data
     pub thread_count: [u32; 3],
-    pub n_cells: GridIndex
+    pub n_cells: GridIndex,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation
@@ -445,11 +458,10 @@ impl ElectricMaterial {
         eps_r: Vec3::ZERO, mu_r: Vec3::ZERO, sig: Vec3::ZERO,
     };
 
-    /// Get refractive index in a specific axis direction.
+    /// Compute refractive index on all axes
     #[allow(unused_variables)]
-    pub fn refractive_index(&self, axis: Axis) -> f32 {
-        let i = axis as usize;
-        (self.eps_r[i] * self.mu_r[i]).sqrt()
+    pub fn refractive_index(&self) -> Vec3 {
+        (self.eps_r * self.mu_r).sqrt()
     }
 }
 

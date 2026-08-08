@@ -7,7 +7,7 @@ use taser_em_shaders::math::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::{PmlCoefficients, PolarizationModeIndex};
+use taser_em_shaders::fdtd::{GpuPlaneWave, PlaneWaveCoeffs, PmlCoefficients, PolarizationModeIndex};
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
@@ -428,6 +428,34 @@ impl PmlCoefficientsGrid {
             });
 
         (*regions_offset, Self { n_cells, coeffs, })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PlaneWaveCoefficientsGrid {
+    pub coeffs: Vec<PlaneWaveCoeffs>,
+    pub n_cells: GridIndex
+}
+
+impl PlaneWaveCoefficientsGrid {
+    pub fn new(mat_grid: &YeeGridMaterials, plane_waves: &[GpuPlaneWave], half_dt: Real) -> Self {
+        let cell_count = mat_grid.n_cells.element_product() as usize;
+        let mut coeffs = vec![PlaneWaveCoeffs::default(); cell_count];
+        let cell_size3 = mat_grid.cell_size.to_3d(Vec3::ZERO);
+        par_iter_mut!(coeffs)
+            .enumerate()
+            .for_each(|(i, c)| {
+                let mat = &mat_grid.materials[i];
+                // TODO: Things to try: negate half_dt here
+                //                      negate 1st term of t_offset
+                c.t_offset = -((mat.refractive_index() * cell_size3) / (2. * C_0)) + half_dt;
+                c.h_curl_coeff = (mat.eps_r / mat.mu_r).sqrt();
+                c.en_curl_coeff = (mat.mu_r / mat.eps_r).sqrt();
+            });
+        Self {
+            coeffs,
+            n_cells: mat_grid.n_cells
+        }
     }
 }
 

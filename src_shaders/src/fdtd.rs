@@ -96,17 +96,16 @@ pub fn gpu_compute_source_terms(
         // Future source value (to simulate total-field quantities when computing curl)
         let fut_t_idx = ((t + wave_coeffs.t_offset[axis]) * grid.inv_dt) as Index; // TODO: try interpolating here?
         let (fut_src_val_idx, fut_src_active) = val_idx_and_src_active!(fut_t_idx);
-        let fut_src_enable = is_tf && fut_src_active;
-        let fut_src_val = source_vals.read(fut_src_val_idx) * fut_src_enable as u32 as f32;
+        let fut_src_val = source_vals.read(fut_src_val_idx) * fut_src_active as u32 as f32;
         // Current source value (to simulate scattered-field quantities for the curl)
         let (curr_src_val_idx, sf_src_active) = val_idx_and_src_active!(curr_t_idx);
-        let curr_src_enable = is_sf && sf_src_active;
-        let curr_src_val = source_vals.read(curr_src_val_idx) * curr_src_enable as u32 as f32;
+        let curr_src_val = source_vals.read(curr_src_val_idx) * sf_src_active as u32 as f32;
 
         // Compute & write field values
         // TODO: extrapolate from lecture to all axes and test things out.
         //       Things to try: change wavecoeffs axis to `axis1`, `axis`, etc.
         //                      negate half timestep difference for future source time value
+        //                      negate t_offset future source time value
         //                      negate wave_coeffs src_coeffs
         let axis1 = axis.permute();
         let axis2 = axis1.permute();
@@ -117,18 +116,18 @@ pub fn gpu_compute_source_terms(
         let inv_d_axis = grid.inv_d[axis];
         if is_positive_dir {
             // En curl corrections (used in H update)
-            h_source_term[axis1] += inv_d_axis * (pol1 * curr_src_val);
-            h_source_term[axis2] -= inv_d_axis * (pol2 * curr_src_val);
+            h_source_term[axis1] += inv_d_axis * (pol1 * curr_src_val) * is_tf as u32 as f32;
+            h_source_term[axis2] -= inv_d_axis * (pol2 * curr_src_val) * is_tf as u32 as f32;
             // H curl corrections (used in Dn update)
-            dn_source_term[axis1] += inv_d_axis * (pol1 * wave_coeffs.hn_src_coeff[axis2] * fut_src_val);
-            dn_source_term[axis2] -= inv_d_axis * (-pol2 * wave_coeffs.hn_src_coeff[axis1] * fut_src_val);
+            dn_source_term[axis1] += inv_d_axis * (pol1 * wave_coeffs.h_curl_coeff[axis2] * fut_src_val) * is_sf as u32 as f32;
+            dn_source_term[axis2] -= inv_d_axis * (-pol2 * wave_coeffs.h_curl_coeff[axis1] * fut_src_val) * is_sf as u32 as f32;
         } else {
             // En curl corrections (used in H update)
-            h_source_term[axis1] -= inv_d_axis * (-pol1 * wave_coeffs.en_src_coeff[axis2] * fut_src_val);
-            h_source_term[axis2] += inv_d_axis * (pol2 * wave_coeffs.en_src_coeff[axis1] * fut_src_val);
+            h_source_term[axis1] -= inv_d_axis * (-pol1 * wave_coeffs.en_curl_coeff[axis2] * fut_src_val) * is_sf as u32 as f32;
+            h_source_term[axis2] += inv_d_axis * (pol2 * wave_coeffs.en_curl_coeff[axis1] * fut_src_val) * is_sf as u32 as f32;
             // H curl corrections (used in Dn update)
-            dn_source_term[axis1] -= inv_d_axis * (pol1 * curr_src_val);
-            dn_source_term[axis2] += inv_d_axis * (pol2 * curr_src_val);
+            dn_source_term[axis1] -= inv_d_axis * (pol1 * curr_src_val) * is_tf as u32 as f32;
+            dn_source_term[axis2] += inv_d_axis * (pol2 * curr_src_val) * is_tf as u32 as f32;
         }
     }
 
@@ -450,8 +449,10 @@ pub struct GpuPlaneWave {
 pub struct PlaneWaveCoeffs {
     pub t_offset: Vec3, // == (refractive_idx / (2. * C_0)) * d + (dt / 2.)
     pub _padding0: u32,
-    pub hn_src_coeff: Vec3, // == +-sqrt(eps_r / mu_r)
+    /// H curl correction term coefficients
+    pub h_curl_coeff: Vec3, // == +-sqrt(eps_r / mu_r)
     pub _padding1: u32,
-    pub en_src_coeff: Vec3, // == +-sqrt(eps_r / mu_r)
+    /// En curl correction term coefficients
+    pub en_curl_coeff: Vec3, // == +-sqrt(eps_r / mu_r)
     pub _padding2: u32,
 }
