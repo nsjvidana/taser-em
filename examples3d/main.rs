@@ -1,9 +1,6 @@
 use kiss3d::prelude::*;
 use std::num::NonZeroU32;
 use taser_em3d::prelude::*;
-use taser_em3d::re_exports::glamx::glam::*;
-use taser_em3d::re_exports::khal::backend::*;
-use taser_em3d::re_exports::khal::Shader;
 use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]

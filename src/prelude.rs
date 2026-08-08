@@ -1,8 +1,8 @@
-pub use taser_em_shaders::math::*;
 pub use crate::*;
 pub use crate::grid::*;
-
-use khal::backend::GpuBackendError;
+pub use taser_em_shaders::math::*;
+pub use khal::backend::*;
+pub use khal::shader::*;
 
 pub type GpuResult<T> = core::result::Result<T, GpuBackendError>;
 

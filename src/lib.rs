@@ -11,7 +11,6 @@ pub mod re_exports {
 pub use taser_em_shaders as shaders;
 
 use std::num::{NonZeroI32, NonZeroU32};
-
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use crate::grid::{LayerWidths, MaterialRegions, PlaneWaveCoefficientsGrid, PmlCoefficientsGrid, YeeGridMaterials};
 use crate::prelude::{GpuResult, PolarizationMode};

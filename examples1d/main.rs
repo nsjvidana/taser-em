@@ -1,8 +1,5 @@
 use std::num::NonZeroU32;
 use taser_em1d::prelude::*;
-use taser_em1d::re_exports::glamx::glam::*;
-use taser_em1d::re_exports::khal::backend::*;
-use taser_em1d::re_exports::khal::Shader;
 use taser_em_testbed1d::{FdtdTestbedViewer, VisualizationMode};
 use taser_em_testbed1d::re_exports::anyhow;
 

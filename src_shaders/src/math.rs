@@ -1,5 +1,6 @@
+pub use khal_std::glamx::*;
+
 use bytemuck::{Pod, Zeroable};
-use khal_std::glamx::{UVec2, UVec3, Vec2, Vec3, Vec4};
 pub use dim_types::*;
 
 pub type Real = f32;
@@ -38,9 +39,6 @@ mod dim_types {
     pub type GridIndex = UVec3;
     pub type BoolVect = BVec3;
 }
-
-#[allow(unused_imports)]
-use khal_std::glamx::Vec3Swizzles;
 
 /// A trait specifically for vector field vectors.
 pub trait VectExt: VectorValueExt {
