@@ -7,17 +7,17 @@ pub mod fdtd;
 #[macro_export]
 #[doc(hidden)]
 macro_rules! cfg_gpu {
-    ($expression:expr) => {
+    ($($input:tt)*) => {
         #[cfg(any(target_arch = "spirv", target_arch = "nvptx64"))]
-        $expression
+        $($input)*
     };
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! cfg_cpu {
-    ($expression:expr) => {
+    ($($input:tt)*) => {
         #[cfg(not(any(target_arch = "spirv", target_arch = "nvptx64")))]
-        $expression
+        $($input)*
     };
 }
