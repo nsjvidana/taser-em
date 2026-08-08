@@ -10,7 +10,7 @@ async fn main() {
 pub async fn single_rod() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 5;
+    let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -35,7 +35,9 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute slab dimensions
     let wavelen = C_0 / f_max;
-    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 0.5)];
+    let quad_min = Vect::splat(-20.);
+    let quad_max = Vect::splat(-20. + wavelen * 0.5);
+    let quad_extents = quad_max - quad_min;
     // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -43,14 +45,17 @@ pub async fn single_rod() -> anyhow::Result<()> {
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
     };
-    simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
+    simulation.material_regions.fill_region(quad_min, quad_max, mat);
 
     // Compute source position and gaussian curve data points
-    let source = Source::Dipole {
-        position: slab_extents[0] - wavelen * 0.5,
-        t_start: 0.,
+    let quad_center = (quad_min + quad_max) / 2.;
+    let source = Source::PlaneWave {
+        spatial_axis: SpatialAxis::X,
+        position: quad_center.x - (quad_extents.x / 2.) - wavelen,
+        direction: WaveDirection::Positive,
+        t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec3::Z
+        polarization: Vec3::Z
     };
     simulation.add_source(source);
     

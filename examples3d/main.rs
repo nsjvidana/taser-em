@@ -51,7 +51,7 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source = Source::PlaneWave {
-        spatial_axis: SpatialAxis::X,
+        spatial_axis: SpatialAxis::Z,
         position: box_center.x - (box_extents.x / 2.) - wavelen,
         direction: WaveDirection::Positive,
         t_start: 0.0,
@@ -77,7 +77,7 @@ pub async fn cube() -> anyhow::Result<()> {
         VisualizationMode::default().with_color(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.05,
+                v_max: 1.,
                 color_min: TRANSPARENT,
                 color_max: RED
             }
