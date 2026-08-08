@@ -127,7 +127,7 @@ impl FdtdLossySimulation {
             inv_dt: dt.recip(),
             polarization_mode_index: polarization_mode.into(),
             _padding0: 0,
-            inv_d: cell_size3.recip(),
+            inv_d: cell_size3.recip().map(|v| if v.is_finite() { v } else { 0.0 }),
         };
 
         let cell_count = n_cells.element_product() as usize;

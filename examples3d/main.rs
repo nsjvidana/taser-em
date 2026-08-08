@@ -52,7 +52,7 @@ pub async fn cube() -> anyhow::Result<()> {
     // Compute source position and gaussian curve data points
     let source = Source::PlaneWave {
         spatial_axis: SpatialAxis::Z,
-        position: box_center.x - (box_extents.x / 2.) - wavelen,
+        position: box_center.z - (box_extents.z / 2.) - wavelen,
         direction: WaveDirection::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),

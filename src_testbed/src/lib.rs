@@ -334,7 +334,7 @@ impl Default for VisualizationMode {
                 color_mode: ColorMode::default(),
                 instanced_cube: SceneNode3d::default(),
                 instances: vec![],
-                alpha_mode: AlphaMode::Mask(0.1),
+                alpha_mode: AlphaMode::Mask(ColorMode::DEFAULT_ALPHA * 0.1),
             }
         }
     }
@@ -361,7 +361,7 @@ pub enum ColorMode {
 }
 
 impl ColorMode {
-    pub const DEFAULT_ALPHA: f32 = 0.5;
+    pub const DEFAULT_ALPHA: f32 = 1.;
 
     /// Updates the state of `self` before computing the colors of `magnitudes`.
     ///
@@ -391,19 +391,6 @@ impl ColorMode {
                     *color_min,
                     *color_max
                 )
-            }
-        }
-    }
-
-    pub fn set_alpha(&mut self, alpha: f32) {
-        match self {
-            ColorMode::AutoScale { color_min, color_max, .. } => {
-                *color_min = color_min.with_alpha(alpha);
-                *color_max = color_max.with_alpha(alpha);
-            }
-            ColorMode::FixedRange { color_min, color_max, .. } => {
-                *color_min = color_min.with_alpha(alpha);
-                *color_max = color_max.with_alpha(alpha);
             }
         }
     }
