@@ -56,6 +56,7 @@ pub async fn cube() -> anyhow::Result<()> {
         direction: WaveDirection::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
+        polarization: Vec3::X
     };
     simulation.add_source(source);
 

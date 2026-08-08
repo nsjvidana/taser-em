@@ -73,7 +73,7 @@ impl FdtdLossySimulation {
         let mut plane_waves = self.sources.iter()
             .filter_map(|source| {
                 let Source::PlaneWave {
-                    spatial_axis, position, direction, t_start, vals
+                    spatial_axis, position, direction, t_start, vals, polarization
                 } = source else { return None; };
                 let axis = Axis::from(*spatial_axis);
                 let pos = (regions_offset[axis] + position) / cell_size[*spatial_axis];
@@ -92,7 +92,9 @@ impl FdtdLossySimulation {
                     vals_start: start as u32,
                     vals_end: source_vals.len() as u32 - 1,
                     t_start: (t_start / dt) as u32,
-                    _padding0: [0; 2]
+                    _padding0: [0; 2],
+                    polarization: *polarization,
+                    _padding1: 0,
                 })
             })
             .collect::<Vec<_>>();
@@ -486,7 +488,9 @@ pub enum Source {
         /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
         t_start: f32,
         /// Signal data points.
-        vals: Vec<f32>
+        vals: Vec<f32>,
+        /// Polarization direction of the plane wave (unit vector)
+        polarization: Vec3,
     }
 }
 

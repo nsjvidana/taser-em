@@ -74,10 +74,10 @@ pub fn gpu_compute_source_terms(
     // Plane Waves
     for i in 0..plane_waves.len() {
         let GpuPlaneWave {
-            spatial_axis, direction, position_idx, vals_start, vals_end, t_start, ..
+            spatial_axis, direction, position_idx,vals_start,
+            vals_end, t_start, polarization, ..
         } = plane_waves.read(i);
         let wave_coeffs = plane_wave_coeffs.read(position_idx as usize);
-        let polarization = Vec3::X; // TODO: let the user pick wave's polarization
         let axis = Axis::from(spatial_axis);
         let is_positive_dir = direction == 1;
         
@@ -442,6 +442,8 @@ pub struct GpuPlaneWave {
     pub vals_end: u32,
     pub t_start: u32,
     pub _padding0: [u32; 2],
+    pub polarization: Vec3,
+    pub _padding1: u32,
     // TODO: pub repeat_count: u32,
 }
 
