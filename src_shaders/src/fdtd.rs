@@ -37,11 +37,12 @@ pub fn gpu_pec_boundary(
 pub fn gpu_compute_source_terms(
     #[spirv(global_invocation_id)] idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &u32,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &u32, // TODO: rename to "t_idx"
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
-    // TODO: #[spirv(storage_buffer, descriptor_set = 0, binding = )] plane_waves: &[GpuPlaneWave],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] plane_waves: &[GpuPlaneWave],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] plane_wave_coeffs: &[PlaneWaveCoeffs],
 ) {
     let cell_idx = GridIndex::from_uvec3(idx3);
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
@@ -49,24 +50,99 @@ pub fn gpu_compute_source_terms(
 
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
-    let mut source_term = Vec4::ZERO;
-    let curr_step = *steps;
+    let mut h_source_term = Vec4::ZERO;
+    let mut dn_source_term = Vec4::ZERO;
+    let curr_t_idx = *steps;
+    let t = curr_t_idx as f32 * grid.dt;
 
     // Dipoles
     for i in 0..dipoles.len() {
         let dipole = dipoles.read(i);
-        let t = curr_step.gpu_saturating_sub(dipole.t_start);
-        let vals_i = dipole.vals_start + t;
+        let src_t_idx = curr_t_idx.gpu_saturating_sub(dipole.t_start);
+        let vals_i = dipole.vals_start + src_t_idx;
 
         let enable = (dipole.cell_idx as usize == idx) &&
-            (curr_step >= dipole.t_start) &&
+            (curr_t_idx >= dipole.t_start) &&
             (vals_i <= dipole.vals_end);
-        source_term += source_vals.read(vals_i.min(dipole.vals_end) as usize) *
+        let source_term = source_vals.read(vals_i.min(dipole.vals_end) as usize) *
             enable as u32 as f32 *
             dipole.moment;
+        grid.polarization_mode_index.inject_h_source(&mut h_source_term, source_term);
+        grid.polarization_mode_index.inject_dn_source(&mut dn_source_term, source_term);
     }
 
-    source_terms.write(idx, source_term);
+    // Plane Waves
+    for i in 0..plane_waves.len() {
+        let GpuPlaneWave {
+            spatial_axis, direction, position_idx, vals_start, vals_end, t_start, ..
+        } = plane_waves.read(i);
+        let wave_coeffs = plane_wave_coeffs.read(position_idx as usize);
+        let polarization = Vec3::X; // TODO: let the user pick wave's polarization
+        let axis = Axis::from(spatial_axis);
+        let is_positive_dir = direction == 1;
+        
+        macro_rules! val_idx_and_src_active {
+            ($src_t_idx:expr) => {{
+                let src_t_idx = $src_t_idx.gpu_saturating_sub(t_start);
+                let vals_i = vals_start + src_t_idx;
+                let enable = ($src_t_idx >= t_start) && (vals_i <= vals_end);
+                (vals_i.min(vals_end) as usize, enable)
+            }};
+        }
+
+        let cell_pos_idx = cell_idx[spatial_axis];
+        let is_tf = cell_pos_idx == position_idx; // if cell is on total-field edge
+        let is_sf = cell_pos_idx as i32 == position_idx as i32 - direction; // if cell is on scattered-field edge
+        // Future source value (to simulate total-field quantities when computing curl)
+        let fut_t_idx = ((t + wave_coeffs.t_offset[axis]) * grid.inv_dt) as Index; // TODO: try interpolating here?
+        let (fut_src_val_idx, fut_src_active) = val_idx_and_src_active!(fut_t_idx);
+        let fut_src_enable = is_tf && fut_src_active;
+        let fut_src_val = source_vals.read(fut_src_val_idx) * fut_src_enable as u32 as f32;
+        // Current source value (to simulate scattered-field quantities for the curl)
+        let (curr_src_val_idx, sf_src_active) = val_idx_and_src_active!(curr_t_idx);
+        let curr_src_enable = is_sf && sf_src_active;
+        let curr_src_val = source_vals.read(curr_src_val_idx) * curr_src_enable as u32 as f32;
+
+        // Compute & write field values
+        // TODO: extrapolate from lecture to all axes and test things out.
+        //       Things to try: change wavecoeffs axis to `axis1`, `axis`, etc.
+        //                      negate half timestep difference for future source time value
+        //                      negate wave_coeffs src_coeffs
+        let axis1 = axis.permute();
+        let axis2 = axis1.permute();
+        let pol1 = polarization[axis1];
+        let pol2 = polarization[axis2];
+
+        // Update source terms w/ the tf/sf correction terms.
+        let inv_d_axis = grid.inv_d[axis];
+        if is_positive_dir {
+            // En curl corrections (used in H update)
+            h_source_term[axis1] += inv_d_axis * (pol1 * curr_src_val);
+            h_source_term[axis2] -= inv_d_axis * (pol2 * curr_src_val);
+            // H curl corrections (used in Dn update)
+            dn_source_term[axis1] += inv_d_axis * (pol1 * wave_coeffs.hn_src_coeff[axis2] * fut_src_val);
+            dn_source_term[axis2] -= inv_d_axis * (-pol2 * wave_coeffs.hn_src_coeff[axis1] * fut_src_val);
+        } else {
+            // En curl corrections (used in H update)
+            h_source_term[axis1] -= inv_d_axis * (-pol1 * wave_coeffs.en_src_coeff[axis2] * fut_src_val);
+            h_source_term[axis2] += inv_d_axis * (pol2 * wave_coeffs.en_src_coeff[axis1] * fut_src_val);
+            // H curl corrections (used in Dn update)
+            dn_source_term[axis1] -= inv_d_axis * (pol1 * curr_src_val);
+            dn_source_term[axis2] += inv_d_axis * (pol2 * curr_src_val);
+        }
+    }
+
+    source_terms.write(idx, SourceTerms {
+        h: h_source_term,
+        dn: dn_source_term,
+    });
+}
+
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct SourceTerms {
+    pub h: Vec4,
+    pub dn: Vec4,
 }
 
 /// N-dimensional FDTD shader with loss (conductivity). Works with any polarization mode.
@@ -85,7 +161,7 @@ pub fn gpu_lossy_update(
     // Field update terms
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
 ) {
     let cell_idx = GridIndex::from_uvec3(idx3);
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
@@ -93,7 +169,9 @@ pub fn gpu_lossy_update(
 
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
-    let source_term = source_terms.read(idx);
+    let SourceTerms {
+        h: h_source_term, dn: dn_source_term
+    } = source_terms.read(idx);
     let coeffs = grid_coeffs.read(idx);
     let mut ints = integrals.read(idx);
 
@@ -106,8 +184,8 @@ pub fn gpu_lossy_update(
         en
     );
     let h_self = h.read(idx);
-    let mut h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl;
-        grid.polarization_mode_index.inject_h_source(&mut h_self_new, source_term);
+    let mut h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
+        h_source_term;
     #[cfg(any(feature = "dim2", feature = "dim3"))]
     {
         ints.en_curl += en_curl;
@@ -131,8 +209,8 @@ pub fn gpu_lossy_update(
     let dn_self = dn.read(idx);
     ints.en += en_self;
     let mut dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
-        coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en;
-        grid.polarization_mode_index.inject_dn_source(&mut dn_self_new, source_term);
+        coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en +
+        dn_source_term;
     #[cfg(any(feature = "dim2", feature = "dim3"))]
     {
         ints.h_curl += h_curl;
@@ -250,10 +328,13 @@ pub struct GridParameters {
     pub flat_idx_incrs: UVec3,
     pub polarization_mode_index: PolarizationModeIndex,
     pub n_cells3: UVec3,
-    pub half_dt: Real,
+    pub dt: Real,
     /// Spatial differentials (cell size)
     pub d: Vec3,
-    pub _padding0: u32,
+    pub inv_dt: Real,
+    /// Inverse of spatial differential (reciprocated cell size)
+    pub inv_d: Vec3,
+    pub _padding0: u32
 }
 
 /// A newtype of an index representing the polarization mode.
@@ -270,7 +351,7 @@ impl PolarizationModeIndex {
     #[inline]
     pub fn inject_h_source(self, v: &mut Vec4, src_term: Vec4) {
         cfg_select! {
-            feature = "dim3" => *v += src_term * (self.0 == 1) as u32 as f32,
+            feature = "dim3" => *v += src_term * self.is_te() as u32 as f32,
             _ => *v += src_term
         }
     }
@@ -278,9 +359,19 @@ impl PolarizationModeIndex {
     #[inline]
     pub fn inject_dn_source(self, v: &mut Vec4, src_term: Vec4) {
         cfg_select! {
-            feature = "dim3" => *v += src_term * (self.0 == 0) as u32 as f32,
+            feature = "dim3" => *v += src_term * self.is_tm() as u32 as f32,
             _ => *v += src_term
         }
+    }
+
+    #[inline]
+    pub fn is_tm(self) -> bool {
+        self.0 == 0
+    }
+
+    #[inline]
+    pub fn is_te(self) -> bool {
+        self.0 == 1
     }
 }
 
@@ -343,8 +434,8 @@ pub struct GpuDipole {
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct GpuPlaneWave {
-    pub axis: SpatialAxis,
-    pub direction: i32,
+    pub spatial_axis: SpatialAxis,
+    pub direction: i32, // TODO: turn this into the direction enum by unsafe imples w/ bytemuck traits
     pub position_idx: u32,
     pub vals_start: u32,
     pub vals_end: u32,
@@ -357,6 +448,10 @@ pub struct GpuPlaneWave {
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct PlaneWaveCoeffs {
-    pub half_cell_delay_coeff: Vec3, // t + ...(refractive_idx / (2. * C_0)) * d[axis]... + grid.half_dt;
-    pub val_coeff: Real, // -sqrt(eps_r / mu_r)... * src_val
+    pub t_offset: Vec3, // == (refractive_idx / (2. * C_0)) * d + (dt / 2.)
+    pub _padding0: u32,
+    pub hn_src_coeff: Vec3, // == +-sqrt(eps_r / mu_r)
+    pub _padding1: u32,
+    pub en_src_coeff: Vec3, // == +-sqrt(eps_r / mu_r)
+    pub _padding2: u32,
 }

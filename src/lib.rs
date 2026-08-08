@@ -131,7 +131,7 @@ impl FdtdLossySimulation {
                     let start = source_vals.len();
                     source_vals.extend_from_slice(vals);
                     Some(GpuPlaneWave {
-                        axis: *spatial_axis,
+                        spatial_axis: *spatial_axis,
                         direction: *direction as i32,
                         position_idx,
                         vals_start: start as u32,
