@@ -96,17 +96,17 @@ macro_rules! impl_vector_value_ext {
 
             #[inline]
             fn one() -> Self { Self::splat(1 as $elem) }
-        
+
             #[inline]
             fn max_element(self) -> Self::Element {
                 dim1_or_else!(self, self.max_element())
             }
-        
+
             #[inline]
             fn min_element(self) -> Self::Element {
                 dim1_or_else!(self, self.min_element())
             }
-        
+
             #[inline]
             fn cmpge(self, rhs: Self) -> Self::Boolean {
                 dim1_or_else!(self >= rhs, self.cmpge(rhs))
@@ -377,6 +377,7 @@ pub enum Axis {
 impl Axis {
     pub const ALL_AXES: [Self; MAX_DIM] = [Axis::X, Axis::Y, Axis::Z];
     pub const PERMUTATION: [Self; MAX_DIM] = [Axis::Y, Axis::Z, Axis::X];
+    pub const BACK_PERMUTATION: [Self; MAX_DIM] = [Axis::Z, Axis::X, Axis::Y];
 
     /// Circular permutation of `self` in the following sequence:
     ///
@@ -387,6 +388,18 @@ impl Axis {
     #[inline]
     pub const fn permute(&self) -> Self {
         Self::PERMUTATION[*self as usize]
+    }
+
+
+    /// Circular permutation in the reversed direction of [`Axis::permute()`]
+    ///
+    /// [`Axis::X`] -> [`Axis::Z`] -> [`Axis::Y`] -> [`Axis::X`] -> ...
+    ///
+    /// # Panics
+    /// Out of bounds access when `self == Axis::INVALID`
+    #[inline]
+    pub const fn backwards_permute(&self) -> Self {
+        Self::BACK_PERMUTATION[*self as usize]
     }
 }
 
