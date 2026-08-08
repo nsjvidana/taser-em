@@ -5,17 +5,14 @@ pub mod re_exports {
     pub use kiss3d;
 }
 
+use crate::util::lerp_colors;
 use glamx::*;
 use kiss3d::camera::Projection;
 use kiss3d::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
-use taser_em::shaders::math::*;
 use taser_em::prelude::*;
-use crate::util::lerp_colors;
-
-// TODO: use par_iter macro for 1D also.
 use taser_em::*;
 
 #[cfg(not(feature = "dim1"))]
@@ -24,7 +21,6 @@ use kiss3d::prelude::InstanceData3d;
 #[cfg(feature = "rayon")]
 #[allow(unused_imports)]
 use rayon::prelude::*;
-use taser_em::fdtd::{FdtdLossySimulation, FdtdStability};
 
 pub struct FdtdTestbedViewer {
     pub window: Window,
@@ -271,12 +267,14 @@ impl VisualizationMode {
                 positions
             } = self;
 
-            let mut prev_pos = positions[0] + (v_field[0].xyz() / *max_magnitude) * *graph_max_magnitude;
-            for (cell_pos, vector) in positions.iter()
-                .zip(v_field)
-                .skip(1)
-            {
-                let pos = cell_pos + (polarization_mode.extract_e_vector(vector) / *max_magnitude) * *graph_max_magnitude;
+            let line_positions = par_iter!(positions)
+                .zip(par_iter!(v_field))
+                .map(|(cell_pos, vector)|
+                    cell_pos + (polarization_mode.extract_e_vector(vector) / *max_magnitude) * *graph_max_magnitude
+                )
+                .collect::<Vec<_>>();
+            let mut prev_pos = positions[0];
+            for pos in line_positions {
                 window.draw_line(
                     prev_pos, pos,
                     *color, 2., false

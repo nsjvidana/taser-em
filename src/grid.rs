@@ -50,12 +50,12 @@ impl PolarizationMode {
             PolarizationMode::TransverseMagnetic => cfg_select! {
                 feature = "dim1" => Vec3::new(0., e.y, 0.),
                 feature = "dim2" => Vec3::Z * e.z,
-                feature = "dim3" => glamx::Vec4Swizzles::xyz(*e),
+                feature = "dim3" => (*e).xyz(),
             },
             PolarizationMode::TransverseElectric => cfg_select! {
                 feature = "dim1" => Vec3::new(e.x, 0., 0.),
-                feature = "dim2" => Vec3::from((glamx::Vec4Swizzles::xy(*e), 0.)),
-                feature = "dim3" => glamx::Vec4Swizzles::xyz(*e),
+                feature = "dim2" => Vec3::from(((*e).xy(), 0.)),
+                feature = "dim3" => (*e).xyz(),
             },
         }
     }
