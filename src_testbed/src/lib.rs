@@ -12,9 +12,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::shaders::math::*;
-use taser_em::*;
 use taser_em::prelude::*;
 use crate::util::lerp_colors;
+
+// TODO: use par_iter macro for 1D also.
+use taser_em::*;
 
 #[cfg(not(feature = "dim1"))]
 use kiss3d::prelude::InstanceData3d;
@@ -22,6 +24,7 @@ use kiss3d::prelude::InstanceData3d;
 #[cfg(feature = "rayon")]
 #[allow(unused_imports)]
 use rayon::prelude::*;
+use taser_em::fdtd::{FdtdLossySimulation, FdtdStability};
 
 pub struct FdtdTestbedViewer {
     pub window: Window,

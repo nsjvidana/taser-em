@@ -55,8 +55,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
     simulation.add_source(source);
     
     // Set up buffers and pipeline
-    let backend = taser_em2d::prelude::create_backend().await?;
-    let backend_name = taser_em2d::prelude::backend_name(&backend);
+    let backend = create_backend().await?;
+    let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;

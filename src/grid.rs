@@ -1,4 +1,4 @@
-use crate::{grid_cells_iter, par_iter_mut, ElectricMaterial, PmlParameters, C_0, EPS_0};
+use crate::par_iter_mut;
 use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::{Cuboid, SharedShape};
@@ -8,6 +8,9 @@ use taser_em_shaders::math::*;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use taser_em_shaders::fdtd::{GpuPlaneWave, PlaneWaveCoeffs, PmlCoefficients, PolarizationModeIndex};
+use crate::consts::{C_0, EPS_0};
+use crate::fdtd::{ElectricMaterial, PmlParameters};
+use crate::util::grid_cells_iter;
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
