@@ -59,9 +59,6 @@ pub async fn cube() -> anyhow::Result<()> {
     };
     simulation.add_source(source);
 
-    let sim_bb = simulation.compute_bounding_box();
-    println!("n_cells: {}", simulation.compute_n_cells(&sim_bb, &stability));
-
     // Set up buffers and pipeline
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
@@ -69,6 +66,8 @@ pub async fn cube() -> anyhow::Result<()> {
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+
+    println!("n_cells: {}", gpu_data.n_cells);
 
     // Create viewer and set up camera
     let mut testbed = FdtdTestbedViewer::new(

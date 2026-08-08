@@ -35,7 +35,7 @@ impl FdtdLossySimulation {
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-    ) -> GpuResult<FdtdLossyGpuData> {
+    ) -> GpuResult<FdtdLossyDispatchData> {
         let FdtdParameters {
             cell_size, dt, polarization_mode, ..
         } = self.fdtd_parameters;
@@ -131,7 +131,7 @@ impl FdtdLossySimulation {
         let cell_count = n_cells.element_product() as usize;
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
 
-        let buffers = FdtdLossyGpuData {
+        let buffers = FdtdLossyDispatchData {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
             steps: 0.create_gpu_buffer_readable(backend)?,
@@ -235,7 +235,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn dispatch_steps(
         &mut self,
         pass: &mut GpuPass,
-        gpu_data: &mut FdtdLossyGpuData,
+        gpu_data: &mut FdtdLossyDispatchData,
     ) -> GpuResult<()> {
         for _ in 0..self.num_steps_per_submission {
             self.boundary_condition.call(
@@ -283,7 +283,7 @@ pub struct FdtdParameters {
 }
 
 /// Buffers and data needed for running the shader
-pub struct FdtdLossyGpuData {
+pub struct FdtdLossyDispatchData {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
     pub steps: GpuBufferReadable<u32>,
