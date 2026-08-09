@@ -19,7 +19,7 @@ pub fn gpu_pec_boundary(
 ) {
     let cell_idx = GridIndex::from_uvec3(idx3);
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
-    let lo_boundary = cell_idx.cmpeq(GridIndex::zero()).any();
+    let lo_boundary = cell_idx.cmpeq(GridIndex::ZERO).any();
     let hi_boundary = cell_idx.cmpeq(n_cells - 1).any();
     let out_of_bounds = idx3.cmpge(grid.n_cells3).any();
     if !(lo_boundary || hi_boundary) || out_of_bounds { return; }
@@ -232,13 +232,13 @@ pub fn gpu_lossy_update(
 
     integrals.write(idx, ints);
 
-    if cell_idx == GridIndex::one() {
+    if cell_idx == GridIndex::ONE {
         *steps += 1;
     }
 }
 
 fn skip_update(cell_idx: GridIndex, n_cells: GridIndex, idx3: UVec3, n_cells3: UVec3) -> bool {
-    let lo_boundary = cell_idx.cmpeq(GridIndex::zero()).any();
+    let lo_boundary = cell_idx.cmpeq(GridIndex::ZERO).any();
     let hi_boundary = cell_idx.cmpeq(n_cells - 1).any();
     let out_of_bounds = idx3.cmpge(n_cells3).any();
     lo_boundary || hi_boundary || out_of_bounds

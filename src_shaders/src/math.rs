@@ -55,9 +55,9 @@ pub trait VectExt: VectorValueExt {
 pub trait VectorValueExt: Sized {
     type Element;
     type Boolean;
+    const ZERO: Self;
+    const ONE: Self;
     fn splat(value: Self::Element) -> Self;
-    fn zero() -> Self;
-    fn one() -> Self;
     fn max_element(self) -> Self::Element;
     fn min_element(self) -> Self::Element;
     fn cmpge(self, rhs: Self) -> Self::Boolean;
@@ -67,6 +67,12 @@ pub trait VectorValueExt: Sized {
     fn map<F>(self, f: F) -> Self
     where
         F: FnMut(Self::Element) -> Self::Element;
+    /// Glam's `with_x()` function, but for all dimensions of this crate.
+    fn with_x(self, x: Self::Element) -> Self;
+    /// Glam's `with_y()` function, but for all dimensions of this crate.
+    fn with_y(self, y: Self::Element) -> Self;
+    /// Glam's `with_z()` function, but for all dimensions of this crate.
+    fn with_z(self, z: Self::Element) -> Self;
 }
 
 macro_rules! dim1_or_else {
@@ -79,21 +85,17 @@ macro_rules! dim1_or_else {
 }
 
 macro_rules! impl_vector_value_ext {
-    ($v:ident, $elem:ty) => {
+    ($v:ident, $elem:ty, $zero:expr, $one:expr) => {
         impl VectorValueExt for $v {
             type Element = $elem;
             type Boolean = BoolVect;
+            const ZERO: Self = $zero;
+            const ONE: Self = $one;
 
             #[inline]
             fn splat(value: Self::Element) -> Self {
                 dim1_or_else!(value, Self::splat(value))
             }
-
-            #[inline]
-            fn zero() -> Self { Self::splat(0 as $elem) }
-
-            #[inline]
-            fn one() -> Self { Self::splat(1 as $elem) }
 
             #[inline]
             fn max_element(self) -> Self::Element {
@@ -131,6 +133,30 @@ macro_rules! impl_vector_value_ext {
                 where F: FnMut(Self::Element) -> Self::Element
             {
                 dim1_or_else!(f(self), self.map(f))
+            }
+
+            #[inline]
+            #[cfg_attr(feature = "dim1", allow(unused_variables))]
+            fn with_x(self, x: Self::Element) -> Self {
+                dim1_or_else!(self, self.with_x(x))
+            }
+
+            #[inline]
+            #[cfg_attr(feature = "dim1", allow(unused_variables))]
+            fn with_y(self, y: Self::Element) -> Self {
+                dim1_or_else!(self, self.with_y(y))
+            }
+
+            #[inline]
+            #[cfg_attr(not(feature = "dim3"), allow(unused_variables))]
+            fn with_z(self, z: Self::Element) -> Self {
+                dim1_or_else!(
+                    z,
+                    cfg_select! {
+                        feature = "dim2" => self,
+                        feature = "dim3" => self.with_z(z)
+                    }
+                )
             }
         }
     };
@@ -213,7 +239,10 @@ impl VectExt for Vect {
     }
 }
 
-impl_vector_value_ext!(Vect, Real);
+cfg_select! {
+    feature = "dim1" => { impl_vector_value_ext!(Vect, Real, 0., 1.); }
+    _ => { impl_vector_value_ext!(Vect, Real, Vect::ZERO, Vect::ONE); }
+}
 
 pub trait GridIndexExt: VectorValueExt {
     fn div_ceil(self, rhs: GridIndex) -> GridIndex;
@@ -337,7 +366,10 @@ impl GridIndexExt for GridIndex {
     }
 }
 
-impl_vector_value_ext!(GridIndex, Index);
+cfg_select! {
+    feature = "dim1" => { impl_vector_value_ext!(GridIndex, Index, 0, 1); }
+    _ => { impl_vector_value_ext!(GridIndex, Index, GridIndex::ZERO, GridIndex::ONE); }
+}
 
 pub trait BoolVectExt {
     fn any(self) -> bool;

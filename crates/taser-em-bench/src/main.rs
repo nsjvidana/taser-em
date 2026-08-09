@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
 async fn bench() -> anyhow::Result<()> {
     let stability = FdtdStability::default();
     let sim_params = FdtdParameters {
-        cell_size: Vect::one(),
+        cell_size: Vect::ONE,
         dt: 1.,
         polarization_mode: PolarizationMode::TransverseElectric,
         material_discretization: MaterialDiscretization::Rough
