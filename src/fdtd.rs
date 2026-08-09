@@ -199,11 +199,16 @@ impl FdtdLossySimulation {
     /// Compute the bounding box surrounding all objects and sources in the simulation.
     pub fn compute_bounding_box(&self) -> Aabb {
         let mut regions_bb = self.material_regions.compute_bounding_box();
+        let regions_center = regions_bb.center();
         let source_pts = self.sources.iter()
             .filter_map(|src| {
                 match src {
                     Source::Dipole { position, .. } => Some(position.to_3d(Vec3::ZERO)),
-                    _ => None
+                    Source::PlaneWave { spatial_axis, position, ..} => {
+                        let mut pos = regions_center;
+                            pos[Axis::from(*spatial_axis)] = *position;
+                        Some(pos)
+                    }
                 }
             })
             .collect::<Vec<_>>();
