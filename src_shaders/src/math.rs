@@ -224,8 +224,8 @@ pub trait GridIndexExt: VectorValueExt {
     fn into_array(self) -> [u32; DIM];
     fn from_index_array(arr: [u32; DIM]) -> GridIndex;
     fn from_uvec3(uvec3: UVec3) -> GridIndex;
-    fn from_flat_idx(idx: u32, grid_dim: GridIndex) -> GridIndex;
-    fn to_flat_idx(self, grid_dim: GridIndex) -> u32;
+    fn from_flat_idx(idx: u32, n_cells: GridIndex) -> GridIndex;
+    fn to_flat_idx(self, n_cells: GridIndex) -> u32;
 }
 
 impl GridIndexExt for GridIndex {
@@ -305,33 +305,33 @@ impl GridIndexExt for GridIndex {
 
     #[inline]
     #[allow(unused_variables)]
-    fn from_flat_idx(idx: Index, grid_dim: GridIndex) -> GridIndex {
+    fn from_flat_idx(idx: Index, n_cells: GridIndex) -> GridIndex {
         #[cfg(feature = "dim1")]
         return idx;
         #[cfg(feature = "dim2")]
         return GridIndex::new(
-            idx % grid_dim.x,
-            idx / grid_dim.x,
+            idx % n_cells.x,
+            idx / n_cells.x,
         );
         #[cfg(feature = "dim3")]
         GridIndex::new(
-            idx % grid_dim.x,
-            (idx / grid_dim.x) % grid_dim.y,
-            idx / (grid_dim.x * grid_dim.y),
+            idx % n_cells.x,
+            (idx / n_cells.x) % n_cells.y,
+            idx / (n_cells.x * n_cells.y),
         )
     }
 
     #[inline]
     #[allow(unused_variables)]
-    fn to_flat_idx(self, grid_dim: GridIndex) -> u32 {
+    fn to_flat_idx(self, n_cells: GridIndex) -> u32 {
         #[cfg(feature = "dim1")]
         return self;
         #[cfg(feature = "dim2")]
-        return self.y * grid_dim.x + self.x;
+        return self.y * n_cells.x + self.x;
         #[cfg(feature = "dim3")]
         {
-            self.z * grid_dim.x * grid_dim.y +
-                self.y * grid_dim.x +
+            self.z * n_cells.x * n_cells.y +
+                self.y * n_cells.x +
                 self.x
         }
     }
