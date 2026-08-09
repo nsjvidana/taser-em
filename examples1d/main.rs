@@ -11,12 +11,12 @@ async fn main() {
 pub async fn single_slab() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 12;
+    let sim_speed = 5;
 
-    // Simulation parameters w/ default stability values.
+    // Simulation parameters
     let stability = FdtdStability {
         dt_safety_factor: 10.,
-        cells_per_wavelength: 30,
+        cells_per_wavelength: 10,
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -46,11 +46,19 @@ pub async fn single_slab() -> anyhow::Result<()> {
     simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
 
     // Compute source position and gaussian curve data points
-    let source = Source::Dipole {
-        position: slab_extents[0] - wavelen * 3.,
+    // let source = Source::Dipole {
+    //     position: slab_extents[0] - wavelen * 3.,
+    //     t_start: 0.,
+    //     vals: Source::gaussian_max_f(f_max, 1., dt),
+    //     moment: Vec3::Y
+    // };
+    let source = Source::PlaneWave {
+        spatial_axis: SpatialAxis::Z,
+        position: slab_extents[0] - wavelen * 2.,
+        direction: WaveDirection::Positive,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec3::Y
+        polarization: Vec3::Y,
     };
     simulation.add_source(source);
 
@@ -84,7 +92,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
         pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
         drop(pass);
         gpu_data.dn.encode_copy_cmd(&mut encoder)?;
-        gpu_data.steps.encode_copy_cmd(&mut encoder)?;
+        gpu_data.t_idx.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
     }
     Ok(())

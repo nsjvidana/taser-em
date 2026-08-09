@@ -60,6 +60,8 @@ pub trait VectorValueExt: Sized {
     fn splat(value: Self::Element) -> Self;
     fn max_element(self) -> Self::Element;
     fn min_element(self) -> Self::Element;
+    fn cmplt(self, rhs: Self) -> Self::Boolean;
+    fn cmpgt(self, rhs: Self) -> Self::Boolean;
     fn cmpge(self, rhs: Self) -> Self::Boolean;
     fn cmpeq(self, rhs: Self) -> Self::Boolean;
     fn element_sum(self) -> Self::Element;
@@ -105,6 +107,16 @@ macro_rules! impl_vector_value_ext {
             #[inline]
             fn min_element(self) -> Self::Element {
                 dim1_or_else!(self, self.min_element())
+            }
+
+            #[inline]
+            fn cmplt(self, rhs: Self) -> Self::Boolean {
+                dim1_or_else!(self < rhs, self.cmplt(rhs))
+            }
+
+            #[inline]
+            fn cmpgt(self, rhs: Self) -> Self::Boolean {
+                dim1_or_else!(self > rhs, self.cmpgt(rhs))
             }
 
             #[inline]
@@ -401,7 +413,6 @@ pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
-    INVALID = u32::MAX // TODO: try removing this?
 }
 
 impl Axis {
@@ -412,9 +423,6 @@ impl Axis {
     /// Circular permutation of `self` in the following sequence:
     ///
     /// [`Axis::X`] -> [`Axis::Y`] -> [`Axis::Z`] -> [`Axis::X`] -> ...
-    ///
-    /// # Panics
-    /// Out of bounds access when `self == Axis::INVALID`
     #[inline]
     pub const fn permute(&self) -> Self {
         Self::PERMUTATION[*self as usize]
@@ -424,9 +432,6 @@ impl Axis {
     /// Circular permutation in the reversed direction of [`Axis::permute()`]
     ///
     /// [`Axis::X`] -> [`Axis::Z`] -> [`Axis::Y`] -> [`Axis::X`] -> ...
-    ///
-    /// # Panics
-    /// Out of bounds access when `self == Axis::INVALID`
     #[inline]
     pub const fn backwards_permute(&self) -> Self {
         Self::BACK_PERMUTATION[*self as usize]
@@ -522,8 +527,7 @@ impl TryFrom<Axis> for SpatialAxis {
             Axis::Z => cfg_select! {
                 feature = "dim2" => Err(()),
                 _ => Ok(Self::Z),
-            },
-            _ => Err(())
+            }
         }
     }
 }
@@ -602,23 +606,33 @@ pub trait GpuDynamicIndex<Idx: ?Sized> {
     fn dyn_insert(&mut self, index: Idx, val: Self::Output);
 }
 
-
 macro_rules! impl_vector_gpu_indexing_1d {
     ($v:ident, $elem_ty:ty, $axis_ty:ty) => {
         impl GpuDynamicIndex<$axis_ty> for $v {
             type Output = $elem_ty;
-
+            
             #[inline]
             fn dyn_idx(&self, index: $axis_ty) -> Self::Output {
-                let self_copy = [*self];
-                self_copy[index as usize]
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        *self
+                    }
+                    _ => {
+                        (&unsafe { &*(self as *const $v as *const [Self::Output; 1]) }) [index as usize]
+                    }
+                }
             }
-
+            
             #[inline]
             fn dyn_insert(&mut self, index: $axis_ty, val: Self::Output) {
-                let mut self_copy = [*self];
-                self_copy[index as usize] = val;
-                *self = self_copy[0];
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        *self = val;
+                    }
+                    _ => {
+                        (&mut unsafe { &mut *(self as *mut $v as *mut [Self::Output; 1]) }) [index as usize] = val;
+                    }
+                }
             }
         }
     };
@@ -628,34 +642,53 @@ impl_vector_gpu_indexing_1d!(Index, Index, Axis);
 impl_vector_gpu_indexing_1d!(Real, Real, Axis);
 
 macro_rules! impl_vector_gpu_indexing {
-    ($v:ident, $elem_ty:ty, $axis_ty:ty, $to_array_fn:ident, $from_array_fn:ident) => {
+    ($v:ident, $elem_ty:ty, $axis_ty:ty, $dims: expr) => {
         impl GpuDynamicIndex<$axis_ty> for $v {
             type Output = $elem_ty;
 
             #[inline]
             fn dyn_idx(&self, index: $axis_ty) -> Self::Output {
-                let self_copy = (*self).$to_array_fn();
-                self_copy[index as usize]
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        unsafe { spirv_std::arch::vector_extract_dynamic(*self, index as usize) }
+                    }
+                    _ => {
+                        (&unsafe { &*(self as *const $v as *const [Self::Output; $dims]) }) [index as usize]
+                    }
+                }
             }
 
             #[inline]
             fn dyn_insert(&mut self, index: $axis_ty, val: Self::Output) {
-                let mut self_copy = (*self).$to_array_fn();
-                self_copy[index as usize] = val;
-                *self = <$v>::$from_array_fn(self_copy);
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        *self = unsafe { spirv_std::arch::vector_insert_dynamic(*self, index as usize, val) };
+                    }
+                    _ => {
+                        (&mut unsafe { &mut *(self as *mut $v as *mut [Self::Output; $dims]) }) [index as usize] = val;
+                    }
+                }
             }
         }
     };
 }
 
-impl_vector_gpu_indexing!(UVec2, Index, Axis, to_array, from);
-impl_vector_gpu_indexing!(Vec2, Real, Axis, to_array, from);
-impl_vector_gpu_indexing!(UVec3, Index, Axis, to_array, from);
-impl_vector_gpu_indexing!(Vec3, Real, Axis, to_array, from);
-impl_vector_gpu_indexing!(Vec4, Real, Axis, to_array, from);
+impl_vector_gpu_indexing!(UVec2, Index, Axis, 2);
+impl_vector_gpu_indexing!(Vec2, Real, Axis, 2);
+impl_vector_gpu_indexing!(UVec3, Index, Axis, 3);
+impl_vector_gpu_indexing!(Vec3, Real, Axis, 3);
+impl_vector_gpu_indexing!(Vec4, Real, Axis, 4);
 
-impl_vector_gpu_indexing!(Vect, Real, SpatialAxis, into_array, from_array);
-impl_vector_gpu_indexing!(GridIndex, Index, SpatialAxis, into_array, from_index_array);
+cfg_select! {
+    feature = "dim1" => {
+        impl_vector_gpu_indexing_1d!(Vect, Real, SpatialAxis);
+        impl_vector_gpu_indexing_1d!(GridIndex, Index, SpatialAxis);
+    }
+    _ => {
+        impl_vector_gpu_indexing!(Vect, Real, SpatialAxis, DIM);
+        impl_vector_gpu_indexing!(GridIndex, Index, SpatialAxis, DIM);
+    }
+}
 
 /// A trait that computes `a.saturating_sub(b)` on the GPU.
 /// Rust-GPU doesn't have the core library's `saturating_sub()` implemented yet, so we have this trait.

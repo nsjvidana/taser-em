@@ -55,10 +55,8 @@ impl FdtdLossySimulation {
                 };
                 let pos = (regions_offset + position) / cell_size;
                 let cell_grid_idx = pos.as_grid_index();
-                debug_assert!(
-                    !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
-                    "negative source position!"
-                );
+                debug_assert!(!pos.min_element().is_sign_negative(), "negative source position!");
+                debug_assert!(!pos.as_grid_index().cmpge(n_cells).any(), "Out of bounds source!");
                 let start = source_vals.len();
                 source_vals.extend_from_slice(vals);
                 Some(GpuDipole {
@@ -75,13 +73,10 @@ impl FdtdLossySimulation {
                 let Source::PlaneWave {
                     spatial_axis, position, direction, t_start, vals, polarization
                 } = source else { return None; };
-                let axis = Axis::from(*spatial_axis);
-                let pos = (regions_offset[axis] + position) / cell_size[*spatial_axis];
+                let pos = (regions_offset[*spatial_axis] + *position) / cell_size[*spatial_axis];
                 let position_idx = pos as Index;
-                debug_assert!(
-                    !pos.is_sign_negative() && !GridIndex::splat(position_idx).cmpge(n_cells).any(),
-                    "negative source position!"
-                );
+                debug_assert!(!pos.is_sign_negative(), "negative source position!");
+                debug_assert!(position_idx < n_cells[*spatial_axis], "Out of bounds source!");
 
                 let start = source_vals.len();
                 source_vals.extend_from_slice(vals);
@@ -103,7 +98,9 @@ impl FdtdLossySimulation {
         if source_vals.is_empty() { source_vals.push(0.0); }
 
         let plane_wave_coeffs_grid = PlaneWaveCoefficientsGrid::new(
-            &grid_mats, &plane_waves, dt / 2.
+            &grid_mats,
+            &plane_waves,
+            dt / 2.
         );
 
         let flat_idx_incrs = {
@@ -111,12 +108,21 @@ impl FdtdLossySimulation {
             for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
                 .zip(SpatialAxis::ALL_AXES)
             {
-                let mut grid_incr = GridIndex::default();
+                let mut grid_incr = GridIndex::ZERO;
                 grid_incr[spatial_axis] = 1;
                 incrs[axis] = grid_incr.to_flat_idx(n_cells);
             }
             incrs
         };
+
+        let mut problem_space_min = GridIndex::ONE;
+        self.pml_parameters.widths
+            .iter_spatial_axes()
+            .for_each(|(s_axis, w)| problem_space_min[s_axis] += w.lo);
+        let mut problem_space_max = n_cells - 2;
+        self.pml_parameters.widths
+            .iter_spatial_axes()
+            .for_each(|(s_axis, w)| problem_space_max[s_axis] -= w.hi);
 
         let cell_size3 = cell_size.to_3d(Vec3::ZERO);
         let grid_params = GridParameters {
@@ -127,7 +133,11 @@ impl FdtdLossySimulation {
             inv_dt: dt.recip(),
             polarization_mode_index: polarization_mode.into(),
             _padding0: 0,
-            inv_d: cell_size3.recip().map(|v| if v.is_finite() { v } else { 0.0 }),
+            inv_d: cell_size3.recip(),
+            problem_space_min: problem_space_min.to_3d(UVec3::ZERO),
+            _padding1: 0,
+            problem_space_max: problem_space_max.to_3d(UVec3::ONE),
+            _padding2: 0,
         };
 
         let cell_count = n_cells.element_product() as usize;
@@ -136,7 +146,7 @@ impl FdtdLossySimulation {
         let buffers = FdtdLossyDispatchData {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
-            steps: 0.create_gpu_buffer_readable(backend)?,
+            t_idx: 0.create_gpu_buffer_readable(backend)?,
             // Vector fields
             h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
             dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
@@ -201,13 +211,13 @@ impl FdtdLossySimulation {
         let mut regions_bb = self.material_regions.compute_bounding_box();
         let regions_center = regions_bb.center();
         let source_pts = self.sources.iter()
-            .filter_map(|src| {
+            .map(|src| {
                 match src {
-                    Source::Dipole { position, .. } => Some(position.to_3d(Vec3::ZERO)),
+                    Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
                     Source::PlaneWave { spatial_axis, position, ..} => {
                         let mut pos = regions_center;
                             pos[Axis::from(*spatial_axis)] = *position;
-                        Some(pos)
+                        pos
                     }
                 }
             })
@@ -257,18 +267,19 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
                 &gpu_data.grid_params,
-                &gpu_data.steps.buffer,
+                &gpu_data.t_idx.buffer,
                 &mut gpu_data.source_terms,
                 &gpu_data.source_vals,
                 &gpu_data.dipoles,
                 &gpu_data.plane_waves,
                 &gpu_data.plane_wave_coeffs,
+                &gpu_data.grid_coeffs,
             )?;
             self.update.call(
                 pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
                 &gpu_data.grid_params,
-                &mut gpu_data.steps.buffer,
+                &mut gpu_data.t_idx.buffer,
                 &mut gpu_data.h.buffer,
                 &mut gpu_data.dn.buffer,
                 &mut gpu_data.en.buffer,
@@ -293,7 +304,7 @@ pub struct FdtdParameters {
 pub struct FdtdLossyDispatchData {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
-    pub steps: GpuBufferReadable<u32>,
+    pub t_idx: GpuBufferReadable<u32>,
     // Vector fields
     pub h: GpuBufferReadable<Vec4>,
     pub dn: GpuBufferReadable<Vec4>,

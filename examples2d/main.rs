@@ -1,4 +1,3 @@
-use std::num::NonZeroU32;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
 
@@ -10,13 +9,12 @@ async fn main() {
 pub async fn single_rod() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 3;
+    let sim_speed = 10;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 10.,
         cells_per_wavelength: 10,
-        material_resolution: NonZeroU32::new(10).unwrap(),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -51,13 +49,17 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let quad_center = (quad_min + quad_max) / 2.;
     let source = Source::PlaneWave {
         spatial_axis: SpatialAxis::X,
-        position: quad_center.x - (quad_extents.x / 2.) - wavelen,
+        // position: quad_center.x - ((quad_extents.x / 2.) + wavelen * 2.),
+        // direction: WaveDirection::Positive,
+        position: quad_center.x - ((quad_extents.x / 2.) + wavelen),
         direction: WaveDirection::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::Z
     };
     simulation.add_source(source);
+
+    simulation.pml_parameters.widths[SpatialAxis::Y] = LoHiWidths::splat(0);
     
     // Set up buffers and pipeline
     let backend = create_backend().await?;
@@ -77,7 +79,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     testbed.set_clipping_planes(cell_size.min_element() / 3., cell_size.max_element() * 1000.)
         .camera
         .look_at(
-            grid_center.to_3d(Vec3::Z * grid_extents.length() * 3.),
+            grid_center.to_3d(Vec3::Z * grid_extents.length()),
             grid_center.to_3d(Vec3::ZERO)
         );
     testbed.camera.set_up_axis(Vec3::Z);
@@ -93,11 +95,11 @@ pub async fn single_rod() -> anyhow::Result<()> {
         pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
         drop(pass);
         gpu_data.dn.encode_copy_cmd(&mut encoder)?;
-        gpu_data.steps.encode_copy_cmd(&mut encoder)?;
+        gpu_data.t_idx.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
     }
     let mut steps = vec![0];
-    gpu_data.steps.read(&backend, &mut steps).await?;
+    gpu_data.t_idx.read(&backend, &mut steps).await?;
     println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
     println!("steps: {:?}", steps[0]);
 

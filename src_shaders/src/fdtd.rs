@@ -5,6 +5,9 @@ use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 
+#[allow(unused_imports)]
+use khal_std::num_traits::Float;
+
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
@@ -35,24 +38,30 @@ pub fn gpu_pec_boundary(
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn gpu_compute_source_terms(
-    #[spirv(global_invocation_id)] idx3: UVec3,
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &u32, // TODO: rename to "t_idx"
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &u32,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] plane_waves: &[GpuPlaneWave],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] plane_wave_coeffs: &[PlaneWaveCoeffs],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] pml_coeffs: &[PmlCoefficients],
 ) {
-    let cell_idx = GridIndex::from_uvec3(idx3);
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
-    if skip_update(cell_idx, n_cells, idx3, grid.n_cells3) { return; }
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let outside_problem_space = {
+        let min = GridIndex::from_uvec3(grid.problem_space_min);
+        let max = GridIndex::from_uvec3(grid.problem_space_max);
+        cell_idx.cmplt(min).any() || cell_idx.cmpgt(max).any() || cell_idx3.cmpge(grid.n_cells3).any()
+    };
+    if outside_problem_space { return; }
 
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
+    let curr_t_idx = *t_idx;
     let mut h_source_term = Vec4::ZERO;
     let mut dn_source_term = Vec4::ZERO;
-    let curr_t_idx = *steps;
     let t = curr_t_idx as f32 * grid.dt;
 
     // Dipoles
@@ -71,66 +80,62 @@ pub fn gpu_compute_source_terms(
         grid.polarization_mode_index.inject_dn_source(&mut dn_source_term, source_term);
     }
 
-    // Plane Waves
+    // Plane waves
+    let pml_coeffs = pml_coeffs.read(idx);
     for i in 0..plane_waves.len() {
         let GpuPlaneWave {
-            spatial_axis, direction, position_idx,vals_start,
-            vals_end, t_start, polarization, ..
+            spatial_axis, direction, position_idx, vals_start, vals_end, t_start, polarization, ..
         } = plane_waves.read(i);
-        let wave_coeffs = plane_wave_coeffs.read(position_idx as usize);
+        let wave_coeff_idx = {
+            let mut coeff_cell_idx = cell_idx;
+                coeff_cell_idx.dyn_insert(spatial_axis, position_idx);
+            coeff_cell_idx.to_flat_idx(n_cells)
+        };
+        let wave_coeffs = plane_wave_coeffs.read(wave_coeff_idx as usize);
         let axis = Axis::from(spatial_axis);
-        let is_positive_dir = direction == 1;
-        
-        macro_rules! val_idx_and_src_active {
-            ($src_t_idx:expr) => {{
-                let src_t_idx = $src_t_idx.gpu_saturating_sub(t_start);
-                let vals_i = vals_start + src_t_idx;
-                let is_active = ($src_t_idx >= t_start) && (vals_i <= vals_end);
-                (vals_i.min(vals_end) as usize, is_active)
-            }};
-        }
 
-        let cell_idx_axis = cell_idx.dyn_idx(spatial_axis);
-        let is_tf = cell_idx_axis == position_idx; // if cell is on total-field edge
-        let is_sf = cell_idx_axis as i32 == (position_idx as i32 - direction); // if cell is on scattered-field edge
-        // Future source value (to simulate total-field quantities when computing curl)
-        let fut_t_idx = ((t + wave_coeffs.t_offset[axis]) * grid.inv_dt) as Index; // TODO: try interpolating here?
-        let (fut_src_val_idx, fut_src_active) = val_idx_and_src_active!(fut_t_idx);
-        let fut_src_enable = is_tf && fut_src_active;
-        let fut_src_val = source_vals.read(fut_src_val_idx) * fut_src_enable as u32 as f32;
-        // Current source value (to simulate scattered-field quantities for the curl)
-        let (curr_src_val_idx, curr_src_active) = val_idx_and_src_active!(curr_t_idx);
-        let curr_src_enable = is_sf && curr_src_active;
-        let curr_src_val = source_vals.read(curr_src_val_idx) * curr_src_enable as u32 as f32;
+        let cell_idx_a = cell_idx.dyn_idx(spatial_axis);
+        let e_curl_correction_idx = position_idx; // En components are always on injection plane
+        let h_curl_correction_idx = e_curl_correction_idx - 1; // H cmps are always 1/2-cell away from plane
+        let curr_src_val = {
+            let val_idx = vals_start + curr_t_idx.gpu_saturating_sub(t_start);
+            let enable = {
+                (cell_idx_a == e_curl_correction_idx) && (curr_t_idx >= t_start) && (val_idx <= vals_end)
+            } as u32;
+            source_vals.read(val_idx.min(vals_end) as usize) * enable as f32
+        };
 
-        // Compute & write field values
-        // TODO: extrapolate from lecture to all axes and test things out.
-        //       Things to try: change wavecoeffs axis to `axis1`, `axis`, etc.
-        //                      negate half timestep difference for future source time value
-        //                      negate t_offset future source time value
-        //                      negate wave_coeffs src_coeffs
+        let delayed_source_value = {
+            let t_float = (t + wave_coeffs.t_offset[axis]) * grid.inv_dt;
+            let src_t_idx = t_float as u32;
+            let val_idx_lo = vals_start + src_t_idx.gpu_saturating_sub(t_start);
+            let val_idx_hi = vals_start + (src_t_idx + 1).gpu_saturating_sub(t_start);
+            let val_lo = source_vals.read(val_idx_lo.min(vals_end) as usize);
+            let val_hi = source_vals.read(val_idx_hi.min(vals_end) as usize);
+            let enable = (cell_idx_a == h_curl_correction_idx) &&
+                (src_t_idx >= t_start) && (val_idx_lo <= vals_end);
+            Real::lerp(val_lo, val_hi, t_float.fract()) * enable as u32 as f32
+        };
+
         let axis1 = axis.permute();
         let axis2 = axis1.permute();
-        let pol1 = polarization[axis1];
-        let pol2 = polarization[axis2];
-
-        // Update source terms w/ the tf/sf correction terms.
         let inv_d_axis = grid.inv_d[axis];
-        if is_positive_dir {
-            // // En curl corrections (used in H update)
-            h_source_term[axis1] += inv_d_axis * (pol2 * curr_src_val);
-            h_source_term[axis2] -= inv_d_axis * (pol1 * curr_src_val);
-            // // H curl corrections (used in Dn update)
-            dn_source_term[axis1] += inv_d_axis * (pol1 * wave_coeffs.h_curl_coeff[axis2] * fut_src_val);
-            dn_source_term[axis2] -= inv_d_axis * (-pol2 * wave_coeffs.h_curl_coeff[axis1] * fut_src_val);
-        } else {
-            // En curl corrections (used in H update)
-            h_source_term[axis1] -= inv_d_axis * (-pol1 * wave_coeffs.en_curl_coeff[axis2] * fut_src_val);
-            h_source_term[axis2] += inv_d_axis * (pol2 * wave_coeffs.en_curl_coeff[axis1] * fut_src_val);
-            // H curl corrections (used in Dn update)
-            dn_source_term[axis1] += inv_d_axis * (pol1 * curr_src_val);
-            dn_source_term[axis2] += inv_d_axis * (pol2 * curr_src_val);
-        }
+        let pol_a1 = polarization[axis1];
+        let pol_a2 = polarization[axis2];
+        let en_src_a1 = pol_a1 * curr_src_val;
+        let en_src_a2 = pol_a2 * curr_src_val;
+        let h_src_a1 = -wave_coeffs.h_curl_coeff[axis1] * pol_a2 * delayed_source_value;
+        let h_src_a2 = wave_coeffs.h_curl_coeff[axis2] * pol_a1 * delayed_source_value;
+        // Curl corrections
+        let dir = direction as f32;
+        let en_curl_a1 = pml_coeffs.h2[axis1] * dir * inv_d_axis * en_src_a2;
+        let en_curl_a2 = pml_coeffs.h2[axis2] * dir * -(inv_d_axis * en_src_a1);
+        let h_curl_a1 = pml_coeffs.dn2[axis1] * dir * inv_d_axis * h_src_a2;
+        let h_curl_a2 = pml_coeffs.dn2[axis2] * dir * -(inv_d_axis * h_src_a1);
+        h_source_term[axis1] += en_curl_a1;
+        h_source_term[axis2] += en_curl_a2;
+        dn_source_term[axis1] += h_curl_a1;
+        dn_source_term[axis2] += h_curl_a2;
     }
 
     source_terms.write(idx, SourceTerms {
@@ -146,13 +151,12 @@ pub struct SourceTerms {
     pub dn: Vec4,
 }
 
-/// N-dimensional FDTD shader with loss (conductivity). Works with any polarization mode.
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
 pub fn gpu_lossy_update(
-    #[spirv(global_invocation_id)] idx3: UVec3,
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &mut u32,
     // Vector fields
@@ -164,162 +168,215 @@ pub fn gpu_lossy_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
 ) {
-    let cell_idx = GridIndex::from_uvec3(idx3);
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
-    if skip_update(cell_idx, n_cells, idx3, grid.n_cells3) { return; }
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let boundary_or_out_of_bounds = cell_idx.cmpeq(GridIndex::ZERO).any() ||
+        cell_idx.cmpeq(n_cells - 1).any() ||
+        cell_idx3.cmpge(grid.n_cells3).any();
+    if boundary_or_out_of_bounds { return; }
 
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
-    let SourceTerms {
-        h: h_source_term, dn: dn_source_term
-    } = source_terms.read(idx);
-    let coeffs = grid_coeffs.read(idx);
+    let m = grid_coeffs.read(idx);
     let mut ints = integrals.read(idx);
 
     let en_self = en.read(idx);
-    let en_curl = compute_curl::<true>(
-        grid.d,
-        idx,
-        grid.flat_idx_incrs,
-        en_self,
-        en
+    let src = source_terms.read(idx);
+
+    // H update
+    let mut h_self = h.read(idx);
+    let en_curl = Vec4::new(
+        (en.read(idx + grid.flat_idx_incrs.y as usize).z - en_self.z) * grid.inv_d.y,
+        -(en.read(idx + grid.flat_idx_incrs.x as usize).z - en_self.z) * grid.inv_d.x,
+        (en.read(idx + grid.flat_idx_incrs.x as usize).y - en_self.y) * grid.inv_d.x -
+            (en.read(idx + grid.flat_idx_incrs.y as usize).x - en_self.x) * grid.inv_d.y,
+        0.
     );
-    let h_self = h.read(idx);
-    #[cfg_attr(feature = "dim1", allow(unused_mut))]
-    let mut h_self_new = coeffs.h1 * h_self + coeffs.h2 * en_curl +
-        h_source_term;
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
-    {
-        ints.en_curl += en_curl;
-        h_self_new += coeffs.h3 * ints.en_curl;
-        #[cfg(feature = "dim3")]
-        {
-            ints.h += h_self;
-            h_self_new += coeffs.h4 * ints.h;
-        }
-    };
-    h.write(idx, h_self_new);
-    let h_self = h_self_new;
+    ints.en_curl += en_curl;
+    ints.h += h_self;
+    h_self.x = m.h1.x * h_self.x + m.h2.x * en_curl.x + m.h3.x * ints.en_curl.x;
+    h_self.y = m.h1.y * h_self.y + m.h2.y * en_curl.y + m.h3.y * ints.en_curl.y;
+    h_self.z = m.h1.z * h_self.z + m.h2.z * en_curl.z + m.h4.z * ints.h.z;
+    h_self += src.h;
+    h.write(idx, h_self);
 
-    let h_curl = compute_curl::<false>(
-        grid.d,
-        idx,
-        grid.flat_idx_incrs,
-        h_self,
-        h
+    // Dn update
+    let mut dn_self = dn.read(idx);
+    let h_curl = Vec4::new(
+        (h_self.z - h.read(idx - grid.flat_idx_incrs.y as usize).z) * grid.inv_d.y,
+        -(h_self.z - h.read(idx - grid.flat_idx_incrs.x as usize).z) * grid.inv_d.x,
+        (h_self.y - h.read(idx - grid.flat_idx_incrs.x as usize).y) * grid.inv_d.x -
+            (h_self.x - h.read(idx - grid.flat_idx_incrs.y as usize).x) * grid.inv_d.y,
+        0.
     );
-    let dn_self = dn.read(idx);
-    ints.en += en_self;
-    #[cfg_attr(feature = "dim1", allow(unused_mut))]
-    let mut dn_self_new = coeffs.dn1 * dn_self + coeffs.dn2 * h_curl +
-        coeffs.dn_loss1 * en_self + coeffs.dn_loss2 * ints.en +
-        dn_source_term;
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
-    {
-        ints.h_curl += h_curl;
-        dn_self_new += coeffs.dn3 * ints.h_curl;
-        #[cfg(feature = "dim3")]
-        {
-            ints.dn += dn_self;
-            dn_self_new += coeffs.dn4 * ints.dn
-        }
-    };
-    dn.write(idx, dn_self_new);
-    let dn_self = dn_self_new;
+    ints.h_curl += h_curl;
+    ints.dn += dn_self;
+    dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl.x + m.dn3.x * ints.h_curl.x;
+    dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl.y + m.dn3.y * ints.h_curl.y;
+    dn_self.z = m.dn1.z * dn_self.z + m.dn2.z * h_curl.z + m.dn4.z * ints.dn.z;
+    dn_self += src.dn;
+    dn.write(idx, dn_self);
 
-    let en_self_new = coeffs.en1 * dn_self;
-    en.write(idx, en_self_new);
-
-    integrals.write(idx, ints);
+    en.write(idx, m.en1 * dn_self);
 
     if cell_idx == GridIndex::ONE {
         *steps += 1;
     }
 }
 
-fn skip_update(cell_idx: GridIndex, n_cells: GridIndex, idx3: UVec3, n_cells3: UVec3) -> bool {
-    let lo_boundary = cell_idx.cmpeq(GridIndex::ZERO).any();
-    let hi_boundary = cell_idx.cmpeq(n_cells - 1).any();
-    let out_of_bounds = idx3.cmpge(n_cells3).any();
-    lo_boundary || hi_boundary || out_of_bounds
-}
+#[spirv_bindgen]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn gpu_lossy_update_old(
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &mut u32,
+    // Vector fields
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dn: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] en: &mut [Vec4],
+    // Field update terms
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
+) {
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
 
-/// Forwards & backwards discrete curl
-fn compute_curl<const FORWARDS: bool>(
-    d: Vec3,
-    idx: usize,
-    flat_idx_incrs: UVec3,
-    v_self: Vec4,
-    v: &[Vec4]
-) -> Vec4 {
-    let mut curl_cmps = [0.; 4];
-    for i in 0..MAX_DIM {
-        let axis = Axis::ALL_AXES[i];
-        if axis == Axis::INVALID { break; } // Removing this causes instability (probably a rust-gpu issue)
-        curl_cmps[i] = curl_component::<FORWARDS>(
-            axis,
-            d,
-            idx,
-            flat_idx_incrs,
-            v_self,
-            v,
-        );
+    let is_boundary_or_out_of_bounds = cell_idx.cmpeq(GridIndex::ZERO).any() ||
+        cell_idx.cmpge(n_cells - 1).any() || cell_idx3.cmpge(grid.n_cells3).any();
+    if is_boundary_or_out_of_bounds { return; }
+
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+    let pml_coeffs = grid_coeffs.read(idx);
+    let mut pml_ints = integrals.read(idx);
+    let en_self = en.read(idx);
+    let source_terms = source_terms.read(idx);
+
+    fn curl<const FWD: bool>(
+        idx: usize,
+        v_self: Vec4,
+        v: &[Vec4],
+        grid: &GridParameters
+    ) -> Vec4 {
+        let mut curl1;
+        let mut curl2;
+        let mut neighbor_idx;
+
+        let mut curl = Vec4::ZERO;
+        for i in 0..Axis::ALL_AXES.len() {
+            let axis = Axis::ALL_AXES[i];
+            if axis as u32 == u32::MAX { break; } // Removing this causes instability (probably a rust-gpu issue)
+            let axis1 = axis.permute();
+            let axis2 = axis1.permute();
+            curl1 = if SpatialAxis::is_spatial_axis(axis1) {
+                if FWD {
+                    neighbor_idx = idx + grid.flat_idx_incrs[axis1] as usize;
+                    (v.read(neighbor_idx)[axis2] - v_self[axis2]) * grid.inv_d[axis1]
+                } else {
+                    neighbor_idx = idx - grid.flat_idx_incrs[axis1] as usize;
+                    (v_self[axis2] - v.read(neighbor_idx)[axis2]) * grid.inv_d[axis1]
+                }
+            } else { 0. };
+            curl2 = if SpatialAxis::is_spatial_axis(axis2) {
+                if FWD {
+                    neighbor_idx = idx + grid.flat_idx_incrs[axis2] as usize;
+                    (v.read(neighbor_idx)[axis1] - v_self[axis1]) * grid.inv_d[axis2]
+                } else {
+                    neighbor_idx = idx - grid.flat_idx_incrs[axis2] as usize;
+                    (v_self[axis1] - v.read(neighbor_idx)[axis1]) * grid.inv_d[axis2]
+                }
+            } else { 0. };
+            curl.dyn_insert(axis, curl1 - curl2);
+        }
+        curl
     }
-    Vec4::from(curl_cmps)
-}
 
-/// Forwards & backwards component-wise curl operator
-fn curl_component<const FORWARDS: bool>(
-    axis: Axis,
-    d: Vec3,
-    idx: usize,
-    flat_idx_incrs: UVec3,
-    v_self: Vec4,
-    v: &[Vec4],
-) -> Real {
-    let neighbors = get_curl_neighbors::<FORWARDS>(idx, flat_idx_incrs, v);
-    let axis1 = axis.permute();
-    let axis2 = axis1.permute();
+    let h_self = {
+        let old_self = h.read(idx);
 
-    let curl_term1 = if SpatialAxis::is_spatial_axis(axis1) {
-        (neighbors[axis1 as usize][axis2] - v_self[axis2]) / d[axis1]
-    } else { 0. };
-    let curl_term2 = if SpatialAxis::is_spatial_axis(axis2) {
-        (neighbors[axis2 as usize][axis1] - v_self[axis1]) / d[axis2]
-    } else { 0. };
+        let en_curl = curl::<true>(idx, en_self, en, grid);
 
-    if FORWARDS { curl_term1 - curl_term2 }
-        else { curl_term2 - curl_term1 }
-}
+        let mut new_h = pml_coeffs.h1 * old_self + pml_coeffs.h2 * en_curl;
+        cfg_select! {
+            feature = "dim1" => {
+                pml_ints.en_curl.z += en_curl.z;
+                new_h.z += pml_coeffs.h3.z * pml_ints.en_curl.z;
+            }
+            feature = "dim2" => {
+                pml_ints.en_curl.x += en_curl.x;
+                new_h.x += pml_coeffs.h3.x * pml_ints.en_curl.x;
+                pml_ints.en_curl.y += en_curl.y;
+                new_h.y += pml_coeffs.h3.y * pml_ints.en_curl.y;
 
-fn get_curl_neighbors<const FORWARDS: bool>(
-    idx: usize,
-    flat_idx_incrs: UVec3,
-    v: &[Vec4],
-) -> [Vec4; 3] {
-    macro_rules! get_neighbor {
-        ($axis: ident) => {{
-            let neighbor_idx =
-                if FORWARDS { idx + flat_idx_incrs.$axis as usize }
-                else { idx.gpu_saturating_sub(flat_idx_incrs.$axis as usize) };
-            v.read(neighbor_idx)
-        }};
+                pml_ints.h.z += old_self.z;
+                new_h.z += pml_coeffs.h4.z * pml_ints.h.z;
+            }
+            feature = "dim3" => {
+                pml_ints.en_curl += en_curl;
+                pml_ints.h += old_self;
+                new_h += pml_coeffs.h3 * pml_ints.en_curl + pml_coeffs.h4 * pml_ints.h;
+            }
+        }
+        new_h + source_terms.h
+    };
+    h.write(idx, h_self);
+
+    let dn_self = {
+        let old_self = dn.read(idx);
+
+        let h_curl = curl::<false>(idx, h_self, h, grid);
+
+        let mut new_dn = pml_coeffs.dn1 * old_self + pml_coeffs.dn2 * h_curl +
+            pml_coeffs.dn_loss1 * en_self;
+        // 2nd loss term
+        cfg_select! {
+            feature = "dim1" => {
+                pml_ints.en.z += en_self.z;
+                new_dn.z += pml_coeffs.dn_loss2.z * pml_ints.en.z;
+            }
+            feature = "dim2" => {
+                pml_ints.en.x += en_self.x;
+                new_dn.x += pml_coeffs.dn_loss2.x * pml_ints.en.x;
+                pml_ints.en.y += en_self.y;
+                new_dn.y += pml_coeffs.dn_loss2.y * pml_ints.en.y;
+            }
+            feature = "dim3" => {
+                pml_ints.en += en_self;
+                new_dn += pml_coeffs.dn_loss2 * pml_ints.en;
+            }
+        }
+        // last two integral terms
+        cfg_select! {
+            feature = "dim1" => {
+                pml_ints.h_curl.z += h_curl.z;
+                new_dn.z += pml_coeffs.dn3.z * pml_ints.h_curl.z;
+            }
+            feature = "dim2" => {
+                pml_ints.h_curl.x += h_curl.x;
+                new_dn.x += pml_coeffs.dn3.x * pml_ints.h_curl.x;
+                pml_ints.h_curl.y += h_curl.y;
+                new_dn.y += pml_coeffs.dn3.y * pml_ints.h_curl.y;
+
+                pml_ints.dn.z += old_self.z;
+                new_dn.z += pml_coeffs.dn4.z * pml_ints.dn.z;
+            }
+            feature = "dim3" => {
+                pml_ints.h_curl += h_curl;
+                pml_ints.dn += old_self;
+                new_dn += pml_coeffs.dn3 * pml_ints.h_curl + pml_coeffs.dn4 * pml_ints.dn;
+            }
+        }
+        new_dn + source_terms.dn
+    };
+    dn.write(idx, dn_self);
+
+    en.write(idx, pml_coeffs.en1 * dn_self);
+
+    if cell_idx == GridIndex::ONE {
+        *steps += 1;
     }
-
-    [
-        cfg_select! {
-            not(feature = "dim1") => get_neighbor!(x),
-            _ => Vec4::ZERO
-        },
-        cfg_select! {
-            not(feature = "dim1") => get_neighbor!(y),
-            _ => Vec4::ZERO
-        },
-        cfg_select! {
-            not(feature = "dim2") => get_neighbor!(z),
-            _ => Vec4::ZERO
-        },
-    ]
 }
 
 /// Information describing the grid
@@ -337,7 +394,11 @@ pub struct GridParameters {
     pub inv_dt: Real,
     /// Inverse of spatial differential (reciprocated cell size)
     pub inv_d: Vec3,
-    pub _padding0: u32
+    pub _padding0: u32,
+    pub problem_space_min: UVec3,
+    pub _padding1: u32,
+    pub problem_space_max: UVec3,
+    pub _padding2: u32,
 }
 
 /// A newtype of an index representing the polarization mode.
@@ -384,18 +445,16 @@ impl PolarizationModeIndex {
 pub struct PmlCoefficients {
     pub h1: Vec4,
     pub h2: Vec4,
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
     pub h3: Vec4,
-    #[cfg(feature = "dim3")]
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
     pub h4: Vec4,
 
     pub dn1: Vec4,
     pub dn2: Vec4,
     pub dn_loss1: Vec4,
     pub dn_loss2: Vec4,
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
     pub dn3: Vec4,
-    #[cfg(feature = "dim3")]
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
     pub dn4: Vec4,
 
     pub en1: Vec4,
@@ -409,15 +468,11 @@ pub struct PmlCoefficients {
 #[repr(C)]
 pub struct PmlIntegrals {
     pub en: Vec4, // used for loss
-
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
     pub en_curl: Vec4,
-    #[cfg(feature = "dim3")]
-    pub h: Vec4,
-
     #[cfg(any(feature = "dim2", feature = "dim3"))]
+    pub h: Vec4,
     pub h_curl: Vec4,
-    #[cfg(feature = "dim3")]
+    #[cfg(any(feature = "dim2", feature = "dim3"))]
     pub dn: Vec4,
 }
 
@@ -438,7 +493,7 @@ pub struct GpuDipole {
 #[repr(C)]
 pub struct GpuPlaneWave {
     pub spatial_axis: SpatialAxis,
-    pub direction: i32, // TODO: turn this into the direction enum by unsafe imples w/ bytemuck traits
+    pub direction: i32, // TODO: turn this into the direction enum using unsafe impls w/ bytemuck traits
     pub position_idx: u32,
     pub vals_start: u32,
     pub vals_end: u32,
@@ -453,12 +508,9 @@ pub struct GpuPlaneWave {
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct PlaneWaveCoeffs {
-    pub t_offset: Vec3, // == (refractive_idx / (2. * C_0)) * d + (dt / 2.)
+    pub t_offset: Vec3,
     pub _padding0: u32,
     /// H curl correction term coefficients
-    pub h_curl_coeff: Vec3, // sqrt(eps_r / mu_r)
+    pub h_curl_coeff: Vec3,
     pub _padding1: u32,
-    /// En curl correction term coefficients
-    pub en_curl_coeff: Vec3, // sqrt(mu_r / eps_r)
-    pub _padding2: u32,
 }
