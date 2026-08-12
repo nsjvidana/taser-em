@@ -7,7 +7,7 @@ use taser_em_shaders::math::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::{GpuPlaneWave, PlaneWaveCoeffs, PmlCoefficients, PolarizationModeIndex};
+use taser_em_shaders::fdtd::{GpuTfsf, PmlCoefficients, PolarizationModeIndex};
 use crate::consts::{C_0, EPS_0};
 use crate::fdtd::{ElectricMaterial, PmlParameters};
 use crate::util::grid_cells_iter;
@@ -346,15 +346,16 @@ impl PmlCoefficientsGrid {
 
         // PML conductivity terms (1D slices along each axis)
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
-            let hi_boundary = (n_cells3[axis] - 1)*2;
-            let lo_boundary = 0;
             const HALF_CELL: Index = 1;
             const ONE_CELL: Index = HALF_CELL*2;
-            (0..n_cells3[axis]*2)
+            let n_axis2x = n_cells3[axis]*2;
+            let hi_end = (n_axis2x - 1).saturating_sub(ONE_CELL);
+            let lo_end = ONE_CELL;
+            (0..n_axis2x)
                 .map(|i| {
-                    if i == lo_boundary || i >= hi_boundary { return 0. }
-                    let lo_dist = i.abs_diff(lo_boundary + ONE_CELL) as Real;
-                    let hi_dist = i.abs_diff(hi_boundary - HALF_CELL) as Real;
+                    if i < lo_end || i > hi_end { return 0. }
+                    let lo_dist = i.abs_diff(lo_end) as Real;
+                    let hi_dist = i.abs_diff(hi_end) as Real;
                     let lo_t = (1. - lo_dist / (pml_widths[axis].lo*2) as Real)
                         .clamp(0., 1.);
                     let hi_t = (1. - hi_dist / (pml_widths[axis].hi*2) as Real)
@@ -373,10 +374,10 @@ impl PmlCoefficientsGrid {
         par_iter_mut!(coeffs)
             .enumerate()
             .for_each(|(i, coeff)| {
-                let idx = GridIndex::from_flat_idx(i as u32, n_cells);
+                let cell_idx = GridIndex::from_flat_idx(i as u32, n_cells);
 
                 // Stagger indexing the conductivities as per the Yee grid staggering
-                let idx_2x = (idx * 2).cell_idx_to_3d().as_usizevec3();
+                let idx_2x = (cell_idx * 2).cell_idx_to_3d().as_usizevec3();
                 let dn_sigs: [Vec3; MAX_DIM] = core::array::from_fn(|axis_i| {
                     let mut sig_idx = idx_2x;
                         sig_idx[axis_i] += 1;
@@ -441,39 +442,6 @@ impl PmlCoefficientsGrid {
             });
 
         (*regions_offset, Self { n_cells, coeffs, })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PlaneWaveCoefficientsGrid {
-    pub coeffs: Vec<PlaneWaveCoeffs>,
-    pub n_cells: GridIndex
-}
-
-impl PlaneWaveCoefficientsGrid {
-    pub fn new(mat_grid: &YeeGridMaterials, plane_waves: &[GpuPlaneWave], half_dt: Real) -> Self {
-        let cell_count = mat_grid.n_cells.element_product() as usize;
-        let mut coeffs = vec![PlaneWaveCoeffs::default(); cell_count];
-        let cell_size3 = mat_grid.cell_size.to_3d(Vec3::ZERO);
-        par_iter_mut!(coeffs)
-            .enumerate()
-            .for_each(|(i, c)| {
-                let cell_idx = GridIndex::from_flat_idx(i as Index, mat_grid.n_cells);
-                let is_tfsf_cell = plane_waves.iter()
-                    .any(|w| {
-                        let cell_pos_idx = cell_idx[w.spatial_axis];
-                        cell_pos_idx == w.position_idx
-                    });
-                if !is_tfsf_cell { return; } // Skip cells that don't need their coeffs computed
-
-                let mat = &mat_grid.materials[i];
-                c.t_offset = -((mat.refractive_index() * cell_size3) / (2. * C_0)) + half_dt;
-                c.h_curl_coeff = (mat.eps_r / mat.mu_r).sqrt();
-            });
-        Self {
-            coeffs,
-            n_cells: mat_grid.n_cells
-        }
     }
 }
 

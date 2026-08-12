@@ -1,5 +1,5 @@
 use taser_em2d::prelude::*;
-use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
+use taser_em_testbed2d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
@@ -9,7 +9,7 @@ async fn main() {
 pub async fn single_rod() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 10;
+    let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -47,12 +47,12 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let quad_center = (quad_min + quad_max) / 2.;
-    let source = Source::PlaneWave {
+    let source = Source::TFSF {
         spatial_axis: SpatialAxis::X,
         // position: quad_center.x - ((quad_extents.x / 2.) + wavelen * 2.),
         // direction: WaveDirection::Positive,
-        position: quad_center.x - ((quad_extents.x / 2.) + wavelen),
-        direction: WaveDirection::Positive,
+        position: quad_center.x + ((quad_extents.x / 2.) + wavelen),
+        direction: WaveDirection::Negative,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::Z

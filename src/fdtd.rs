@@ -68,40 +68,10 @@ impl FdtdLossySimulation {
                 })
             })
             .collect::<Vec<_>>();
-        let mut plane_waves = self.sources.iter()
-            .filter_map(|source| {
-                let Source::PlaneWave {
-                    spatial_axis, position, direction, t_start, vals, polarization
-                } = source else { return None; };
-                let pos = (regions_offset[*spatial_axis] + *position) / cell_size[*spatial_axis];
-                let position_idx = pos as Index;
-                debug_assert!(!pos.is_sign_negative(), "negative source position!");
-                debug_assert!(position_idx < n_cells[*spatial_axis], "Out of bounds source!");
-
-                let start = source_vals.len();
-                source_vals.extend_from_slice(vals);
-                Some(GpuPlaneWave {
-                    spatial_axis: *spatial_axis,
-                    direction: *direction as i32,
-                    position_idx,
-                    vals_start: start as u32,
-                    vals_end: source_vals.len() as u32 - 1,
-                    t_start: (t_start / dt) as u32,
-                    _padding0: [0; 2],
-                    polarization: *polarization,
-                    _padding1: 0,
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut plane_waves = self.create_tfsf_sources(&mut source_vals, stability);
         if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
-        if plane_waves.is_empty() { plane_waves.push(GpuPlaneWave::default()) }
+        if plane_waves.is_empty() { plane_waves.push(GpuTFSF::default()) }
         if source_vals.is_empty() { source_vals.push(0.0); }
-
-        let plane_wave_coeffs_grid = PlaneWaveCoefficientsGrid::new(
-            &grid_mats,
-            &plane_waves,
-            dt / 2.
-        );
 
         let flat_idx_incrs = {
             let mut incrs = UVec3::ZERO;
@@ -155,7 +125,6 @@ impl FdtdLossySimulation {
             dipoles: dipoles.create_gpu_buffer(backend)?,
             plane_waves: plane_waves.create_gpu_buffer(backend)?,
             source_vals: source_vals.create_gpu_buffer(backend)?,
-            plane_wave_coeffs: plane_wave_coeffs_grid.coeffs.create_gpu_buffer(backend)?,
             // For update equation terms
             source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
@@ -193,6 +162,10 @@ impl FdtdLossySimulation {
         }
     }
 
+    pub fn create_tfsf_sources(&self, source_vals: &mut [Real], stability: &FdtdStability) -> Vec<GpuTFSF> {
+        todo!()
+    }
+
     /// Compute the dimensions of a grid that can encompass `simulation_bb`, then add spacer regions
     /// from `stability` and PML widths from `self`.
     pub fn compute_n_cells(&self, simulation_bb: &Aabb, stability: &FdtdStability) -> GridIndex {
@@ -214,7 +187,7 @@ impl FdtdLossySimulation {
             .map(|src| {
                 match src {
                     Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
-                    Source::PlaneWave { spatial_axis, position, ..} => {
+                    Source::TFSF { spatial_axis, position, ..} => {
                         let mut pos = regions_center;
                             pos[Axis::from(*spatial_axis)] = *position;
                         pos
@@ -272,7 +245,6 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &gpu_data.source_vals,
                 &gpu_data.dipoles,
                 &gpu_data.plane_waves,
-                &gpu_data.plane_wave_coeffs,
                 &gpu_data.grid_coeffs,
             )?;
             self.update.call(
@@ -311,8 +283,7 @@ pub struct FdtdLossyDispatchData {
     pub en: GpuBufferReadable<Vec4>,
     // For computing source terms
     pub dipoles: GpuBuffer<GpuDipole>,
-    pub plane_waves: GpuBuffer<GpuPlaneWave>,
-    pub plane_wave_coeffs: GpuBuffer<PlaneWaveCoeffs>,
+    pub plane_waves: GpuBuffer<GpuTFSF>,
     pub source_vals: GpuBuffer<f32>,
     // For update equation terms
     pub source_terms: GpuBuffer<SourceTerms>,
@@ -321,6 +292,15 @@ pub struct FdtdLossyDispatchData {
     // Misc data
     pub thread_count: [u32; 3],
     pub n_cells: GridIndex,
+}
+
+pub struct TfsfDispatchData {
+    pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
+    // Vector fields are initialized for each plane wave.
+    // so n_cells of each vector field depends on the propagation axis of plane wave
+    pub h_a1: GpuBuffer<Real>,
+    pub dn_a2: GpuBuffer<Real>,
+    pub en_a2: GpuBuffer<Real>,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation
@@ -493,8 +473,8 @@ pub enum Source {
         /// you want to scale `vals` by the magnitude of `moment`).
         moment: Vec3,
     },
-    /// A plane wave traveling along an axis (positive direction).
-    PlaneWave { // TODO: Implement plane wave in shader
+    /// Total-field/Scattered-field source.
+    TFSF {
         /// The spatial axis along which the plane wave will travel.
         spatial_axis: SpatialAxis,
         /// Position of the plane wave, along `spatial_axis`, in world coordinates.
@@ -507,6 +487,7 @@ pub enum Source {
         vals: Vec<f32>,
         /// Polarization direction of the plane wave (unit vector)
         polarization: Vec3,
+        tfsf_buffer_width: NonZeroU32,
     }
 }
 

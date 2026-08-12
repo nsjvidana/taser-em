@@ -27,7 +27,7 @@ pub fn gpu_pec_boundary(
     let out_of_bounds = idx3.cmpge(grid.n_cells3).any();
     if !(lo_boundary || hi_boundary) || out_of_bounds { return; }
 
-    let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
     h.write(idx, Vec4::ZERO);
     dn.write(idx, Vec4::ZERO);
     en.write(idx, Vec4::ZERO);
@@ -44,9 +44,153 @@ pub fn gpu_compute_source_terms(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] plane_waves: &[GpuPlaneWave],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] plane_wave_coeffs: &[PlaneWaveCoeffs],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] pml_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_sources: &[GpuTfsf],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
+) {
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let outside_problem_space = {
+        let min = GridIndex::from_uvec3(grid.problem_space_min);
+        let max = GridIndex::from_uvec3(grid.problem_space_max);
+        cell_idx.cmplt(min).any() || cell_idx.cmpgt(max).any() || cell_idx3.cmpge(grid.n_cells3).any()
+    };
+    if outside_problem_space { return; }
+
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+
+    let mut h_source_term = Vec4::ZERO;
+    let mut dn_source_term = Vec4::ZERO;
+    let t_idx = *t_idx;
+    let t = t_idx as Real * grid.dt;
+
+    let coeffs = pml_coeffs.read(idx);
+    for i in 0..tfsf_sources.len() {
+        // TODO: make sure the code here works for a "zeroed" tfsf source
+        todo!()
+    }
+
+    source_terms.write(idx, SourceTerms {
+        h: h_source_term,
+        dn: dn_source_term
+    });
+}
+
+#[spirv_bindgen]
+#[spirv(compute(threads(1, 1, 64)))]
+pub fn aux_grid_update(
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] tfsf_sources: &[GpuTfsf],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &Index,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] corrections: &mut [TfsfCorrections],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] auxgr_coeffs: &[AuxGridPmlCoeffs],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h: &mut [[Real; 2]],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] dn: &mut [[Real; 2]],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] en: &mut [[Real; 2]],
+) {
+    const A1: usize = 0;
+    const A2: usize = 1;
+    let wave_idx = cell_idx3.x as usize;
+    let GpuTfsf {
+        prop_axis, direction, boundary_min, boundary_max, vals_start, vals_end,
+        t_start, n_cells, polarization_a1, polarization_a2, inv_d_a, corrections_start, num_correction_cells,
+        grid_start: coeffs_start
+    } = tfsf_sources.read(wave_idx);
+    let a = Axis::from(prop_axis);
+    let a1 = a.permute();
+    let a2 = a1.permute();
+    if cell_idx3.z >= n_cells { return; }
+
+    let last_idx_local = n_cells as usize - 1;
+    let idx_local = cell_idx3.z as usize;
+    let idx_local_inv = last_idx_local - idx_local;
+
+    let is_positive_dir = direction == WaveDirection::Positive;
+    let idx_offset = coeffs_start as usize;
+    let idx = idx_offset + idx_local;
+    let m = auxgr_coeffs.read(idx);
+
+    // Resolve dipole source
+    let is_source = (is_positive_dir && idx_local == 0) ||
+        (!is_positive_dir && idx_local == last_idx_local);
+    let vals_i = vals_start + t_idx.gpu_saturating_sub(t_start);
+    let src_enable = (*t_idx >= t_start && (vals_i <= vals_end)) as u32;
+    let src_val = source_vals.read((vals_i * src_enable) as usize) * src_enable as Real;
+    let src_vect = [polarization_a1 * src_val, polarization_a2 * src_val];
+
+    let en_self = en.read(idx);
+
+    let mut h_self = h.read(idx);
+    let not_boundary = (idx_local < last_idx_local) as u32 as Real;
+    let mut neighbor = en.read((idx + 1).min(en.len() - 1));
+    let en_curl_a1 = -(neighbor[A2] * not_boundary - en_self[A2]) * inv_d_a;
+    let en_curl_a2 = (neighbor[A1] * not_boundary - en_self[A1]) * inv_d_a;
+    h_self[A1] = m.h1[a1] * h_self[A1] + m.h2[a1] * en_curl_a1;
+    h_self[A2] = m.h1[a2] * h_self[A2] + m.h2[a2] * en_curl_a2;
+    h.write(idx, h_self);
+
+    let mut dn_self = dn.read(idx);
+    let not_boundary = (idx_local > 0) as u32 as Real;
+    neighbor = en.read(idx.gpu_saturating_sub(1));
+    let h_curl_a1 = -(h_self[A2] * not_boundary - neighbor[A2]) * inv_d_a;
+    let h_curl_a2 = (h_self[A1] * not_boundary - neighbor[A1]) * inv_d_a;
+    dn_self[A1] = m.dn1[a1] * dn_self[A1] + m.dn2[a1] * h_curl_a1;
+    dn_self[A2] = m.dn1[a2] * dn_self[A2] + m.dn2[a2] * h_curl_a2;
+    dn_self = if is_source { src_vect } else { dn_self };
+    dn.write(idx, dn_self);
+
+    let en_self = [
+        m.en1[a1] * dn_self[A1],
+        m.en1[a2] * dn_self[A2],
+    ];
+    en.write(idx, en_self);
+
+    let num_correction_cells = num_correction_cells as usize;
+    let dir_local_idx = if is_positive_dir { idx_local } else { idx_local_inv };
+    let is_correction_cell = dir_local_idx > 0 && dir_local_idx <= num_correction_cells;
+    if !is_correction_cell { return; }
+    let corr_idx_offset = if is_positive_dir { dir_local_idx - 1 } else { num_correction_cells - dir_local_idx };
+    let correction_idx = corrections_start as usize + corr_idx_offset;
+    corrections.write(correction_idx, TfsfCorrections {
+        h_a1: h_self[A1],
+        h_a2: h_self[A2],
+        en_a1: en_self[A1],
+        en_a2: en_self[A2],
+    });
+}
+
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct AuxGridPmlCoeffs {
+    pub h1: Vec4,
+    pub h2: Vec4,
+    pub dn1: Vec4,
+    pub dn2: Vec4,
+    pub en1: Vec4,
+}
+
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct TfsfCorrections {
+    pub h_a1: Real,
+    pub h_a2: Real,
+    pub en_a1: Real,
+    pub en_a2: Real,
+}
+
+#[spirv_bindgen]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn gpu_compute_source_terms_old(
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &u32,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] plane_waves: &[GpuTfsf],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
@@ -83,59 +227,7 @@ pub fn gpu_compute_source_terms(
     // Plane waves
     let pml_coeffs = pml_coeffs.read(idx);
     for i in 0..plane_waves.len() {
-        let GpuPlaneWave {
-            spatial_axis, direction, position_idx, vals_start, vals_end, t_start, polarization, ..
-        } = plane_waves.read(i);
-        let wave_coeff_idx = {
-            let mut coeff_cell_idx = cell_idx;
-                coeff_cell_idx.dyn_insert(spatial_axis, position_idx);
-            coeff_cell_idx.to_flat_idx(n_cells)
-        };
-        let wave_coeffs = plane_wave_coeffs.read(wave_coeff_idx as usize);
-        let axis = Axis::from(spatial_axis);
-
-        let cell_idx_a = cell_idx.dyn_idx(spatial_axis);
-        let e_curl_correction_idx = position_idx; // En components are always on injection plane
-        let h_curl_correction_idx = e_curl_correction_idx - 1; // H cmps are always 1/2-cell away from plane
-        let curr_src_val = {
-            let val_idx = vals_start + curr_t_idx.gpu_saturating_sub(t_start);
-            let enable = {
-                (cell_idx_a == e_curl_correction_idx) && (curr_t_idx >= t_start) && (val_idx <= vals_end)
-            } as u32;
-            source_vals.read(val_idx.min(vals_end) as usize) * enable as f32
-        };
-
-        let delayed_source_value = {
-            let t_float = (t + wave_coeffs.t_offset[axis]) * grid.inv_dt;
-            let src_t_idx = t_float as u32;
-            let val_idx_lo = vals_start + src_t_idx.gpu_saturating_sub(t_start);
-            let val_idx_hi = vals_start + (src_t_idx + 1).gpu_saturating_sub(t_start);
-            let val_lo = source_vals.read(val_idx_lo.min(vals_end) as usize);
-            let val_hi = source_vals.read(val_idx_hi.min(vals_end) as usize);
-            let enable = (cell_idx_a == h_curl_correction_idx) &&
-                (src_t_idx >= t_start) && (val_idx_lo <= vals_end);
-            Real::lerp(val_lo, val_hi, t_float.fract()) * enable as u32 as f32
-        };
-
-        let axis1 = axis.permute();
-        let axis2 = axis1.permute();
-        let inv_d_axis = grid.inv_d[axis];
-        let pol_a1 = polarization[axis1];
-        let pol_a2 = polarization[axis2];
-        let en_src_a1 = pol_a1 * curr_src_val;
-        let en_src_a2 = pol_a2 * curr_src_val;
-        let h_src_a1 = -wave_coeffs.h_curl_coeff[axis1] * pol_a2 * delayed_source_value;
-        let h_src_a2 = wave_coeffs.h_curl_coeff[axis2] * pol_a1 * delayed_source_value;
-        // Curl corrections
-        let dir = direction as f32;
-        let en_curl_a1 = pml_coeffs.h2[axis1] * dir * inv_d_axis * en_src_a2;
-        let en_curl_a2 = pml_coeffs.h2[axis2] * dir * -(inv_d_axis * en_src_a1);
-        let h_curl_a1 = pml_coeffs.dn2[axis1] * dir * inv_d_axis * h_src_a2;
-        let h_curl_a2 = pml_coeffs.dn2[axis2] * dir * -(inv_d_axis * h_src_a1);
-        h_source_term[axis1] += en_curl_a1;
-        h_source_term[axis2] += en_curl_a2;
-        dn_source_term[axis1] += h_curl_a1;
-        dn_source_term[axis2] += h_curl_a2;
+        todo!()
     }
 
     source_terms.write(idx, SourceTerms {
@@ -210,10 +302,15 @@ pub fn gpu_lossy_update(
         0.
     );
     ints.h_curl += h_curl;
+    ints.en += en_self;
     ints.dn += dn_self;
-    dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl.x + m.dn3.x * ints.h_curl.x;
-    dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl.y + m.dn3.y * ints.h_curl.y;
-    dn_self.z = m.dn1.z * dn_self.z + m.dn2.z * h_curl.z + m.dn4.z * ints.dn.z;
+
+    dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl.x + m.dn3.x * ints.h_curl.x +
+        m.dn_loss1.x * en_self.x + m.dn_loss2.x * ints.en.x;
+    dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl.y + m.dn3.y * ints.h_curl.y +
+        m.dn_loss1.y * en_self.y + m.dn_loss2.y * ints.en.y;
+    dn_self.z = m.dn1.z * dn_self.z + m.dn2.z * h_curl.z + m.dn4.z * ints.dn.z +
+        m.dn_loss1.z * en_self.z + m.dn_loss2.z * ints.en.z;
     dn_self += src.dn;
     dn.write(idx, dn_self);
 
@@ -488,29 +585,35 @@ pub struct GpuDipole {
     // TODO: pub repeat_count: u32,
 }
 
-/// A plane wave source
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+/// A plane wave source (TF/SF)
+///
+/// Immediately after the element at `vals_end` in `source_vals` buffer are the plane wave values at the TF/SF boundaries:
+/// ```
+/// let source_vals = [..., src_0, src_1, ..., src_n, h_src_start, en_src_start, h_src_end, en_src_end, ...]
+///                 //        ^                         ^
+///                 // 1D source values                 |
+///                 //                            tf/sf boundary field values start here
+/// ```
+// TODO: allow user to disable tf/sf boundary at the end of the plane wave's propagation
+#[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
-pub struct GpuPlaneWave {
-    pub spatial_axis: SpatialAxis,
-    pub direction: i32, // TODO: turn this into the direction enum using unsafe impls w/ bytemuck traits
-    pub position_idx: u32,
+pub struct GpuTfsf {
+    pub prop_axis: SpatialAxis,
+    pub direction: WaveDirection, // TODO: turn this into the direction enum using unsafe impls w/ bytemuck traits
+    pub boundary_min: u32, // TODO: make 3d version of this for 3d implementation
+    pub boundary_max: u32,
+
     pub vals_start: u32,
     pub vals_end: u32,
     pub t_start: u32,
-    pub _padding0: [u32; 2],
-    pub polarization: Vec3,
-    pub _padding1: u32,
-    // TODO: pub repeat_count: u32,
-}
+    pub n_cells: u32,
 
-/// Coefficients for resolving plane wave correction terms
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-#[repr(C)]
-pub struct PlaneWaveCoeffs {
-    pub t_offset: Vec3,
-    pub _padding0: u32,
-    /// H curl correction term coefficients
-    pub h_curl_coeff: Vec3,
-    pub _padding1: u32,
+    pub polarization_a1: Real,
+    pub polarization_a2: Real,
+    pub inv_d_a: Real,
+    pub corrections_start: u32,
+
+    pub num_correction_cells: u32,
+    pub grid_start: u32
+    // TODO: pub repeat_count: u32,
 }
