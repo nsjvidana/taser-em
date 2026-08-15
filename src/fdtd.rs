@@ -398,6 +398,7 @@ impl FdtdLossySimulation {
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
 pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     boundary_condition: BC,
+    aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
     update: GpuLossyUpdate,
     pub num_steps_per_submission: usize,
@@ -427,6 +428,23 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &mut gpu_data.en.buffer,
                 gpu_data.thread_count
             )?;
+
+            if let Some(thread_count) = gpu_data.tfsf_dispatch_data.aux_grid_thread_count {
+                let tfsf = &mut gpu_data.tfsf_dispatch_data;
+                self.aux_grid_update.call(
+                    pass,
+                    DispatchGrid::ThreadCount(thread_count),
+                    &tfsf.tfsf_sources,
+                    &gpu_data.t_idx.buffer,
+                    &mut tfsf.corrections,
+                    &gpu_data.source_vals,
+                    &tfsf.auxgr_coeffs,
+                    &mut tfsf.h,
+                    &mut tfsf.dn,
+                    &mut tfsf.en
+                )?;
+            }
+
             self.compute_source_terms.call(
                 pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
