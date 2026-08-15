@@ -45,7 +45,8 @@ pub fn gpu_compute_source_terms(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_sources: &[GpuTfsf],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] tfsf_corrections: &[TfsfCorrections],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] pml_coeffs: &[PmlCoefficients],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
@@ -63,10 +64,106 @@ pub fn gpu_compute_source_terms(
     let t_idx = *t_idx;
     let t = t_idx as Real * grid.dt;
 
+    // TODO: dipoles
+
     let coeffs = pml_coeffs.read(idx);
     for i in 0..tfsf_sources.len() {
-        // TODO: make sure the code here works for a "zeroed" tfsf source
-        todo!()
+        let GpuTfsf {
+            prop_axis, a, a1, a2, direction,
+            boundary_min_a, boundary_min_a1,boundary_min_a2,
+            boundary_max_a, boundary_max_a1, boundary_max_a2,
+            grid_start, vals_start, vals_end, t_start, n_cells,
+            polarization_a1, polarization_a2,
+            corrections_start, num_correction_cells,
+            inv_d_a, inv_d_a1, inv_d_a2,
+        } = tfsf_sources.read(i);
+        if vals_start == vals_end { continue; } // skip invalid/inactive tfsf sources
+
+        let cell_idx_a = cell_idx3.dyn_idx(a);
+        let cell_idx_a1 = cell_idx3.dyn_idx(a1);
+        let cell_idx_a2 = cell_idx3.dyn_idx(a2);
+
+        // TODO: make all these booleans into masks in a separate constant storage buffer to improve performance
+        let a1_spatial = SpatialAxis::is_spatial_axis(a1);
+        let a2_spatial = SpatialAxis::is_spatial_axis(a2);
+
+        let intersects_tf = (cell_idx_a >= boundary_min_a && cell_idx_a <= boundary_max_a) &&
+            (a1_spatial && (cell_idx_a1 >= boundary_min_a1 && cell_idx_a1 <= boundary_max_a1) || !a1_spatial) &&
+            (a2_spatial && (cell_idx_a2 >= boundary_min_a2 && cell_idx_a2 <= boundary_max_a2) || !a2_spatial);
+        let intersects_sf_tf = (cell_idx_a+1 >= boundary_min_a && cell_idx_a <= boundary_max_a+1) &&
+            (a1_spatial && (cell_idx_a1+1 >= boundary_min_a1 && cell_idx_a1 <= boundary_max_a1+1) || !a1_spatial) &&
+            (a2_spatial && (cell_idx_a2+1 >= boundary_min_a2 && cell_idx_a2 <= boundary_max_a2+1) || !a2_spatial);
+
+        let corrections_end = (corrections_start + num_correction_cells - 1) as usize;
+        let correction_idx = ((corrections_start + cell_idx_a.gpu_saturating_sub(boundary_min_a.gpu_saturating_sub(1))) as usize)
+            .min(corrections_end);
+        // plane wave vals at wavefront in this cell's location
+        let mut src = tfsf_corrections.read(correction_idx);
+        // src vals of wavefront just before this cell's location
+        let mut src_ma = tfsf_corrections.read(correction_idx.gpu_saturating_sub(1).max(corrections_start as _));
+        // src vals of wavefront just after this cell's location
+        let mut src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
+        
+        let at_max_tf_edge_a = [
+            intersects_tf && (cell_idx_a == boundary_max_a),
+            intersects_tf && (cell_idx_a1 == boundary_max_a1),
+            intersects_tf && (cell_idx_a2 == boundary_max_a2),
+        ];
+        let at_min_tf_edge_a = [
+            intersects_tf && (cell_idx_a == boundary_min_a),
+            intersects_tf && (cell_idx_a1 == boundary_min_a1),
+            intersects_tf && (cell_idx_a2 == boundary_min_a2),
+        ];
+        let at_max_sf_edge_a = [
+            intersects_sf_tf && (cell_idx_a == boundary_max_a+1),
+            intersects_sf_tf && (cell_idx_a1 == boundary_max_a1+1),
+            intersects_sf_tf && (cell_idx_a2 == boundary_max_a2+1),
+        ];
+        let at_min_sf_edge_a = [
+            intersects_sf_tf && (cell_idx_a+1 == boundary_min_a),
+            intersects_sf_tf && (cell_idx_a1+1 == boundary_min_a1),
+            intersects_sf_tf && (cell_idx_a2+1 == boundary_min_a2),
+        ];
+
+        fn enable_real(enable: bool, real: Real) -> Real { real * enable as u32 as Real }
+
+        let en_src_a2_pa1 =
+            enable_real(at_max_tf_edge_a[1] || at_min_sf_edge_a[1], src.en_a2);
+        let en_src_a1_pa2 =
+            enable_real(at_max_tf_edge_a[2] || at_min_sf_edge_a[2], src.en_a1);
+        let en_src_a2_pa =
+            enable_real(at_max_tf_edge_a[0] || at_min_sf_edge_a[0], src_pa.en_a2);
+        let en_src_a1_pa =
+            enable_real(at_max_tf_edge_a[0] || at_min_sf_edge_a[0], src_pa.en_a1);
+        let h_src_a2_ma1 =
+            enable_real(at_min_tf_edge_a[1] || at_max_sf_edge_a[1], src.h_a2);
+        let h_src_a1_ma2 =
+            enable_real(at_min_tf_edge_a[2] || at_max_sf_edge_a[2], src.h_a1);
+        let h_src_a2_ma =
+            enable_real(at_min_tf_edge_a[0] || at_max_sf_edge_a[0], src_ma.h_a2);
+        let h_src_a1_ma =
+            enable_real(at_min_tf_edge_a[0] || at_max_sf_edge_a[0], src_ma.h_a1);
+
+        let dir = direction as i32 as Real;
+        // h_source_term.dyn_insert(a, h_source_term.dyn_idx(a) + dir * coeffs.h2.dyn_idx(a) *
+        //     (-inv_d_a1 * en_src_a2_pa1 + inv_d_a2 * en_src_a1_pa2)
+        // );
+        // h_source_term.dyn_insert(a1, h_source_term.dyn_idx(a1) + dir * coeffs.h2.dyn_idx(a1) *
+        //     (inv_d_a * en_src_a2_pa)
+        // );
+        // h_source_term.dyn_insert(a2, h_source_term.dyn_idx(a2) + dir * coeffs.h2.dyn_idx(a2) *
+        //     (-inv_d_a * en_src_a1_pa)
+        // );
+        // dn_source_term.dyn_insert(a, dn_source_term.dyn_idx(a) + dir * coeffs.dn2.dyn_idx(a) *
+        //     (inv_d_a1 * h_src_a2_ma1 - inv_d_a2 * h_src_a1_ma2)
+        // );
+        // dn_source_term.dyn_insert(a1, dn_source_term.dyn_idx(a1) + dir * coeffs.dn2.dyn_idx(a1) *
+        //     (-inv_d_a * h_src_a2_ma)
+        // );
+        // dn_source_term.dyn_insert(a2, dn_source_term.dyn_idx(a2) + dir * coeffs.dn2.dyn_idx(a2) *
+        //     (inv_d_a * h_src_a1_ma)
+        // );
+        dn_source_term.z = enable_real(intersects_tf || intersects_sf_tf, src.en_a2);
     }
 
     source_terms.write(idx, SourceTerms {
@@ -92,13 +189,16 @@ pub fn aux_grid_update(
     const A2: usize = 1;
     let wave_idx = cell_idx3.x as usize;
     let GpuTfsf {
-        prop_axis, direction, boundary_min, boundary_max, vals_start, vals_end,
-        t_start, n_cells, polarization_a1, polarization_a2, inv_d_a, corrections_start, num_correction_cells,
-        grid_start: coeffs_start
+        prop_axis, a, a1, a2, direction,
+        boundary_min_a, boundary_min_a1,boundary_min_a2,
+        boundary_max_a, boundary_max_a1, boundary_max_a2,
+        grid_start, vals_start, vals_end, t_start, n_cells,
+        polarization_a1, polarization_a2,
+        corrections_start, num_correction_cells,
+        inv_d_a, inv_d_a1, inv_d_a2,
     } = tfsf_sources.read(wave_idx);
-    let a = Axis::from(prop_axis);
-    let a1 = a.permute();
-    let a2 = a1.permute();
+    if vals_start == vals_end { return; } // skip invalid/inactive tfsf sources
+
     if cell_idx3.z >= n_cells { return; }
 
     let last_idx_local = n_cells as usize - 1;
@@ -106,7 +206,7 @@ pub fn aux_grid_update(
     let idx_local_inv = last_idx_local - idx_local;
 
     let is_positive_dir = direction == WaveDirection::Positive;
-    let idx_offset = coeffs_start as usize;
+    let idx_offset = grid_start as usize;
     let idx = idx_offset + idx_local;
     let m = auxgr_coeffs.read(idx);
 
@@ -125,23 +225,23 @@ pub fn aux_grid_update(
     let mut neighbor = en.read((idx + 1).min(en.len() - 1));
     let en_curl_a1 = -(neighbor[A2] * not_boundary - en_self[A2]) * inv_d_a;
     let en_curl_a2 = (neighbor[A1] * not_boundary - en_self[A1]) * inv_d_a;
-    h_self[A1] = m.h1[a1] * h_self[A1] + m.h2[a1] * en_curl_a1;
-    h_self[A2] = m.h1[a2] * h_self[A2] + m.h2[a2] * en_curl_a2;
+    h_self[A1] = m.h1.dyn_idx(a1) * h_self[A1] + m.h2.dyn_idx(a1) * en_curl_a1;
+    h_self[A2] = m.h1.dyn_idx(a2) * h_self[A2] + m.h2.dyn_idx(a2) * en_curl_a2;
     h.write(idx, h_self);
 
     let mut dn_self = dn.read(idx);
     let not_boundary = (idx_local > 0) as u32 as Real;
     neighbor = en.read(idx.gpu_saturating_sub(1));
-    let h_curl_a1 = -(h_self[A2] * not_boundary - neighbor[A2]) * inv_d_a;
-    let h_curl_a2 = (h_self[A1] * not_boundary - neighbor[A1]) * inv_d_a;
-    dn_self[A1] = m.dn1[a1] * dn_self[A1] + m.dn2[a1] * h_curl_a1;
-    dn_self[A2] = m.dn1[a2] * dn_self[A2] + m.dn2[a2] * h_curl_a2;
+    let h_curl_a1 = -(h_self[A2] - neighbor[A2] * not_boundary) * inv_d_a;
+    let h_curl_a2 = (h_self[A1] - neighbor[A1] * not_boundary) * inv_d_a;
+    dn_self[A1] = m.dn1.dyn_idx(a1) * dn_self[A1] + m.dn2.dyn_idx(a1) * h_curl_a1;
+    dn_self[A2] = m.dn1.dyn_idx(a2) * dn_self[A2] + m.dn2.dyn_idx(a2) * h_curl_a2;
     dn_self = if is_source { src_vect } else { dn_self };
     dn.write(idx, dn_self);
 
     let en_self = [
-        m.en1[a1] * dn_self[A1],
-        m.en1[a2] * dn_self[A2],
+        m.en1.dyn_idx(a1) * dn_self[A1],
+        m.en1.dyn_idx(a2) * dn_self[A2],
     ];
     en.write(idx, en_self);
 
@@ -152,10 +252,10 @@ pub fn aux_grid_update(
     let corr_idx_offset = if is_positive_dir { dir_local_idx - 1 } else { num_correction_cells - dir_local_idx };
     let correction_idx = corrections_start as usize + corr_idx_offset;
     corrections.write(correction_idx, TfsfCorrections {
-        h_a1: h_self[A1],
-        h_a2: h_self[A2],
         en_a1: en_self[A1],
         en_a2: en_self[A2],
+        h_a1: h_self[A1],
+        h_a2: h_self[A2],
     });
 }
 
@@ -169,13 +269,14 @@ pub struct AuxGridPmlCoeffs {
     pub en1: Vec4,
 }
 
+// TODO: rename to TfsfSourceValues
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct TfsfCorrections {
-    pub h_a1: Real,
-    pub h_a2: Real,
     pub en_a1: Real,
     pub en_a2: Real,
+    pub h_a1: Real,
+    pub h_a2: Real,
 }
 
 #[spirv_bindgen]
@@ -313,6 +414,7 @@ pub fn gpu_lossy_update(
         m.dn_loss1.z * en_self.z + m.dn_loss2.z * ints.en.z;
     dn_self += src.dn;
     dn.write(idx, dn_self);
+    dn.write(idx, src.dn);
 
     en.write(idx, m.en1 * dn_self);
 
@@ -598,10 +700,27 @@ pub struct GpuDipole {
 #[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
 pub struct GpuTfsf {
-    pub prop_axis: SpatialAxis,
-    pub direction: WaveDirection, // TODO: turn this into the direction enum using unsafe impls w/ bytemuck traits
-    pub boundary_min: u32, // TODO: make 3d version of this for 3d implementation
-    pub boundary_max: u32,
+    pub prop_axis: SpatialAxis, // TODO: store a, a1, a2 here for performance
+    pub a: Axis,
+    pub a1: Axis,
+    pub a2: Axis,
+
+    pub direction: WaveDirection,
+    /// The smallest index component of a cell that is fully inside the TF/SF boundary.
+    ///
+    /// (component of cell idx is along `GpuTfsf.a` direction)
+    pub boundary_min_a: u32,
+    pub boundary_min_a1: u32,
+    pub boundary_min_a2: u32,
+
+    /// The largest index component of a cell that is half-inside the TF/SF boundary.
+    /// Only the En components of the cell are within the TF/SF boundary.
+    ///
+    /// (component of cell idx is along `a` direction)
+    pub boundary_max_a: u32,
+    pub boundary_max_a1: u32,
+    pub boundary_max_a2: u32,
+    pub grid_start: u32,
 
     pub vals_start: u32,
     pub vals_end: u32,
@@ -610,10 +729,11 @@ pub struct GpuTfsf {
 
     pub polarization_a1: Real,
     pub polarization_a2: Real,
-    pub inv_d_a: Real,
     pub corrections_start: u32,
-
     pub num_correction_cells: u32,
-    pub grid_start: u32
+
+    pub inv_d_a: Real,
+    pub inv_d_a1: Real,
+    pub inv_d_a2: Real,
     // TODO: pub repeat_count: u32,
 }

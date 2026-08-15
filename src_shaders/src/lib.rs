@@ -8,8 +8,12 @@ pub mod fdtd;
 #[doc(hidden)]
 macro_rules! cfg_gpu {
     ($($input:tt)*) => {
-        #[cfg(any(target_arch = "spirv", target_arch = "nvptx64"))]
-        $($input)*
+        cfg_select! {
+            any(target_arch = "spirv", target_arch = "nvptx64") => {
+                $($input)*
+            }
+            _ => {}
+        }
     };
 }
 
@@ -17,7 +21,11 @@ macro_rules! cfg_gpu {
 #[doc(hidden)]
 macro_rules! cfg_cpu {
     ($($input:tt)*) => {
-        #[cfg(not(any(target_arch = "spirv", target_arch = "nvptx64")))]
-        $($input)*
+        cfg_select! {
+            not(any(target_arch = "spirv", target_arch = "nvptx64")) => {
+                $($input)*
+            }
+            _ => {}
+        }
     };
 }

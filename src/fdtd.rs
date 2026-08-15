@@ -7,6 +7,9 @@ use std::num::{NonZeroI32, NonZeroU32};
 use taser_em_shaders::fdtd::*;
 use crate::*;
 
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 // TODO: Docs.
 pub struct FdtdLossySimulation {
     pub material_regions: MaterialRegions,
@@ -88,7 +91,8 @@ impl FdtdLossySimulation {
             backend,
             &mut source_vals,
             regions_offset,
-            problem_space_max
+            problem_space_min.cell_idx_to_3d(),
+            problem_space_max.cell_idx_to_3d()
         )?;
         if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
         if source_vals.is_empty() { source_vals.push(0.0); }
@@ -115,7 +119,7 @@ impl FdtdLossySimulation {
             polarization_mode_index: polarization_mode.into(),
             _padding0: 0,
             inv_d: cell_size3.recip(),
-            problem_space_min: problem_space_min.to_3d(UVec3::ZERO),
+            problem_space_min: problem_space_min.to_3d(UVec3::ONE),
             _padding1: 0,
             problem_space_max: problem_space_max.to_3d(UVec3::ONE),
             _padding2: 0,
@@ -178,7 +182,8 @@ impl FdtdLossySimulation {
         backend: &GpuBackend,
         source_vals: &mut Vec<Real>,
         regions_offset: Vect,
-        problem_space_max: GridIndex,
+        problem_space_min: UVec3,
+        problem_space_max: UVec3,
     ) -> GpuResult<TfsfDispatchData> {
         let TfsfParameters {
             pml_width, pml_sig_max, pml_grading_order
@@ -189,7 +194,7 @@ impl FdtdLossySimulation {
 
         let mut corrections = Vec::new();
         let mut coeffs = Vec::new();
-        let mut total_num_cells = 0;
+        let mut zeroed_vector_fields = Vec::new();
         let mut n_cells_max = 0;
 
         let mut tfsf_srcs = self.sources.iter()
@@ -202,31 +207,36 @@ impl FdtdLossySimulation {
                 let a1 = a.permute();
                 let a2 = a1.permute();
 
-                let inv_d_a = (*cell_size)[*spatial_axis].recip();
+                let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
+                let inv_d_a = inv_d[a];
 
                 let pos = (regions_offset[*spatial_axis] + position) * inv_d_a;
-                let boundary_min = pos as u32;
-                let boundary_max = problem_space_max[a] - tfsf_buffer_width.get();
+                let buf_width3 = tfsf_buffer_width.cell_idx_to_3d();
+                let boundary_min_a = pos as u32;
+                let boundary_min_a1 = problem_space_min[a1] + buf_width3[a1];
+                let boundary_min_a2 = problem_space_min[a2] + buf_width3[a2];
 
-                let num_correction_cells = (boundary_max - boundary_min + 1) + 1;
+                let boundary_max_a = problem_space_max[a] - buf_width3[a];
+                let boundary_max_a1 = problem_space_max[a1] - buf_width3[a1];
+                let boundary_max_a2 = problem_space_max[a2] - buf_width3[a2];
+
+                let num_correction_cells = (boundary_max_a - boundary_min_a + 1) + 2;
                 let source_cell = 1;
                 let n_cells = num_correction_cells + source_cell + pml_width.get();
-                total_num_cells += n_cells as usize;
                 n_cells_max = n_cells_max.max(n_cells);
 
                 let corrections_start = corrections.len() as u32;
-                corrections.resize(corrections.len() + num_correction_cells, TfsfCorrections::default());
+                corrections.resize(corrections.len() + num_correction_cells as usize, TfsfCorrections::default());
 
                 let vals_start = source_vals.len() as u32;
                 source_vals.extend_from_slice(vals);
 
-                let coeffs_start = coeffs.len() as u32;
                 let grid_coeffs = {
                     const HALF_CELL: Index = 1;
                     const ONE_CELL: Index = HALF_CELL*2;
                     let n_axis2x = n_cells * ONE_CELL;
                     let pml_end = match direction {
-                        WaveDirection::Positive => n_axis2x - ONE_CELL,
+                        WaveDirection::Positive => n_axis2x - HALF_CELL,
                         WaveDirection::Negative => 0,
                         _ => panic!("Invalid wave direction")
                     };
@@ -256,7 +266,8 @@ impl FdtdLossySimulation {
                     into_par_iter!((0..n_cells))
                         .map(|cell_idx| {
                             // Stagger indexing the conductivities as per the Yee grid staggering
-                            let idx_2x = USizeVec3::ZERO.with_z(cell_idx as usize * 2);
+                            let mut idx_2x = USizeVec3::ZERO;
+                                idx_2x[a] = cell_idx as usize * 2;
                             let dn_sigs: [Vec3; MAX_DIM] = core::array::from_fn(|axis_i| {
                                 let mut sig_idx = idx_2x;
                                 sig_idx[axis_i] += 1;
@@ -312,29 +323,38 @@ impl FdtdLossySimulation {
                         })
                         .collect::<Vec<_>>()
                 };
+                let coeffs_start = coeffs.len() as u32;
+                debug_assert_eq!(coeffs.len(), zeroed_vector_fields.len());
                 coeffs.extend_from_slice(&grid_coeffs);
+                zeroed_vector_fields.extend_from_slice(&vec![[0.; 2]; n_cells as usize]);
 
                 Some(GpuTfsf {
                     prop_axis: *spatial_axis,
+                    a,
+                    a1,
+                    a2,
                     direction: *direction,
-                    boundary_min,
-                    boundary_max,
+                    boundary_min_a,
+                    boundary_min_a1,
+                    boundary_min_a2,
+                    boundary_max_a,
+                    boundary_max_a1,
+                    boundary_max_a2,
+                    grid_start: coeffs_start,
                     vals_start,
                     vals_end: source_vals.len() as u32 - 1,
                     t_start: (t_start / dt) as u32,
                     n_cells,
                     polarization_a1: (*polarization)[a1],
                     polarization_a2: (*polarization)[a2],
-                    inv_d_a,
                     corrections_start,
                     num_correction_cells,
-                    grid_start: coeffs_start,
+                    inv_d_a,
+                    inv_d_a1: inv_d[a1],
+                    inv_d_a2: inv_d[a2],
                 })
             })
             .collect::<Vec<_>>();
-
-        total_num_cells = total_num_cells.max(1);
-        let zeroed_vector_fields = vec![[0.; 2]; total_num_cells];
 
         let no_tfsf_sources = tfsf_srcs.is_empty();
 
@@ -408,6 +428,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> GpuResult<Self> {
         Ok(Self {
             boundary_condition,
+            aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             update: GpuLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             num_steps_per_submission,
@@ -454,7 +475,8 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &gpu_data.source_vals,
                 &gpu_data.dipoles,
                 &gpu_data.tfsf_dispatch_data.tfsf_sources,
-                &gpu_data.grid_coeffs,
+                &gpu_data.tfsf_dispatch_data.corrections,
+                &gpu_data.grid_coeffs
             )?;
             self.update.call(
                 pass,
@@ -711,9 +733,9 @@ pub enum Source {
         /// between the boundary and border/PML along the propagation axis. Change spacer region widths
         /// to control that.
         ///
-        /// A width of `3` will suffice, especially if you want to record values
+        /// A width of around `3` works well, especially if you want to record values
         /// behind the TF/SF boundary.
-        tfsf_buffer_width: NonZeroU32,
+        tfsf_buffer_width: GridIndex,
     }
 }
 

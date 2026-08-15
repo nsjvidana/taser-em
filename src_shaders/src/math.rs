@@ -2,6 +2,7 @@ pub use khal_std::glamx::*;
 
 use bytemuck::{Pod, Zeroable};
 pub use dim_types::*;
+use crate::cfg_cpu;
 
 pub type Real = f32;
 pub type Index = u32;
@@ -407,9 +408,10 @@ impl BoolVectExt for BoolVect {
 /// A helper enum for indexing into various things (e.g. indexing into components of [`Vect`] and [`GridIndex`])
 ///
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[repr(u32)]
 pub enum Axis {
+    #[default]
     X = 0,
     Y = 1,
     Z = 2,
@@ -602,6 +604,9 @@ impl_vector_indexing!(Real, Real, Axis, 1);
 impl_vector_indexing!(UVec2, Index, Axis, UVec2::AXES.len());
 impl_vector_indexing!(Vec2, Real, Axis, Vec2::AXES.len());
 impl_vector_indexing!(UVec3, Index, Axis, UVec3::AXES.len());
+cfg_cpu! {
+    impl_vector_indexing!(USizeVec3, usize, Axis, USizeVec3::AXES.len());
+}
 impl_vector_indexing!(Vec3, Real, Axis, Vec3::AXES.len());
 impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 
