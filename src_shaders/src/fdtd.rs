@@ -83,14 +83,13 @@ pub fn gpu_compute_source_terms(
         let cell_idx_a1 = cell_idx3.dyn_idx(a1);
         let cell_idx_a2 = cell_idx3.dyn_idx(a2);
 
-        // TODO: make all these booleans into masks in a separate constant storage buffer to improve performance
         let a1_spatial = SpatialAxis::is_spatial_axis(a1);
         let a2_spatial = SpatialAxis::is_spatial_axis(a2);
 
-        let intersects_tf = (cell_idx_a >= tf_min_a && cell_idx_a <= tf_max_a) &&
+        let inside_tf = (cell_idx_a >= tf_min_a && cell_idx_a <= tf_max_a) &&
             (a1_spatial && (cell_idx_a1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1) || !a1_spatial) &&
             (a2_spatial && (cell_idx_a2 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2) || !a2_spatial);
-        let intersects_sf_tf = (cell_idx_a+1 >= tf_min_a && cell_idx_a <= tf_max_a+1) &&
+        let sf_edge_or_in_tf = (cell_idx_a+1 >= tf_min_a && cell_idx_a <= tf_max_a+1) &&
             (a1_spatial && (cell_idx_a1+1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1+1) || !a1_spatial) &&
             (a2_spatial && (cell_idx_a2+1 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2+1) || !a2_spatial);
 
@@ -103,65 +102,73 @@ pub fn gpu_compute_source_terms(
         let mut src_ma = tfsf_corrections.read(correction_idx.gpu_saturating_sub(1).max(corrections_start as _));
         // src vals of wavefront just after this cell's location
         let mut src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
-        
+
+        // TODO: make all these booleans into masks in a separate constant storage buffer to improve performance
+        // TODO: make these array elements into individual variables
         let at_max_tf_edge_a = [
-            intersects_tf && (cell_idx_a == tf_max_a),
-            intersects_tf && (cell_idx_a1 == tf_max_a1),
-            intersects_tf && (cell_idx_a2 == tf_max_a2),
+            inside_tf && (cell_idx_a == tf_max_a),
+            inside_tf && (cell_idx_a1 == tf_max_a1),
+            inside_tf && (cell_idx_a2 == tf_max_a2),
         ];
         let at_min_tf_edge_a = [
-            intersects_tf && (cell_idx_a == tf_min_a),
-            intersects_tf && (cell_idx_a1 == tf_min_a1),
-            intersects_tf && (cell_idx_a2 == tf_min_a2),
+            inside_tf && (cell_idx_a == tf_min_a),
+            inside_tf && (cell_idx_a1 == tf_min_a1),
+            inside_tf && (cell_idx_a2 == tf_min_a2),
         ];
         let at_max_sf_edge_a = [
-            intersects_sf_tf && (cell_idx_a == tf_max_a+1),
-            intersects_sf_tf && (cell_idx_a1 == tf_max_a1+1),
-            intersects_sf_tf && (cell_idx_a2 == tf_max_a2+1),
+            sf_edge_or_in_tf && !inside_tf && (cell_idx_a == tf_max_a+1),
+            sf_edge_or_in_tf && !inside_tf && (cell_idx_a1 == tf_max_a1+1),
+            sf_edge_or_in_tf && !inside_tf && (cell_idx_a2 == tf_max_a2+1),
         ];
         let at_min_sf_edge_a = [
-            intersects_sf_tf && (cell_idx_a+1 == tf_min_a),
-            intersects_sf_tf && (cell_idx_a1+1 == tf_min_a1),
-            intersects_sf_tf && (cell_idx_a2+1 == tf_min_a2),
+            sf_edge_or_in_tf && !inside_tf && (cell_idx_a+1 == tf_min_a),
+            sf_edge_or_in_tf && !inside_tf && (cell_idx_a1+1 == tf_min_a1),
+            sf_edge_or_in_tf && !inside_tf && (cell_idx_a2+1 == tf_min_a2),
         ];
+
+        let mut at_sf_edge_count = 0;
+        for i in 0..3 {
+            at_sf_edge_count += at_min_sf_edge_a[i] as usize;
+            at_sf_edge_count += at_max_sf_edge_a[i] as usize;
+        }
+        let not_sf_corner = at_sf_edge_count < 2;
 
         fn enable_real(enable: bool, real: Real) -> Real { real * enable as u32 as Real }
 
         let en_src_a2_pa1 =
-            enable_real(at_max_tf_edge_a[1] || at_min_sf_edge_a[1], src.en_a2);
+            enable_real(not_sf_corner && (at_max_tf_edge_a[1] || at_min_sf_edge_a[1]), src.en_a2);
         let en_src_a1_pa2 =
-            enable_real(at_max_tf_edge_a[2] || at_min_sf_edge_a[2], src.en_a1);
+            enable_real(not_sf_corner && (at_max_tf_edge_a[2] || at_min_sf_edge_a[2]), src.en_a1);
         let en_src_a2_pa =
-            enable_real(at_max_tf_edge_a[0] || at_min_sf_edge_a[0], src_pa.en_a2);
+            enable_real(not_sf_corner && (at_max_tf_edge_a[0] || at_min_sf_edge_a[0]), src_pa.en_a2);
         let en_src_a1_pa =
-            enable_real(at_max_tf_edge_a[0] || at_min_sf_edge_a[0], src_pa.en_a1);
+            enable_real(not_sf_corner && (at_max_tf_edge_a[0] || at_min_sf_edge_a[0]), src_pa.en_a1);
         let h_src_a2_ma1 =
-            enable_real(at_min_tf_edge_a[1] || at_max_sf_edge_a[1], src.h_a2);
+            enable_real(not_sf_corner && (at_min_tf_edge_a[1] || at_max_sf_edge_a[1]), src.h_a2);
         let h_src_a1_ma2 =
-            enable_real(at_min_tf_edge_a[2] || at_max_sf_edge_a[2], src.h_a1);
+            enable_real(not_sf_corner && (at_min_tf_edge_a[2] || at_max_sf_edge_a[2]), src.h_a1);
         let h_src_a2_ma =
-            enable_real(at_min_tf_edge_a[0] || at_max_sf_edge_a[0], src_ma.h_a2);
+            enable_real(not_sf_corner && (at_min_tf_edge_a[0] || at_max_sf_edge_a[0]), src_ma.h_a2);
         let h_src_a1_ma =
-            enable_real(at_min_tf_edge_a[0] || at_max_sf_edge_a[0], src_ma.h_a1);
+            enable_real(not_sf_corner && (at_min_tf_edge_a[0] || at_max_sf_edge_a[0]), src_ma.h_a1);
 
-        // TODO: negate source terms for TF cells
-        let dir = direction as i32 as Real;
-        h_source_term.dyn_insert(a, h_source_term.dyn_idx(a) + dir * coeffs.h2.dyn_idx(a) *
+        let neg = if inside_tf { -1. } else { 1. };
+        h_source_term.dyn_insert(a, h_source_term.dyn_idx(a) + neg * coeffs.h2.dyn_idx(a) *
             (-inv_d_a1 * en_src_a2_pa1 + inv_d_a2 * en_src_a1_pa2)
         );
-        h_source_term.dyn_insert(a1, h_source_term.dyn_idx(a1) + dir * coeffs.h2.dyn_idx(a1) *
+        h_source_term.dyn_insert(a1, h_source_term.dyn_idx(a1) + neg * coeffs.h2.dyn_idx(a1) *
             (inv_d_a * en_src_a2_pa)
         );
-        h_source_term.dyn_insert(a2, h_source_term.dyn_idx(a2) + dir * coeffs.h2.dyn_idx(a2) *
+        h_source_term.dyn_insert(a2, h_source_term.dyn_idx(a2) + neg * coeffs.h2.dyn_idx(a2) *
             (-inv_d_a * en_src_a1_pa)
         );
-        dn_source_term.dyn_insert(a, dn_source_term.dyn_idx(a) + dir * coeffs.dn2.dyn_idx(a) *
+        dn_source_term.dyn_insert(a, dn_source_term.dyn_idx(a) + neg * coeffs.dn2.dyn_idx(a) *
             (inv_d_a1 * h_src_a2_ma1 - inv_d_a2 * h_src_a1_ma2)
         );
-        dn_source_term.dyn_insert(a1, dn_source_term.dyn_idx(a1) + dir * coeffs.dn2.dyn_idx(a1) *
+        dn_source_term.dyn_insert(a1, dn_source_term.dyn_idx(a1) + neg * coeffs.dn2.dyn_idx(a1) *
             (-inv_d_a * h_src_a2_ma)
         );
-        dn_source_term.dyn_insert(a2, dn_source_term.dyn_idx(a2) + dir * coeffs.dn2.dyn_idx(a2) *
+        dn_source_term.dyn_insert(a2, dn_source_term.dyn_idx(a2) + neg * coeffs.dn2.dyn_idx(a2) *
             (inv_d_a * h_src_a1_ma)
         );
     }
@@ -217,6 +224,7 @@ pub fn aux_grid_update(
     let src_vect = AuxVect::new(polarization_a1 * src_val, polarization_a2 * src_val);
 
     let en_self = en.read(idx);
+    let en_self_corr = en_self; // En curl is used before E gets its update.
 
     let mut h_self = h.read(idx);
     let not_boundary = (idx_local < last_idx_local) as u32 as Real;
@@ -226,6 +234,7 @@ pub fn aux_grid_update(
     h_self.x = m.h1.x * h_self.x + m.h2.x * en_curl_a1;
     h_self.y = m.h1.y * h_self.y + m.h2.y * en_curl_a2;
     h.write(idx, h_self);
+    let h_self_corr = h_self; // H terms are half-dt ahead in time.
 
     let mut dn_self = dn.read(idx);
     let not_boundary = (idx_local > 0) as u32 as Real;
@@ -250,10 +259,10 @@ pub fn aux_grid_update(
     let corr_idx_offset = if is_positive_dir { dir_local_idx - 1 } else { num_correction_cells - dir_local_idx };
     let correction_idx = corrections_start as usize + corr_idx_offset;
     corrections.write(correction_idx, TfsfCorrections {
-        en_a1: en_self.x,
-        en_a2: en_self.y,
-        h_a1: h_self.x,
-        h_a2: h_self.y,
+        en_a1: en_self_corr.x,
+        en_a2: en_self_corr.y,
+        h_a1: h_self_corr.x,
+        h_a2: h_self_corr.y,
     });
 }
 
