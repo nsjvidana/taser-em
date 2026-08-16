@@ -144,26 +144,26 @@ pub fn gpu_compute_source_terms(
         let h_src_a1_ma =
             enable_real(at_min_tf_edge_a[0] || at_max_sf_edge_a[0], src_ma.h_a1);
 
+        // TODO: negate source terms for TF cells
         let dir = direction as i32 as Real;
-        // h_source_term.dyn_insert(a, h_source_term.dyn_idx(a) + dir * coeffs.h2.dyn_idx(a) *
-        //     (-inv_d_a1 * en_src_a2_pa1 + inv_d_a2 * en_src_a1_pa2)
-        // );
-        // h_source_term.dyn_insert(a1, h_source_term.dyn_idx(a1) + dir * coeffs.h2.dyn_idx(a1) *
-        //     (inv_d_a * en_src_a2_pa)
-        // );
-        // h_source_term.dyn_insert(a2, h_source_term.dyn_idx(a2) + dir * coeffs.h2.dyn_idx(a2) *
-        //     (-inv_d_a * en_src_a1_pa)
-        // );
-        // dn_source_term.dyn_insert(a, dn_source_term.dyn_idx(a) + dir * coeffs.dn2.dyn_idx(a) *
-        //     (inv_d_a1 * h_src_a2_ma1 - inv_d_a2 * h_src_a1_ma2)
-        // );
-        // dn_source_term.dyn_insert(a1, dn_source_term.dyn_idx(a1) + dir * coeffs.dn2.dyn_idx(a1) *
-        //     (-inv_d_a * h_src_a2_ma)
-        // );
-        // dn_source_term.dyn_insert(a2, dn_source_term.dyn_idx(a2) + dir * coeffs.dn2.dyn_idx(a2) *
-        //     (inv_d_a * h_src_a1_ma)
-        // );
-        dn_source_term.z = enable_real(intersects_tf || intersects_sf_tf, src.en_a2);
+        h_source_term.dyn_insert(a, h_source_term.dyn_idx(a) + dir * coeffs.h2.dyn_idx(a) *
+            (-inv_d_a1 * en_src_a2_pa1 + inv_d_a2 * en_src_a1_pa2)
+        );
+        h_source_term.dyn_insert(a1, h_source_term.dyn_idx(a1) + dir * coeffs.h2.dyn_idx(a1) *
+            (inv_d_a * en_src_a2_pa)
+        );
+        h_source_term.dyn_insert(a2, h_source_term.dyn_idx(a2) + dir * coeffs.h2.dyn_idx(a2) *
+            (-inv_d_a * en_src_a1_pa)
+        );
+        dn_source_term.dyn_insert(a, dn_source_term.dyn_idx(a) + dir * coeffs.dn2.dyn_idx(a) *
+            (inv_d_a1 * h_src_a2_ma1 - inv_d_a2 * h_src_a1_ma2)
+        );
+        dn_source_term.dyn_insert(a1, dn_source_term.dyn_idx(a1) + dir * coeffs.dn2.dyn_idx(a1) *
+            (-inv_d_a * h_src_a2_ma)
+        );
+        dn_source_term.dyn_insert(a2, dn_source_term.dyn_idx(a2) + dir * coeffs.dn2.dyn_idx(a2) *
+            (inv_d_a * h_src_a1_ma)
+        );
     }
 
     source_terms.write(idx, SourceTerms {
@@ -181,12 +181,10 @@ pub fn aux_grid_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] corrections: &mut [TfsfCorrections],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] auxgr_coeffs: &[AuxGridPmlCoeffs],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h: &mut [[Real; 2]],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] dn: &mut [[Real; 2]],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] en: &mut [[Real; 2]],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h: &mut [AuxVect],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] dn: &mut [AuxVect],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] en: &mut [AuxVect],
 ) {
-    const A1: usize = 0;
-    const A2: usize = 1;
     let wave_idx = cell_idx3.x as usize;
     let GpuTfsf {
         prop_axis, a, a1, a2, direction,
@@ -216,33 +214,33 @@ pub fn aux_grid_update(
     let vals_i = vals_start + t_idx.gpu_saturating_sub(t_start);
     let src_enable = (*t_idx >= t_start && (vals_i <= vals_end)) as u32;
     let src_val = source_vals.read((vals_i * src_enable) as usize) * src_enable as Real;
-    let src_vect = [polarization_a1 * src_val, polarization_a2 * src_val];
+    let src_vect = AuxVect::new(polarization_a1 * src_val, polarization_a2 * src_val);
 
     let en_self = en.read(idx);
 
     let mut h_self = h.read(idx);
     let not_boundary = (idx_local < last_idx_local) as u32 as Real;
-    let mut neighbor = en.read((idx + 1).min(en.len() - 1));
-    let en_curl_a1 = -(neighbor[A2] * not_boundary - en_self[A2]) * inv_d_a;
-    let en_curl_a2 = (neighbor[A1] * not_boundary - en_self[A1]) * inv_d_a;
-    h_self[A1] = m.h1.dyn_idx(a1) * h_self[A1] + m.h2.dyn_idx(a1) * en_curl_a1;
-    h_self[A2] = m.h1.dyn_idx(a2) * h_self[A2] + m.h2.dyn_idx(a2) * en_curl_a2;
+    let mut neighbor = en.read((idx + 1).min(en.len() - 1)) * not_boundary;
+    let en_curl_a1 = -(neighbor.y - en_self.y) * inv_d_a;
+    let en_curl_a2 = (neighbor.x - en_self.x) * inv_d_a;
+    h_self.x = m.h1.x * h_self.x + m.h2.x * en_curl_a1;
+    h_self.y = m.h1.y * h_self.y + m.h2.y * en_curl_a2;
     h.write(idx, h_self);
 
     let mut dn_self = dn.read(idx);
     let not_boundary = (idx_local > 0) as u32 as Real;
-    neighbor = en.read(idx.gpu_saturating_sub(1));
-    let h_curl_a1 = -(h_self[A2] - neighbor[A2] * not_boundary) * inv_d_a;
-    let h_curl_a2 = (h_self[A1] - neighbor[A1] * not_boundary) * inv_d_a;
-    dn_self[A1] = m.dn1.dyn_idx(a1) * dn_self[A1] + m.dn2.dyn_idx(a1) * h_curl_a1;
-    dn_self[A2] = m.dn1.dyn_idx(a2) * dn_self[A2] + m.dn2.dyn_idx(a2) * h_curl_a2;
+    neighbor = h.read(idx.gpu_saturating_sub(1)) * not_boundary;
+    let h_curl_a1 = -(h_self.y - neighbor.y) * inv_d_a;
+    let h_curl_a2 = (h_self.x - neighbor.x) * inv_d_a;
+    dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl_a1;
+    dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl_a2;
     dn_self = if is_source { src_vect } else { dn_self };
     dn.write(idx, dn_self);
 
-    let en_self = [
-        m.en1.dyn_idx(a1) * dn_self[A1],
-        m.en1.dyn_idx(a2) * dn_self[A2],
-    ];
+    let en_self = AuxVect::new(
+        m.en1.x * dn_self.x,
+        m.en1.y * dn_self.y,
+    );
     en.write(idx, en_self);
 
     let num_correction_cells = num_correction_cells as usize;
@@ -252,25 +250,27 @@ pub fn aux_grid_update(
     let corr_idx_offset = if is_positive_dir { dir_local_idx - 1 } else { num_correction_cells - dir_local_idx };
     let correction_idx = corrections_start as usize + corr_idx_offset;
     corrections.write(correction_idx, TfsfCorrections {
-        en_a1: en_self[A1],
-        en_a2: en_self[A2],
-        h_a1: h_self[A1],
-        h_a2: h_self[A2],
+        en_a1: en_self.x,
+        en_a2: en_self.y,
+        h_a1: h_self.x,
+        h_a2: h_self.y,
     });
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct AuxGridPmlCoeffs {
-    pub h1: Vec4,
-    pub h2: Vec4,
-    pub dn1: Vec4,
-    pub dn2: Vec4,
-    pub en1: Vec4,
+    pub h1: Vec2,
+    pub h2: Vec2,
+    pub dn1: Vec2,
+    pub dn2: Vec2,
+    pub en1: Vec2,
 }
 
+pub type AuxVect = Vec2;
+
 // TODO: rename to TfsfSourceValues
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
 pub struct TfsfCorrections {
     pub en_a1: Real,
@@ -414,7 +414,6 @@ pub fn gpu_lossy_update(
         m.dn_loss1.z * en_self.z + m.dn_loss2.z * ints.en.z;
     dn_self += src.dn;
     dn.write(idx, dn_self);
-    dn.write(idx, src.dn);
 
     en.write(idx, m.en1 * dn_self);
 

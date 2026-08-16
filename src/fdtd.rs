@@ -197,6 +197,7 @@ impl FdtdLossySimulation {
         let mut zeroed_vector_fields = Vec::new();
         let mut n_cells_max = 0;
 
+        let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
         let mut tfsf_srcs = self.sources.iter()
             .filter_map(|source_val| {
                 let Source::TFSF {
@@ -207,7 +208,6 @@ impl FdtdLossySimulation {
                 let a1 = a.permute();
                 let a2 = a1.permute();
 
-                let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
                 let inv_d_a = inv_d[a];
 
                 let pos = (regions_offset[*spatial_axis] + position) * inv_d_a;
@@ -232,101 +232,66 @@ impl FdtdLossySimulation {
                 source_vals.extend_from_slice(vals);
 
                 let grid_coeffs = {
-                    const HALF_CELL: Index = 1;
-                    const ONE_CELL: Index = HALF_CELL*2;
-                    let n_axis2x = n_cells * ONE_CELL;
-                    let pml_end = match direction {
-                        WaveDirection::Positive => n_axis2x - HALF_CELL,
-                        WaveDirection::Negative => 0,
-                        _ => panic!("Invalid wave direction")
-                    };
-                    let pml_width2x = (pml_width.get() * ONE_CELL) as Real;
-                    let pml_sig_max = *pml_sig_max;
-                    let mut sig = {
-                        let mut sig = [
-                            vec![0., 0.],
-                            vec![0., 0.],
-                            vec![0., 0.],
-                        ];
-                        sig[a as usize] = into_par_iter!((0..n_axis2x))
+                    let sig = {
+                        const HALF_CELL: Index = 1;
+                        const ONE_CELL: Index = HALF_CELL*2;
+                        let n_axis2x = n_cells * ONE_CELL;
+                        let pml_end = match direction {
+                            WaveDirection::Positive => n_axis2x - HALF_CELL,
+                            WaveDirection::Negative => 0,
+                            _ => panic!("Invalid wave direction")
+                        };
+                        let pml_width2x = (pml_width.get() * ONE_CELL) as Real;
+                        let pml_sig_max = *pml_sig_max;
+                        into_par_iter!((0..n_axis2x))
                             .map(|i| {
                                 let end_dist = i.abs_diff(pml_end) as Real;
                                 let pml_interp = (1. - end_dist / pml_width2x)
                                     .clamp(0., 1.);
                                 pml_sig_max * pml_interp.powi(pml_grading_order.get())
                             })
-                            .collect::<Vec<_>>();
-                        sig
+                            .collect::<Vec<_>>()
                     };
+                    let h_sig = sig.iter()
+                        .copied()
+                        .skip(1)
+                        .step_by(2)
+                        .collect::<Vec<_>>();
+                    let dn_sig = sig.iter()
+                        .copied()
+                        .step_by(2)
+                        .collect::<Vec<_>>();
 
                     let inv_dt = dt.recip();
-                    let inv_mu_r = self.background_material.mu_r.recip();
-                    let inv_eps_r = self.background_material.eps_r.recip();
+                    let inv_mu_r_xy = Vec2::new(
+                        self.background_material.mu_r[a1].recip(),
+                        self.background_material.mu_r[a2].recip(),
+                    );
+                    let inv_eps_r_xy = Vec2::new(
+                        self.background_material.eps_r[a1].recip(),
+                        self.background_material.eps_r[a2].recip(),
+                    );
+                    // TODO: loss (there's probably a use to having lossy background material)
                     // let mat_sig = self.background_material.sig;
                     into_par_iter!((0..n_cells))
                         .map(|cell_idx| {
-                            // Stagger indexing the conductivities as per the Yee grid staggering
-                            let mut idx_2x = USizeVec3::ZERO;
-                                idx_2x[a] = cell_idx as usize * 2;
-                            let dn_sigs: [Vec3; MAX_DIM] = core::array::from_fn(|axis_i| {
-                                let mut sig_idx = idx_2x;
-                                sig_idx[axis_i] += 1;
-                                Vec3::new(
-                                    sig[0][sig_idx.x],
-                                    sig[1][sig_idx.y],
-                                    sig[2][sig_idx.z],
-                                )
-                            });
-                            let h_sigs: [Vec3; MAX_DIM] = core::array::from_fn(|axis_i| {
-                                let mut sig_idx = idx_2x + 1;
-                                sig_idx[axis_i] -= 1;
-                                Vec3::new(
-                                    sig[0][sig_idx.x],
-                                    sig[1][sig_idx.y],
-                                    sig[2][sig_idx.z],
-                                )
-                            });
-                            let mut coeff = AuxGridPmlCoeffs::default();
-                            for axis in Axis::ALL_AXES {
-                                let axis_i = axis as usize;
-                                let axis1 = axis.permute();
-                                let axis2 = axis1.permute();
-
-                                let h_sigs_axis = h_sigs[axis_i];
-                                let coeff_term0 = (
-                                    inv_dt + ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) +
-                                        ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                                ).recip();
-                                coeff.h1[axis] = coeff_term0 * (
-                                    inv_dt - ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) -
-                                        ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                                );
-                                coeff.h2[axis] = -coeff_term0 * C_0 * inv_mu_r[a];
-
-                                let dn_sigs_axis = dn_sigs[axis_i];
-                                let coeff_term0 = (
-                                    inv_dt + ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) +
-                                        ((dn_sigs_axis[axis1] * dn_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                                ).recip();
-                                coeff.dn1[axis] = coeff_term0 * (
-                                    inv_dt - ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) -
-                                        ((dn_sigs_axis[axis1] * dn_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                                );
-                                coeff.dn2[axis] = coeff_term0 * C_0;
-                                // TODO: loss (there's probably a use to having lossy background material)
-                                // let mat_sig_axis = mat_sig[axis];
-                                // coeff.dn_loss1[axis] = -coeff_term0 * mat_sig_axis / EPS_0;
-                                // coeff.dn_loss2[axis] = -coeff_term0 * dn_sigs_axis[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
+                            let idx = cell_idx as usize;
+                            let h_coeff_term0 = Vec2::splat((inv_dt + (h_sig[idx] / (2. * EPS_0))).recip());
+                            let dn_coeff_term0 = Vec2::splat((inv_dt + (dn_sig[idx] / (2. * EPS_0))).recip());
+                            AuxGridPmlCoeffs {
+                                h1: h_coeff_term0 * (inv_dt - (h_sig[idx] / (2. * EPS_0))),
+                                h2: -h_coeff_term0 * C_0 * inv_mu_r_xy,
+                                dn1: dn_coeff_term0 * (inv_dt - (dn_sig[idx] / (2. * EPS_0))),
+                                dn2: dn_coeff_term0 * C_0,
+                                en1: inv_eps_r_xy,
                             }
-                            coeff.en1 = Vec4::from((inv_eps_r, 0.));
-                            coeff
                         })
                         .collect::<Vec<_>>()
                 };
                 let coeffs_start = coeffs.len() as u32;
                 debug_assert_eq!(coeffs.len(), zeroed_vector_fields.len());
                 coeffs.extend_from_slice(&grid_coeffs);
-                zeroed_vector_fields.extend_from_slice(&vec![[0.; 2]; n_cells as usize]);
+                zeroed_vector_fields.extend_from_slice(&vec![AuxVect::ZERO; n_cells as usize]);
 
                 Some(GpuTfsf {
                     prop_axis: *spatial_axis,
@@ -356,23 +321,22 @@ impl FdtdLossySimulation {
             })
             .collect::<Vec<_>>();
 
-        let no_tfsf_sources = tfsf_srcs.is_empty();
+        let has_tfsf_sources = !tfsf_srcs.is_empty();
 
         if tfsf_srcs.is_empty() { tfsf_srcs.push(GpuTfsf::default()) }
         if corrections.is_empty() { corrections.push(TfsfCorrections::default()) }
         if coeffs.is_empty() { coeffs.push(AuxGridPmlCoeffs::default()) }
 
-        let aux_grid_thread_count =
-            if no_tfsf_sources { None }
-            else { Some([tfsf_srcs.len() as u32, 1, n_cells_max]) };
+        let aux_grid_thread_count = has_tfsf_sources
+            .then_some([tfsf_srcs.len() as u32, 1, n_cells_max]);
 
         Ok(TfsfDispatchData {
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
-            corrections: corrections.create_gpu_buffer(backend)?,
+            corrections: corrections.create_gpu_buffer_readable(backend)?,
             auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,
-            h: zeroed_vector_fields.create_gpu_buffer(backend)?,
-            dn: zeroed_vector_fields.create_gpu_buffer(backend)?,
-            en: zeroed_vector_fields.create_gpu_buffer(backend)?,
+            h: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            dn: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            en: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
             aux_grid_thread_count
         })
     }
@@ -457,12 +421,12 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                     DispatchGrid::ThreadCount(thread_count),
                     &tfsf.tfsf_sources,
                     &gpu_data.t_idx.buffer,
-                    &mut tfsf.corrections,
+                    &mut tfsf.corrections.buffer,
                     &gpu_data.source_vals,
                     &tfsf.auxgr_coeffs,
-                    &mut tfsf.h,
-                    &mut tfsf.dn,
-                    &mut tfsf.en
+                    &mut tfsf.h.buffer,
+                    &mut tfsf.dn.buffer,
+                    &mut tfsf.en.buffer
                 )?;
             }
 
@@ -475,7 +439,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &gpu_data.source_vals,
                 &gpu_data.dipoles,
                 &gpu_data.tfsf_dispatch_data.tfsf_sources,
-                &gpu_data.tfsf_dispatch_data.corrections,
+                &gpu_data.tfsf_dispatch_data.corrections.buffer,
                 &gpu_data.grid_coeffs
             )?;
             self.update.call(
@@ -534,11 +498,11 @@ pub struct TfsfParameters {
 
 pub struct TfsfDispatchData {
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
-    pub corrections: GpuBuffer<TfsfCorrections>,
+    pub corrections: GpuBufferReadable<TfsfCorrections>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
-    pub h: GpuBuffer<[Real; 2]>,
-    pub dn: GpuBuffer<[Real; 2]>,
-    pub en: GpuBuffer<[Real; 2]>,
+    pub h: GpuBufferReadable<AuxVect>,
+    pub dn: GpuBufferReadable<AuxVect>,
+    pub en: GpuBufferReadable<AuxVect>,
     /// Thread count for simulating auxiliary grids for ALL plane waves.
     ///
     /// Is [`None`] only when there are no TF/SF sources.
