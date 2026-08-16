@@ -212,15 +212,15 @@ impl FdtdLossySimulation {
 
                 let pos = (regions_offset[*spatial_axis] + position) * inv_d_a;
                 let buf_width3 = tfsf_buffer_width.cell_idx_to_3d();
-                let boundary_min_a = pos as u32;
-                let boundary_min_a1 = problem_space_min[a1] + buf_width3[a1];
-                let boundary_min_a2 = problem_space_min[a2] + buf_width3[a2];
+                let tf_min_a = pos as u32;
+                let tf_min_a1 = problem_space_min[a1] + buf_width3[a1];
+                let tf_min_a2 = problem_space_min[a2] + buf_width3[a2];
 
-                let boundary_max_a = problem_space_max[a] - buf_width3[a];
-                let boundary_max_a1 = problem_space_max[a1] - buf_width3[a1];
-                let boundary_max_a2 = problem_space_max[a2] - buf_width3[a2];
+                let tf_max_a = problem_space_max[a] - buf_width3[a];
+                let tf_max_a1 = problem_space_max[a1] - buf_width3[a1];
+                let tf_max_a2 = problem_space_max[a2] - buf_width3[a2];
 
-                let num_correction_cells = (boundary_max_a - boundary_min_a + 1) + 2;
+                let num_correction_cells = (tf_max_a - tf_min_a + 1) + 2;
                 let source_cell = 1;
                 let n_cells = num_correction_cells + source_cell + pml_width.get();
                 n_cells_max = n_cells_max.max(n_cells);
@@ -299,12 +299,12 @@ impl FdtdLossySimulation {
                     a1,
                     a2,
                     direction: *direction,
-                    boundary_min_a,
-                    boundary_min_a1,
-                    boundary_min_a2,
-                    boundary_max_a,
-                    boundary_max_a1,
-                    boundary_max_a2,
+                    tf_min_a,
+                    tf_min_a1,
+                    tf_min_a2,
+                    tf_max_a,
+                    tf_max_a1,
+                    tf_max_a2,
                     grid_start: coeffs_start,
                     vals_start,
                     vals_end: source_vals.len() as u32 - 1,

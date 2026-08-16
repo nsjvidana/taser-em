@@ -70,8 +70,8 @@ pub fn gpu_compute_source_terms(
     for i in 0..tfsf_sources.len() {
         let GpuTfsf {
             prop_axis, a, a1, a2, direction,
-            boundary_min_a, boundary_min_a1,boundary_min_a2,
-            boundary_max_a, boundary_max_a1, boundary_max_a2,
+            tf_min_a, tf_min_a1,tf_min_a2,
+            tf_max_a, tf_max_a1, tf_max_a2,
             grid_start, vals_start, vals_end, t_start, n_cells,
             polarization_a1, polarization_a2,
             corrections_start, num_correction_cells,
@@ -87,15 +87,15 @@ pub fn gpu_compute_source_terms(
         let a1_spatial = SpatialAxis::is_spatial_axis(a1);
         let a2_spatial = SpatialAxis::is_spatial_axis(a2);
 
-        let intersects_tf = (cell_idx_a >= boundary_min_a && cell_idx_a <= boundary_max_a) &&
-            (a1_spatial && (cell_idx_a1 >= boundary_min_a1 && cell_idx_a1 <= boundary_max_a1) || !a1_spatial) &&
-            (a2_spatial && (cell_idx_a2 >= boundary_min_a2 && cell_idx_a2 <= boundary_max_a2) || !a2_spatial);
-        let intersects_sf_tf = (cell_idx_a+1 >= boundary_min_a && cell_idx_a <= boundary_max_a+1) &&
-            (a1_spatial && (cell_idx_a1+1 >= boundary_min_a1 && cell_idx_a1 <= boundary_max_a1+1) || !a1_spatial) &&
-            (a2_spatial && (cell_idx_a2+1 >= boundary_min_a2 && cell_idx_a2 <= boundary_max_a2+1) || !a2_spatial);
+        let intersects_tf = (cell_idx_a >= tf_min_a && cell_idx_a <= tf_max_a) &&
+            (a1_spatial && (cell_idx_a1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1) || !a1_spatial) &&
+            (a2_spatial && (cell_idx_a2 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2) || !a2_spatial);
+        let intersects_sf_tf = (cell_idx_a+1 >= tf_min_a && cell_idx_a <= tf_max_a+1) &&
+            (a1_spatial && (cell_idx_a1+1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1+1) || !a1_spatial) &&
+            (a2_spatial && (cell_idx_a2+1 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2+1) || !a2_spatial);
 
         let corrections_end = (corrections_start + num_correction_cells - 1) as usize;
-        let correction_idx = ((corrections_start + cell_idx_a.gpu_saturating_sub(boundary_min_a.gpu_saturating_sub(1))) as usize)
+        let correction_idx = ((corrections_start + cell_idx_a.gpu_saturating_sub(tf_min_a.gpu_saturating_sub(1))) as usize)
             .min(corrections_end);
         // plane wave vals at wavefront in this cell's location
         let mut src = tfsf_corrections.read(correction_idx);
@@ -105,24 +105,24 @@ pub fn gpu_compute_source_terms(
         let mut src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
         
         let at_max_tf_edge_a = [
-            intersects_tf && (cell_idx_a == boundary_max_a),
-            intersects_tf && (cell_idx_a1 == boundary_max_a1),
-            intersects_tf && (cell_idx_a2 == boundary_max_a2),
+            intersects_tf && (cell_idx_a == tf_max_a),
+            intersects_tf && (cell_idx_a1 == tf_max_a1),
+            intersects_tf && (cell_idx_a2 == tf_max_a2),
         ];
         let at_min_tf_edge_a = [
-            intersects_tf && (cell_idx_a == boundary_min_a),
-            intersects_tf && (cell_idx_a1 == boundary_min_a1),
-            intersects_tf && (cell_idx_a2 == boundary_min_a2),
+            intersects_tf && (cell_idx_a == tf_min_a),
+            intersects_tf && (cell_idx_a1 == tf_min_a1),
+            intersects_tf && (cell_idx_a2 == tf_min_a2),
         ];
         let at_max_sf_edge_a = [
-            intersects_sf_tf && (cell_idx_a == boundary_max_a+1),
-            intersects_sf_tf && (cell_idx_a1 == boundary_max_a1+1),
-            intersects_sf_tf && (cell_idx_a2 == boundary_max_a2+1),
+            intersects_sf_tf && (cell_idx_a == tf_max_a+1),
+            intersects_sf_tf && (cell_idx_a1 == tf_max_a1+1),
+            intersects_sf_tf && (cell_idx_a2 == tf_max_a2+1),
         ];
         let at_min_sf_edge_a = [
-            intersects_sf_tf && (cell_idx_a+1 == boundary_min_a),
-            intersects_sf_tf && (cell_idx_a1+1 == boundary_min_a1),
-            intersects_sf_tf && (cell_idx_a2+1 == boundary_min_a2),
+            intersects_sf_tf && (cell_idx_a+1 == tf_min_a),
+            intersects_sf_tf && (cell_idx_a1+1 == tf_min_a1),
+            intersects_sf_tf && (cell_idx_a2+1 == tf_min_a2),
         ];
 
         fn enable_real(enable: bool, real: Real) -> Real { real * enable as u32 as Real }
@@ -188,8 +188,8 @@ pub fn aux_grid_update(
     let wave_idx = cell_idx3.x as usize;
     let GpuTfsf {
         prop_axis, a, a1, a2, direction,
-        boundary_min_a, boundary_min_a1,boundary_min_a2,
-        boundary_max_a, boundary_max_a1, boundary_max_a2,
+        tf_min_a, tf_min_a1,tf_min_a2,
+        tf_max_a, tf_max_a1, tf_max_a2,
         grid_start, vals_start, vals_end, t_start, n_cells,
         polarization_a1, polarization_a2,
         corrections_start, num_correction_cells,
@@ -708,17 +708,17 @@ pub struct GpuTfsf {
     /// The smallest index component of a cell that is fully inside the TF/SF boundary.
     ///
     /// (component of cell idx is along `GpuTfsf.a` direction)
-    pub boundary_min_a: u32,
-    pub boundary_min_a1: u32,
-    pub boundary_min_a2: u32,
+    pub tf_min_a: u32,
+    pub tf_min_a1: u32,
+    pub tf_min_a2: u32,
 
     /// The largest index component of a cell that is half-inside the TF/SF boundary.
     /// Only the En components of the cell are within the TF/SF boundary.
     ///
     /// (component of cell idx is along `a` direction)
-    pub boundary_max_a: u32,
-    pub boundary_max_a1: u32,
-    pub boundary_max_a2: u32,
+    pub tf_max_a: u32,
+    pub tf_max_a1: u32,
+    pub tf_max_a2: u32,
     pub grid_start: u32,
 
     pub vals_start: u32,
