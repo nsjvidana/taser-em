@@ -201,7 +201,7 @@ impl FdtdLossySimulation {
         let mut tfsf_srcs = self.sources.iter()
             .filter_map(|source_val| {
                 let Source::TFSF {
-                    spatial_axis, position, direction, t_start, vals,
+                    spatial_axis, direction, t_start, vals,
                     polarization, tfsf_buffer_width
                 } = source_val else { return None };
                 let a = Axis::from(*spatial_axis);
@@ -210,15 +210,14 @@ impl FdtdLossySimulation {
 
                 let inv_d_a = inv_d[a];
 
-                let pos = (regions_offset[*spatial_axis] + position) * inv_d_a;
-                let buf_width3 = tfsf_buffer_width.cell_idx_to_3d();
-                let tf_min_a = pos as u32;
-                let tf_min_a1 = problem_space_min[a1] + buf_width3[a1];
-                let tf_min_a2 = problem_space_min[a2] + buf_width3[a2];
+                let buf_width = *tfsf_buffer_width;
+                let tf_min_a = problem_space_min[a] + buf_width[a].lo;
+                let tf_min_a1 = problem_space_min[a1] + buf_width[a1].lo;
+                let tf_min_a2 = problem_space_min[a2] + buf_width[a2].lo;
 
-                let tf_max_a = problem_space_max[a] - buf_width3[a];
-                let tf_max_a1 = problem_space_max[a1] - buf_width3[a1];
-                let tf_max_a2 = problem_space_max[a2] - buf_width3[a2];
+                let tf_max_a = problem_space_max[a] - buf_width[a].hi;
+                let tf_max_a1 = problem_space_max[a1] - buf_width[a1].hi;
+                let tf_max_a2 = problem_space_max[a2] - buf_width[a2].hi;
 
                 let num_correction_cells = (tf_max_a - tf_min_a + 1) + 2;
                 let source_cell = 1;
@@ -362,11 +361,7 @@ impl FdtdLossySimulation {
             .map(|src| {
                 match src {
                     Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
-                    Source::TFSF { spatial_axis, position, ..} => {
-                        let mut pos = regions_center;
-                            pos[Axis::from(*spatial_axis)] = *position;
-                        pos
-                    }
+                    Source::TFSF { .. } => { regions_center }
                 }
             })
             .collect::<Vec<_>>();
@@ -679,12 +674,10 @@ pub enum Source {
         /// you want to scale `vals` by the magnitude of `moment`).
         moment: Vec3,
     },
-    /// Total-field/Scattered-field source.
+    /// Total-field/Scattered-field source whose boundary resides in the user-defined spacer regions.
     TFSF {
         /// The spatial axis along which the plane wave will travel.
         spatial_axis: SpatialAxis,
-        /// Position of the plane wave, along `spatial_axis`, in world coordinates.
-        position: Real,
         /// The direction along `spatial_axis` the wave will travel in.
         direction: WaveDirection,
         /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
@@ -693,13 +686,10 @@ pub enum Source {
         vals: Vec<f32>,
         /// Polarization direction of the plane wave (unit vector)
         polarization: Vec3,
-        /// The distance between the TF/SF boundary and the border/PML. This does NOT control the distance
-        /// between the boundary and border/PML along the propagation axis. Change spacer region widths
-        /// to control that.
+        /// The distances between the TF/SF boundary and the border/PML.
         ///
-        /// A width of around `3` works well, especially if you want to record values
-        /// behind the TF/SF boundary.
-        tfsf_buffer_width: GridIndex,
+        /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
+        tfsf_buffer_width: LayerWidths,
     }
 }
 

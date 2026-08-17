@@ -37,7 +37,6 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let wavelen = C_0 / f_max;
     let quad_min = Vect::splat(-20.);
     let quad_max = Vect::splat(-20. + wavelen * 0.5);
-    let quad_extents = quad_max - quad_min;
     // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
@@ -51,18 +50,15 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let quad_center = (quad_min + quad_max) / 2.;
     let source = Source::TFSF {
         spatial_axis: SpatialAxis::X,
-        position: quad_center.x - ((quad_extents.x / 2.) + wavelen * 2.),
         direction: WaveDirection::Positive,
         // position: quad_center.x + ((quad_extents.x / 2.) + wavelen),
         // direction: WaveDirection::Negative,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::Z,
-        tfsf_buffer_width: GridIndex::splat(3),
+        tfsf_buffer_width: LayerWidths::splat_spatial(5),
     };
     simulation.add_source(source);
-
-    simulation.pml_parameters.widths[SpatialAxis::Y] = LoHiWidths::splat(0);
     
     // Set up buffers and pipeline
     let backend = create_backend().await?;
