@@ -674,7 +674,7 @@ pub enum Source {
         /// you want to scale `vals` by the magnitude of `moment`).
         moment: Vec3,
     },
-    /// Total-field/Scattered-field source whose boundary resides in the user-defined spacer regions.
+    /// Total-Field / Scattered-Field source
     TFSF {
         /// The spatial axis along which the plane wave will travel.
         spatial_axis: SpatialAxis,
@@ -686,7 +686,7 @@ pub enum Source {
         vals: Vec<f32>,
         /// Polarization direction of the plane wave (unit vector)
         polarization: Vec3,
-        /// The distances between the TF/SF boundary and the border/PML.
+        /// The distances between the TF/SF boundary and the border/PML, in grid cells.
         ///
         /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
         tfsf_buffer_width: LayerWidths,

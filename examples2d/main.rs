@@ -1,7 +1,5 @@
-use kiss3d::prelude::RED;
 use taser_em2d::prelude::*;
-use taser_em2d::shaders::fdtd::{AuxVect, TfsfCorrections};
-use taser_em_testbed2d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
+use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
@@ -47,12 +45,10 @@ pub async fn single_rod() -> anyhow::Result<()> {
     simulation.material_regions.fill_region(quad_min, quad_max, mat);
 
     // Compute source position and gaussian curve data points
-    let quad_center = (quad_min + quad_max) / 2.;
     let source = Source::TFSF {
         spatial_axis: SpatialAxis::X,
-        direction: WaveDirection::Positive,
-        // position: quad_center.x + ((quad_extents.x / 2.) + wavelen),
-        // direction: WaveDirection::Negative,
+        // direction: WaveDirection::Positive,
+        direction: WaveDirection::Negative,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::Z,
@@ -85,17 +81,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
         
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; gpu_data.dn.buffer.len()];
-    let mut aux_en = vec![Vec2::ZERO; gpu_data.tfsf_dispatch_data.en.buffer.len()];
     while testbed.render_frame(&dn_field).await {
-        let mut prev_pos = Vec3::ZERO + Vec3::new(0., aux_en[0].y, 0.);
-        for (i, v) in aux_en.iter().enumerate().skip(1) {
-            let cell_pos = Vec3::new(i as Real * cell_size.x, 0., 0.);
-            let pos2 = cell_pos + Vec3::new(0., v.y * cell_size.x, 0.);
-            testbed.window.draw_line(prev_pos, pos2, RED, 2., false);
-            prev_pos = pos2;
-        }
         backend.synchronize()?;
-        gpu_data.tfsf_dispatch_data.en.read(&backend, &mut aux_en).await?;
         gpu_data.dn.read(&backend, &mut dn_field).await?;
 
         let mut encoder = backend.begin_encoding();

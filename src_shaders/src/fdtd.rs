@@ -116,14 +116,14 @@ pub fn gpu_compute_source_terms(
             inside_tf && (cell_idx_a2 == tf_min_a2),
         ];
         let at_max_sf_edge_a = [
-            sf_edge_or_in_tf && !inside_tf && (cell_idx_a == tf_max_a+1),
-            sf_edge_or_in_tf && !inside_tf && (cell_idx_a1 == tf_max_a1+1),
-            sf_edge_or_in_tf && !inside_tf && (cell_idx_a2 == tf_max_a2+1),
+            sf_edge_or_in_tf && (cell_idx_a == tf_max_a+1),
+            sf_edge_or_in_tf && (cell_idx_a1 == tf_max_a1+1),
+            sf_edge_or_in_tf && (cell_idx_a2 == tf_max_a2+1),
         ];
         let at_min_sf_edge_a = [
-            sf_edge_or_in_tf && !inside_tf && (cell_idx_a+1 == tf_min_a),
-            sf_edge_or_in_tf && !inside_tf && (cell_idx_a1+1 == tf_min_a1),
-            sf_edge_or_in_tf && !inside_tf && (cell_idx_a2+1 == tf_min_a2),
+            sf_edge_or_in_tf && (cell_idx_a+1 == tf_min_a),
+            sf_edge_or_in_tf && (cell_idx_a1+1 == tf_min_a1),
+            sf_edge_or_in_tf && (cell_idx_a2+1 == tf_min_a2),
         ];
 
         let mut at_sf_edge_count = 0;
