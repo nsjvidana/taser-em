@@ -228,7 +228,7 @@ impl FdtdLossySimulation {
                 aux_grid_n_cells_max = aux_grid_n_cells_max.max(n_cells);
 
                 let corrections_start = corrections.len() as u32;
-                corrections.resize(corrections.len() + num_correction_cells as usize, TfsfCorrections::default());
+                corrections.resize(corrections.len() + num_correction_cells as usize, TfsfSourceValues::default());
 
                 let vals_start = source_vals.len() as u32;
                 source_vals.extend_from_slice(vals);
@@ -327,7 +327,7 @@ impl FdtdLossySimulation {
         let has_tfsf_sources = !tfsf_srcs.is_empty();
 
         if tfsf_srcs.is_empty() { tfsf_srcs.push(GpuTfsf::default()) }
-        if corrections.is_empty() { corrections.push(TfsfCorrections::default()) }
+        if corrections.is_empty() { corrections.push(TfsfSourceValues::default()) }
         if coeffs.is_empty() { coeffs.push(AuxGridPmlCoeffs::default()) }
 
         let aux_grid_thread_count = has_tfsf_sources
@@ -547,7 +547,7 @@ pub struct TfsfParameters {
 pub struct TfsfDispatchData {
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
     pub tfsf_masks: GpuBuffer<TfsfMask>,
-    pub corrections: GpuBufferReadable<TfsfCorrections>,
+    pub corrections: GpuBufferReadable<TfsfSourceValues>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
     pub h: GpuBufferReadable<AuxVect>,
     pub dn: GpuBufferReadable<AuxVect>,

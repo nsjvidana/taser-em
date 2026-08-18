@@ -45,7 +45,7 @@ pub fn gpu_compute_source_terms(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_sources: &[GpuTfsf],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] tfsf_corrections: &[TfsfCorrections],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] tfsf_corrections: &[TfsfSourceValues],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] tfsf_masks: &[TfsfMask],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 8)] pml_coeffs: &[PmlCoefficients],
 ) {
@@ -236,7 +236,7 @@ pub fn aux_grid_update(
     #[spirv(global_invocation_id)] cell_idx3: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] tfsf_sources: &[GpuTfsf],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &Index,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] corrections: &mut [TfsfCorrections],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] corrections: &mut [TfsfSourceValues],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] auxgr_coeffs: &[AuxGridPmlCoeffs],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h: &mut [AuxVect],
@@ -307,7 +307,7 @@ pub fn aux_grid_update(
     if !is_correction_cell { return; }
     let corr_idx_offset = if is_positive_dir { dir_local_idx - 1 } else { num_correction_cells - dir_local_idx };
     let correction_idx = corrections_start as usize + corr_idx_offset;
-    corrections.write(correction_idx, TfsfCorrections {
+    corrections.write(correction_idx, TfsfSourceValues {
         en_a1: en_self_corr.x,
         en_a2: en_self_corr.y,
         h_a1: h_self_corr.x,
@@ -327,10 +327,9 @@ pub struct AuxGridPmlCoeffs {
 
 pub type AuxVect = Vec2;
 
-// TODO: rename to TfsfSourceValues
 #[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
-pub struct TfsfCorrections {
+pub struct TfsfSourceValues {
     pub en_a1: Real,
     pub en_a2: Real,
     pub h_a1: Real,
