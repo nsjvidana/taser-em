@@ -61,3 +61,5 @@ The following resources were imperative to designing this simulation API:
   of this project, as all diagonal anisotropy update equations and stability improvements were derived from these lectures.
 - [khal](https://github.com/dimforge/khal/) provides an amazing unified interface for compiling Rust shaders for multiple GPU backends.
 - The rest of the [dimforge](https://github.com/dimforge) tools (e.g. parry3d's geometry, kiss3d's renderer)
+- [Dr. John Brand Schneider's lecture notes](https://eecs.wsu.edu/~schneidj/ufdtd/chap8.pdf) on the 1D auxiliary grid implementation of 
+  TF/SF plane wave source.
