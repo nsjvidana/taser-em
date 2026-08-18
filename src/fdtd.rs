@@ -45,7 +45,7 @@ impl FdtdLossySimulation {
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-    ) -> GpuResult<FdtdLossyDispatchData> {
+    ) -> GpuResult<FdtdLossyState> {
         let FdtdParameters {
             cell_size, dt, polarization_mode, ..
         } = self.fdtd_parameters;
@@ -130,7 +130,7 @@ impl FdtdLossySimulation {
         let cell_count = n_cells.element_product() as usize;
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
 
-        let buffers = FdtdLossyDispatchData {
+        let buffers = FdtdLossyState {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
             t_idx: 0.create_gpu_buffer_readable(backend)?,
@@ -415,13 +415,13 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         backend: &GpuBackend,
         boundary_condition: BC,
         num_steps_per_submission: usize,
-        gpu_data: &mut FdtdLossyDispatchData
+        state: &mut FdtdLossyState
     ) -> GpuResult<Self> {
         let pipeline = Self::new(backend, boundary_condition, num_steps_per_submission)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
-        pipeline.initialize(&mut pass, gpu_data)?;
+        pipeline.initialize(&mut pass, state)?;
         drop(pass);
         backend.submit(encoder)?;
 
@@ -431,15 +431,15 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn initialize(
         &self,
         pass: &mut GpuPass,
-        gpu_data: &mut FdtdLossyDispatchData
+        state: &mut FdtdLossyState
     ) -> GpuResult<()> {
-        if let Some(thread_count) = gpu_data.tfsf_dispatch_data.mask_init_thread_count {
+        if let Some(thread_count) = state.tfsf_dispatch_data.mask_init_thread_count {
             self.init_tfsf_masks.call(
                 pass,
                 DispatchGrid::ThreadCount(thread_count),
-                &gpu_data.grid_params,
-                &gpu_data.tfsf_dispatch_data.tfsf_sources,
-                &mut gpu_data.tfsf_dispatch_data.tfsf_masks,
+                &state.grid_params,
+                &state.tfsf_dispatch_data.tfsf_sources,
+                &mut state.tfsf_dispatch_data.tfsf_masks,
             )?;
         }
         Ok(())
@@ -448,27 +448,27 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn dispatch_steps(
         &mut self,
         pass: &mut GpuPass,
-        gpu_data: &mut FdtdLossyDispatchData,
+        state: &mut FdtdLossyState,
     ) -> GpuResult<()> {
         for _ in 0..self.num_steps_per_submission {
             self.boundary_condition.call(
                 pass,
-                &gpu_data.grid_params,
-                &mut gpu_data.h.buffer,
-                &mut gpu_data.dn.buffer,
-                &mut gpu_data.en.buffer,
-                gpu_data.thread_count
+                &state.grid_params,
+                &mut state.h.buffer,
+                &mut state.dn.buffer,
+                &mut state.en.buffer,
+                state.thread_count
             )?;
 
-            if let Some(thread_count) = gpu_data.tfsf_dispatch_data.aux_grid_thread_count {
-                let tfsf = &mut gpu_data.tfsf_dispatch_data;
+            if let Some(thread_count) = state.tfsf_dispatch_data.aux_grid_thread_count {
+                let tfsf = &mut state.tfsf_dispatch_data;
                 self.aux_grid_update.call(
                     pass,
                     DispatchGrid::ThreadCount(thread_count),
                     &tfsf.tfsf_sources,
-                    &gpu_data.t_idx.buffer,
+                    &state.t_idx.buffer,
                     &mut tfsf.corrections.buffer,
-                    &gpu_data.source_vals,
+                    &state.source_vals,
                     &tfsf.auxgr_coeffs,
                     &mut tfsf.h.buffer,
                     &mut tfsf.dn.buffer,
@@ -478,28 +478,28 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
 
             self.compute_source_terms.call(
                 pass,
-                DispatchGrid::ThreadCount(gpu_data.thread_count),
-                &gpu_data.grid_params,
-                &gpu_data.t_idx.buffer,
-                &mut gpu_data.source_terms,
-                &gpu_data.source_vals,
-                &gpu_data.dipoles,
-                &gpu_data.tfsf_dispatch_data.tfsf_sources,
-                &gpu_data.tfsf_dispatch_data.corrections.buffer,
-                &gpu_data.tfsf_dispatch_data.tfsf_masks,
-                &gpu_data.grid_coeffs,
+                DispatchGrid::ThreadCount(state.thread_count),
+                &state.grid_params,
+                &state.t_idx.buffer,
+                &mut state.source_terms,
+                &state.source_vals,
+                &state.dipoles,
+                &state.tfsf_dispatch_data.tfsf_sources,
+                &state.tfsf_dispatch_data.corrections.buffer,
+                &state.tfsf_dispatch_data.tfsf_masks,
+                &state.grid_coeffs,
             )?;
             self.update.call(
                 pass,
-                DispatchGrid::ThreadCount(gpu_data.thread_count),
-                &gpu_data.grid_params,
-                &mut gpu_data.t_idx.buffer,
-                &mut gpu_data.h.buffer,
-                &mut gpu_data.dn.buffer,
-                &mut gpu_data.en.buffer,
-                &mut gpu_data.int_terms,
-                &gpu_data.grid_coeffs,
-                &gpu_data.source_terms,
+                DispatchGrid::ThreadCount(state.thread_count),
+                &state.grid_params,
+                &mut state.t_idx.buffer,
+                &mut state.h.buffer,
+                &mut state.dn.buffer,
+                &mut state.en.buffer,
+                &mut state.int_terms,
+                &state.grid_coeffs,
+                &state.source_terms,
             )?;
         }
         Ok(())
@@ -515,8 +515,7 @@ pub struct FdtdParameters {
 }
 
 /// Buffers and data needed for running the shader
-// TODO: rename to FdtdLossyState
-pub struct FdtdLossyDispatchData {
+pub struct FdtdLossyState {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
     pub t_idx: GpuBufferReadable<u32>,

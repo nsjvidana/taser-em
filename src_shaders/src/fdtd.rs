@@ -752,7 +752,6 @@ pub struct GpuDipole {
 ///                 // 1D source values                 |
 ///                 //                            tf/sf boundary field values start here
 /// ```
-// TODO: allow user to disable tf/sf boundary at the end of the plane wave's propagation
 #[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
 pub struct GpuTfsf {

@@ -60,17 +60,17 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
-    let mut gpu_data = simulation.finalize(&backend, &stability)?;
+    let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(
         &backend,
         boundary_condition,
         sim_speed,
-        &mut gpu_data
+        &mut state
     )?;
     
     // Create viewer and set up camera
-    let n_cells = gpu_data.n_cells;
+    let n_cells = state.n_cells;
     let grid_extents = n_cells.as_vect() * cell_size;
     let grid_center = grid_extents / 2.;
     let vis_mode = VisualizationMode::default();
@@ -85,22 +85,22 @@ pub async fn single_rod() -> anyhow::Result<()> {
     testbed.camera.set_up_axis(Vec3::Z);
         
     // Render simulation
-    let mut dn_field = vec![Vec4::ZERO; gpu_data.dn.buffer.len()];
+    let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
     while testbed.render_frame(&dn_field).await {
         backend.synchronize()?;
-        gpu_data.dn.read(&backend, &mut dn_field).await?;
+        state.dn.read(&backend, &mut dn_field).await?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
-        pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
+        pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
-        gpu_data.dn.encode_copy_cmd(&mut encoder)?;
-        gpu_data.t_idx.encode_copy_cmd(&mut encoder)?;
-        gpu_data.tfsf_dispatch_data.en.encode_copy_cmd(&mut encoder)?;
+        state.dn.encode_copy_cmd(&mut encoder)?;
+        state.t_idx.encode_copy_cmd(&mut encoder)?;
+        state.tfsf_dispatch_data.en.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
     }
     let mut steps = vec![0];
-    gpu_data.t_idx.read(&backend, &mut steps).await?;
+    state.t_idx.read(&backend, &mut steps).await?;
     println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
     println!("steps: {:?}", steps[0]);
 
