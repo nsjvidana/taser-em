@@ -5,6 +5,10 @@ use khal::Shader;
 use parry3d::bounding_volume::Aabb;
 use std::num::{NonZeroI32, NonZeroU32};
 use taser_em_shaders::fdtd::*;
+use crate::*;
+
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
@@ -13,6 +17,7 @@ pub struct FdtdLossySimulation {
     pub sources: Vec<Source>,
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
+    pub tfsf_parameters: TfsfParameters
 }
 
 impl FdtdLossySimulation {
@@ -23,6 +28,11 @@ impl FdtdLossySimulation {
             sources: vec![],
             fdtd_parameters,
             pml_parameters,
+            tfsf_parameters: TfsfParameters {
+                pml_width: NonZeroU32::new(12).unwrap(),
+                pml_sig_max: pml_parameters.sig_max,
+                pml_grading_order: pml_parameters.grading_order,
+            },
         }
     }
 
@@ -46,6 +56,15 @@ impl FdtdLossySimulation {
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
         let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
 
+        let mut problem_space_min = GridIndex::ONE;
+        self.pml_parameters.widths
+            .iter_spatial_axes()
+            .for_each(|(s_axis, w)| problem_space_min[s_axis] += w.lo);
+        let mut problem_space_max = n_cells - 2;
+        self.pml_parameters.widths
+            .iter_spatial_axes()
+            .for_each(|(s_axis, w)| problem_space_max[s_axis] -= w.hi);
+
         let mut source_vals: Vec<Real> = vec![];
         let regions_offset = Vect::from_vec3(regions_offset);
         let mut dipoles = self.sources.iter()
@@ -55,10 +74,8 @@ impl FdtdLossySimulation {
                 };
                 let pos = (regions_offset + position) / cell_size;
                 let cell_grid_idx = pos.as_grid_index();
-                debug_assert!(
-                    !pos.min_element().is_sign_negative() && !pos.as_grid_index().cmpge(n_cells).any(),
-                    "negative source position!"
-                );
+                debug_assert!(!pos.min_element().is_sign_negative(), "negative source position!");
+                debug_assert!(!pos.as_grid_index().cmpge(n_cells).any(), "Out of bounds source!");
                 let start = source_vals.len();
                 source_vals.extend_from_slice(vals);
                 Some(GpuDipole {
@@ -70,48 +87,22 @@ impl FdtdLossySimulation {
                 })
             })
             .collect::<Vec<_>>();
-        let mut plane_waves = self.sources.iter()
-            .filter_map(|source| {
-                let Source::PlaneWave {
-                    spatial_axis, position, direction, t_start, vals, polarization
-                } = source else { return None; };
-                let axis = Axis::from(*spatial_axis);
-                let pos = (regions_offset[axis] + position) / cell_size[*spatial_axis];
-                let position_idx = pos as Index;
-                debug_assert!(
-                    !pos.is_sign_negative() && !GridIndex::splat(position_idx).cmpge(n_cells).any(),
-                    "negative source position!"
-                );
-
-                let start = source_vals.len();
-                source_vals.extend_from_slice(vals);
-                Some(GpuPlaneWave {
-                    spatial_axis: *spatial_axis,
-                    direction: *direction as i32,
-                    position_idx,
-                    vals_start: start as u32,
-                    vals_end: source_vals.len() as u32 - 1,
-                    t_start: (t_start / dt) as u32,
-                    _padding0: [0; 2],
-                    polarization: *polarization,
-                    _padding1: 0,
-                })
-            })
-            .collect::<Vec<_>>();
+        let tfsf_dispatch_data = self.create_tfsf_sources(
+            backend,
+            &mut source_vals,
+            regions_offset,
+            problem_space_min.cell_idx_to_3d(),
+            problem_space_max.cell_idx_to_3d()
+        )?;
         if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
-        if plane_waves.is_empty() { plane_waves.push(GpuPlaneWave::default()) }
         if source_vals.is_empty() { source_vals.push(0.0); }
-
-        let plane_wave_coeffs_grid = PlaneWaveCoefficientsGrid::new(
-            &grid_mats, &plane_waves, dt / 2.
-        );
 
         let flat_idx_incrs = {
             let mut incrs = UVec3::ZERO;
             for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
                 .zip(SpatialAxis::ALL_AXES)
             {
-                let mut grid_incr = GridIndex::default();
+                let mut grid_incr = GridIndex::ZERO;
                 grid_incr[spatial_axis] = 1;
                 incrs[axis] = grid_incr.to_flat_idx(n_cells);
             }
@@ -127,7 +118,11 @@ impl FdtdLossySimulation {
             inv_dt: dt.recip(),
             polarization_mode_index: polarization_mode.into(),
             _padding0: 0,
-            inv_d: cell_size3.recip().map(|v| if v.is_finite() { v } else { 0.0 }),
+            inv_d: cell_size3.recip(),
+            problem_space_min: problem_space_min.to_3d(UVec3::ONE),
+            _padding1: 0,
+            problem_space_max: problem_space_max.to_3d(UVec3::ONE),
+            _padding2: 0,
         };
 
         let cell_count = n_cells.element_product() as usize;
@@ -136,23 +131,22 @@ impl FdtdLossySimulation {
         let buffers = FdtdLossyDispatchData {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
-            steps: 0.create_gpu_buffer_readable(backend)?,
+            t_idx: 0.create_gpu_buffer_readable(backend)?,
             // Vector fields
             h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
             dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
             en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
             // For computing source terms
             dipoles: dipoles.create_gpu_buffer(backend)?,
-            plane_waves: plane_waves.create_gpu_buffer(backend)?,
             source_vals: source_vals.create_gpu_buffer(backend)?,
-            plane_wave_coeffs: plane_wave_coeffs_grid.coeffs.create_gpu_buffer(backend)?,
             // For update equation terms
             source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
             thread_count: n_cells.n_cells_to_3d().to_array(),
-            n_cells
+            n_cells,
+            tfsf_dispatch_data
         };
 
         Ok(buffers)
@@ -183,6 +177,169 @@ impl FdtdLossySimulation {
         }
     }
 
+    pub fn create_tfsf_sources(
+        &self,
+        backend: &GpuBackend,
+        source_vals: &mut Vec<Real>,
+        regions_offset: Vect,
+        problem_space_min: UVec3,
+        problem_space_max: UVec3,
+    ) -> GpuResult<TfsfDispatchData> {
+        let TfsfParameters {
+            pml_width, pml_sig_max, pml_grading_order
+        } = &self.tfsf_parameters;
+        let FdtdParameters {
+            dt, cell_size, ..
+        } = &self.fdtd_parameters;
+
+        let mut corrections = Vec::new();
+        let mut coeffs = Vec::new();
+        let mut zeroed_vector_fields = Vec::new();
+        let mut n_cells_max = 0;
+
+        let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
+        let mut tfsf_srcs = self.sources.iter()
+            .filter_map(|source_val| {
+                let Source::TFSF {
+                    spatial_axis, direction, t_start, vals,
+                    polarization, tfsf_buffer_width
+                } = source_val else { return None };
+                let a = Axis::from(*spatial_axis);
+                let a1 = a.permute();
+                let a2 = a1.permute();
+
+                let inv_d_a = inv_d[a];
+
+                let buf_width = *tfsf_buffer_width;
+                let tf_min_a = problem_space_min[a] + buf_width[a].lo;
+                let tf_min_a1 = problem_space_min[a1] + buf_width[a1].lo;
+                let tf_min_a2 = problem_space_min[a2] + buf_width[a2].lo;
+
+                let tf_max_a = problem_space_max[a] - buf_width[a].hi;
+                let tf_max_a1 = problem_space_max[a1] - buf_width[a1].hi;
+                let tf_max_a2 = problem_space_max[a2] - buf_width[a2].hi;
+
+                let num_correction_cells = (tf_max_a - tf_min_a + 1) + 2;
+                let source_cell = 1;
+                let n_cells = num_correction_cells + source_cell + pml_width.get();
+                n_cells_max = n_cells_max.max(n_cells);
+
+                let corrections_start = corrections.len() as u32;
+                corrections.resize(corrections.len() + num_correction_cells as usize, TfsfCorrections::default());
+
+                let vals_start = source_vals.len() as u32;
+                source_vals.extend_from_slice(vals);
+
+                let grid_coeffs = {
+                    let sig = {
+                        const HALF_CELL: Index = 1;
+                        const ONE_CELL: Index = HALF_CELL*2;
+                        let n_axis2x = n_cells * ONE_CELL;
+                        let pml_end = match direction {
+                            WaveDirection::Positive => n_axis2x - HALF_CELL,
+                            WaveDirection::Negative => 0,
+                            _ => panic!("Invalid wave direction")
+                        };
+                        let pml_width2x = (pml_width.get() * ONE_CELL) as Real;
+                        let pml_sig_max = *pml_sig_max;
+                        into_par_iter!((0..n_axis2x))
+                            .map(|i| {
+                                let end_dist = i.abs_diff(pml_end) as Real;
+                                let pml_interp = (1. - end_dist / pml_width2x)
+                                    .clamp(0., 1.);
+                                pml_sig_max * pml_interp.powi(pml_grading_order.get())
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    let h_sig = sig.iter()
+                        .copied()
+                        .skip(1)
+                        .step_by(2)
+                        .collect::<Vec<_>>();
+                    let dn_sig = sig.iter()
+                        .copied()
+                        .step_by(2)
+                        .collect::<Vec<_>>();
+
+                    let inv_dt = dt.recip();
+                    let inv_mu_r_xy = Vec2::new(
+                        self.background_material.mu_r[a1].recip(),
+                        self.background_material.mu_r[a2].recip(),
+                    );
+                    let inv_eps_r_xy = Vec2::new(
+                        self.background_material.eps_r[a1].recip(),
+                        self.background_material.eps_r[a2].recip(),
+                    );
+                    // TODO: loss (there's probably a use to having lossy background material)
+                    // let mat_sig = self.background_material.sig;
+                    into_par_iter!((0..n_cells))
+                        .map(|cell_idx| {
+                            let idx = cell_idx as usize;
+                            let h_coeff_term0 = Vec2::splat((inv_dt + (h_sig[idx] / (2. * EPS_0))).recip());
+                            let dn_coeff_term0 = Vec2::splat((inv_dt + (dn_sig[idx] / (2. * EPS_0))).recip());
+                            AuxGridPmlCoeffs {
+                                h1: h_coeff_term0 * (inv_dt - (h_sig[idx] / (2. * EPS_0))),
+                                h2: -h_coeff_term0 * C_0 * inv_mu_r_xy,
+                                dn1: dn_coeff_term0 * (inv_dt - (dn_sig[idx] / (2. * EPS_0))),
+                                dn2: dn_coeff_term0 * C_0,
+                                en1: inv_eps_r_xy,
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let coeffs_start = coeffs.len() as u32;
+                debug_assert_eq!(coeffs.len(), zeroed_vector_fields.len());
+                coeffs.extend_from_slice(&grid_coeffs);
+                zeroed_vector_fields.extend_from_slice(&vec![AuxVect::ZERO; n_cells as usize]);
+
+                Some(GpuTfsf {
+                    prop_axis: *spatial_axis,
+                    a,
+                    a1,
+                    a2,
+                    direction: *direction,
+                    tf_min_a,
+                    tf_min_a1,
+                    tf_min_a2,
+                    tf_max_a,
+                    tf_max_a1,
+                    tf_max_a2,
+                    grid_start: coeffs_start,
+                    vals_start,
+                    vals_end: source_vals.len() as u32 - 1,
+                    t_start: (t_start / dt) as u32,
+                    n_cells,
+                    polarization_a1: (*polarization)[a1],
+                    polarization_a2: (*polarization)[a2],
+                    corrections_start,
+                    num_correction_cells,
+                    inv_d_a,
+                    inv_d_a1: inv_d[a1],
+                    inv_d_a2: inv_d[a2],
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let has_tfsf_sources = !tfsf_srcs.is_empty();
+
+        if tfsf_srcs.is_empty() { tfsf_srcs.push(GpuTfsf::default()) }
+        if corrections.is_empty() { corrections.push(TfsfCorrections::default()) }
+        if coeffs.is_empty() { coeffs.push(AuxGridPmlCoeffs::default()) }
+
+        let aux_grid_thread_count = has_tfsf_sources
+            .then_some([tfsf_srcs.len() as u32, 1, n_cells_max]);
+
+        Ok(TfsfDispatchData {
+            tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
+            corrections: corrections.create_gpu_buffer_readable(backend)?,
+            auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,
+            h: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            dn: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            en: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            aux_grid_thread_count
+        })
+    }
+
     /// Compute the dimensions of a grid that can encompass `simulation_bb`, then add spacer regions
     /// from `stability` and PML widths from `self`.
     pub fn compute_n_cells(&self, simulation_bb: &Aabb, stability: &FdtdStability) -> GridIndex {
@@ -201,14 +358,10 @@ impl FdtdLossySimulation {
         let mut regions_bb = self.material_regions.compute_bounding_box();
         let regions_center = regions_bb.center();
         let source_pts = self.sources.iter()
-            .filter_map(|src| {
+            .map(|src| {
                 match src {
-                    Source::Dipole { position, .. } => Some(position.to_3d(Vec3::ZERO)),
-                    Source::PlaneWave { spatial_axis, position, ..} => {
-                        let mut pos = regions_center;
-                            pos[Axis::from(*spatial_axis)] = *position;
-                        Some(pos)
-                    }
+                    Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
+                    Source::TFSF { .. } => { regions_center }
                 }
             })
             .collect::<Vec<_>>();
@@ -224,6 +377,7 @@ impl FdtdLossySimulation {
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
 pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     boundary_condition: BC,
+    aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
     update: GpuLossyUpdate,
     pub num_steps_per_submission: usize,
@@ -233,6 +387,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> GpuResult<Self> {
         Ok(Self {
             boundary_condition,
+            aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             update: GpuLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             num_steps_per_submission,
@@ -253,22 +408,40 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &mut gpu_data.en.buffer,
                 gpu_data.thread_count
             )?;
+
+            if let Some(thread_count) = gpu_data.tfsf_dispatch_data.aux_grid_thread_count {
+                let tfsf = &mut gpu_data.tfsf_dispatch_data;
+                self.aux_grid_update.call(
+                    pass,
+                    DispatchGrid::ThreadCount(thread_count),
+                    &tfsf.tfsf_sources,
+                    &gpu_data.t_idx.buffer,
+                    &mut tfsf.corrections.buffer,
+                    &gpu_data.source_vals,
+                    &tfsf.auxgr_coeffs,
+                    &mut tfsf.h.buffer,
+                    &mut tfsf.dn.buffer,
+                    &mut tfsf.en.buffer
+                )?;
+            }
+
             self.compute_source_terms.call(
                 pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
                 &gpu_data.grid_params,
-                &gpu_data.steps.buffer,
+                &gpu_data.t_idx.buffer,
                 &mut gpu_data.source_terms,
                 &gpu_data.source_vals,
                 &gpu_data.dipoles,
-                &gpu_data.plane_waves,
-                &gpu_data.plane_wave_coeffs,
+                &gpu_data.tfsf_dispatch_data.tfsf_sources,
+                &gpu_data.tfsf_dispatch_data.corrections.buffer,
+                &gpu_data.grid_coeffs
             )?;
             self.update.call(
                 pass,
                 DispatchGrid::ThreadCount(gpu_data.thread_count),
                 &gpu_data.grid_params,
-                &mut gpu_data.steps.buffer,
+                &mut gpu_data.t_idx.buffer,
                 &mut gpu_data.h.buffer,
                 &mut gpu_data.dn.buffer,
                 &mut gpu_data.en.buffer,
@@ -293,15 +466,14 @@ pub struct FdtdParameters {
 pub struct FdtdLossyDispatchData {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
-    pub steps: GpuBufferReadable<u32>,
+    pub t_idx: GpuBufferReadable<u32>,
     // Vector fields
     pub h: GpuBufferReadable<Vec4>,
     pub dn: GpuBufferReadable<Vec4>,
     pub en: GpuBufferReadable<Vec4>,
     // For computing source terms
     pub dipoles: GpuBuffer<GpuDipole>,
-    pub plane_waves: GpuBuffer<GpuPlaneWave>,
-    pub plane_wave_coeffs: GpuBuffer<PlaneWaveCoeffs>,
+    pub tfsf_dispatch_data: TfsfDispatchData,
     pub source_vals: GpuBuffer<f32>,
     // For update equation terms
     pub source_terms: GpuBuffer<SourceTerms>,
@@ -310,6 +482,26 @@ pub struct FdtdLossyDispatchData {
     // Misc data
     pub thread_count: [u32; 3],
     pub n_cells: GridIndex,
+}
+
+#[derive(Clone, Debug)]
+pub struct TfsfParameters {
+    pub pml_width: NonZeroU32,
+    pub pml_sig_max: Real,
+    pub pml_grading_order: NonZeroI32
+}
+
+pub struct TfsfDispatchData {
+    pub tfsf_sources: GpuBuffer<GpuTfsf>,
+    pub corrections: GpuBufferReadable<TfsfCorrections>,
+    pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
+    pub h: GpuBufferReadable<AuxVect>,
+    pub dn: GpuBufferReadable<AuxVect>,
+    pub en: GpuBufferReadable<AuxVect>,
+    /// Thread count for simulating auxiliary grids for ALL plane waves.
+    ///
+    /// Is [`None`] only when there are no TF/SF sources.
+    pub aux_grid_thread_count: Option<[u32; 3]>,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation
@@ -482,12 +674,10 @@ pub enum Source {
         /// you want to scale `vals` by the magnitude of `moment`).
         moment: Vec3,
     },
-    /// A plane wave traveling along an axis (positive direction).
-    PlaneWave { // TODO: Implement plane wave in shader
+    /// Total-Field / Scattered-Field source
+    TFSF {
         /// The spatial axis along which the plane wave will travel.
         spatial_axis: SpatialAxis,
-        /// Position of the plane wave, along `spatial_axis`, in world coordinates.
-        position: Real,
         /// The direction along `spatial_axis` the wave will travel in.
         direction: WaveDirection,
         /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
@@ -496,6 +686,10 @@ pub enum Source {
         vals: Vec<f32>,
         /// Polarization direction of the plane wave (unit vector)
         polarization: Vec3,
+        /// The distances between the TF/SF boundary and the border/PML, in grid cells.
+        ///
+        /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
+        tfsf_buffer_width: LayerWidths,
     }
 }
 
@@ -532,11 +726,4 @@ impl Source {
         }
         vals
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-#[repr(i32)]
-pub enum WaveDirection {
-    Positive = 1,
-    Negative = -1,
 }

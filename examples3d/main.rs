@@ -56,7 +56,7 @@ pub async fn cube() -> anyhow::Result<()> {
         direction: WaveDirection::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        polarization: Vec3::X
+        polarization: Vec3::new(1., 1., 0.).normalize()
     };
     simulation.add_source(source);
 
@@ -74,10 +74,10 @@ pub async fn cube() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,
-        VisualizationMode::default().with_color(
+        VisualizationMode::default().with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 1.,
+                v_max: 0.1,
                 color_min: TRANSPARENT,
                 color_max: RED
             }
@@ -107,12 +107,12 @@ pub async fn cube() -> anyhow::Result<()> {
         pipeline.dispatch_steps(&mut pass, &mut gpu_data)?;
         drop(pass);
         gpu_data.dn.encode_copy_cmd(&mut encoder)?;
-        gpu_data.steps.encode_copy_cmd(&mut encoder)?;
+        gpu_data.t_idx.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
     }
 
     let mut steps = vec![0];
-    gpu_data.steps.read(&backend, &mut steps).await?;
+    gpu_data.t_idx.read(&backend, &mut steps).await?;
     println!("Simulated time: {} ns", dt * steps[0] as f32 * 1e9);
     println!("steps: {}", steps[0]);
 

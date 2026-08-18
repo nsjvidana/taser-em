@@ -2,6 +2,7 @@ pub use khal_std::glamx::*;
 
 use bytemuck::{Pod, Zeroable};
 pub use dim_types::*;
+use crate::cfg_cpu;
 
 pub type Real = f32;
 pub type Index = u32;
@@ -55,11 +56,13 @@ pub trait VectExt: VectorValueExt {
 pub trait VectorValueExt: Sized {
     type Element;
     type Boolean;
+    const ZERO: Self;
+    const ONE: Self;
     fn splat(value: Self::Element) -> Self;
-    fn zero() -> Self;
-    fn one() -> Self;
     fn max_element(self) -> Self::Element;
     fn min_element(self) -> Self::Element;
+    fn cmplt(self, rhs: Self) -> Self::Boolean;
+    fn cmpgt(self, rhs: Self) -> Self::Boolean;
     fn cmpge(self, rhs: Self) -> Self::Boolean;
     fn cmpeq(self, rhs: Self) -> Self::Boolean;
     fn element_sum(self) -> Self::Element;
@@ -67,6 +70,12 @@ pub trait VectorValueExt: Sized {
     fn map<F>(self, f: F) -> Self
     where
         F: FnMut(Self::Element) -> Self::Element;
+    /// Glam's `with_x()` function, but for all dimensions of this crate.
+    fn with_x(self, x: Self::Element) -> Self;
+    /// Glam's `with_y()` function, but for all dimensions of this crate.
+    fn with_y(self, y: Self::Element) -> Self;
+    /// Glam's `with_z()` function, but for all dimensions of this crate.
+    fn with_z(self, z: Self::Element) -> Self;
 }
 
 macro_rules! dim1_or_else {
@@ -79,21 +88,17 @@ macro_rules! dim1_or_else {
 }
 
 macro_rules! impl_vector_value_ext {
-    ($v:ident, $elem:ty) => {
+    ($v:ident, $elem:ty, $zero:expr, $one:expr) => {
         impl VectorValueExt for $v {
             type Element = $elem;
             type Boolean = BoolVect;
+            const ZERO: Self = $zero;
+            const ONE: Self = $one;
 
             #[inline]
             fn splat(value: Self::Element) -> Self {
                 dim1_or_else!(value, Self::splat(value))
             }
-
-            #[inline]
-            fn zero() -> Self { Self::splat(0 as $elem) }
-
-            #[inline]
-            fn one() -> Self { Self::splat(1 as $elem) }
 
             #[inline]
             fn max_element(self) -> Self::Element {
@@ -103,6 +108,16 @@ macro_rules! impl_vector_value_ext {
             #[inline]
             fn min_element(self) -> Self::Element {
                 dim1_or_else!(self, self.min_element())
+            }
+
+            #[inline]
+            fn cmplt(self, rhs: Self) -> Self::Boolean {
+                dim1_or_else!(self < rhs, self.cmplt(rhs))
+            }
+
+            #[inline]
+            fn cmpgt(self, rhs: Self) -> Self::Boolean {
+                dim1_or_else!(self > rhs, self.cmpgt(rhs))
             }
 
             #[inline]
@@ -131,6 +146,30 @@ macro_rules! impl_vector_value_ext {
                 where F: FnMut(Self::Element) -> Self::Element
             {
                 dim1_or_else!(f(self), self.map(f))
+            }
+
+            #[inline]
+            #[cfg_attr(feature = "dim1", allow(unused_variables))]
+            fn with_x(self, x: Self::Element) -> Self {
+                dim1_or_else!(self, self.with_x(x))
+            }
+
+            #[inline]
+            #[cfg_attr(feature = "dim1", allow(unused_variables))]
+            fn with_y(self, y: Self::Element) -> Self {
+                dim1_or_else!(self, self.with_y(y))
+            }
+
+            #[inline]
+            #[cfg_attr(not(feature = "dim3"), allow(unused_variables))]
+            fn with_z(self, z: Self::Element) -> Self {
+                dim1_or_else!(
+                    z,
+                    cfg_select! {
+                        feature = "dim2" => self,
+                        feature = "dim3" => self.with_z(z)
+                    }
+                )
             }
         }
     };
@@ -213,7 +252,10 @@ impl VectExt for Vect {
     }
 }
 
-impl_vector_value_ext!(Vect, Real);
+cfg_select! {
+    feature = "dim1" => { impl_vector_value_ext!(Vect, Real, 0., 1.); }
+    _ => { impl_vector_value_ext!(Vect, Real, Vect::ZERO, Vect::ONE); }
+}
 
 pub trait GridIndexExt: VectorValueExt {
     fn div_ceil(self, rhs: GridIndex) -> GridIndex;
@@ -224,8 +266,8 @@ pub trait GridIndexExt: VectorValueExt {
     fn into_array(self) -> [u32; DIM];
     fn from_index_array(arr: [u32; DIM]) -> GridIndex;
     fn from_uvec3(uvec3: UVec3) -> GridIndex;
-    fn from_flat_idx(idx: u32, grid_dim: GridIndex) -> GridIndex;
-    fn to_flat_idx(self, grid_dim: GridIndex) -> u32;
+    fn from_flat_idx(idx: u32, n_cells: GridIndex) -> GridIndex;
+    fn to_flat_idx(self, n_cells: GridIndex) -> u32;
 }
 
 impl GridIndexExt for GridIndex {
@@ -305,39 +347,42 @@ impl GridIndexExt for GridIndex {
 
     #[inline]
     #[allow(unused_variables)]
-    fn from_flat_idx(idx: Index, grid_dim: GridIndex) -> GridIndex {
+    fn from_flat_idx(idx: Index, n_cells: GridIndex) -> GridIndex {
         #[cfg(feature = "dim1")]
         return idx;
         #[cfg(feature = "dim2")]
         return GridIndex::new(
-            idx % grid_dim.x,
-            idx / grid_dim.x,
+            idx % n_cells.x,
+            idx / n_cells.x,
         );
         #[cfg(feature = "dim3")]
         GridIndex::new(
-            idx % grid_dim.x,
-            (idx / grid_dim.x) % grid_dim.y,
-            idx / (grid_dim.x * grid_dim.y),
+            idx % n_cells.x,
+            (idx / n_cells.x) % n_cells.y,
+            idx / (n_cells.x * n_cells.y),
         )
     }
 
     #[inline]
     #[allow(unused_variables)]
-    fn to_flat_idx(self, grid_dim: GridIndex) -> u32 {
+    fn to_flat_idx(self, n_cells: GridIndex) -> u32 {
         #[cfg(feature = "dim1")]
         return self;
         #[cfg(feature = "dim2")]
-        return self.y * grid_dim.x + self.x;
+        return self.y * n_cells.x + self.x;
         #[cfg(feature = "dim3")]
         {
-            self.z * grid_dim.x * grid_dim.y +
-                self.y * grid_dim.x +
+            self.z * n_cells.x * n_cells.y +
+                self.y * n_cells.x +
                 self.x
         }
     }
 }
 
-impl_vector_value_ext!(GridIndex, Index);
+cfg_select! {
+    feature = "dim1" => { impl_vector_value_ext!(GridIndex, Index, 0, 1); }
+    _ => { impl_vector_value_ext!(GridIndex, Index, GridIndex::ZERO, GridIndex::ONE); }
+}
 
 pub trait BoolVectExt {
     fn any(self) -> bool;
@@ -363,13 +408,13 @@ impl BoolVectExt for BoolVect {
 /// A helper enum for indexing into various things (e.g. indexing into components of [`Vect`] and [`GridIndex`])
 ///
 /// NOT designed for passing between CPU and GPU (as denoted by no "repr" attribute)
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[repr(u32)]
 pub enum Axis {
+    #[default]
     X = 0,
     Y = 1,
     Z = 2,
-    INVALID = u32::MAX // TODO: try removing this?
 }
 
 impl Axis {
@@ -380,9 +425,6 @@ impl Axis {
     /// Circular permutation of `self` in the following sequence:
     ///
     /// [`Axis::X`] -> [`Axis::Y`] -> [`Axis::Z`] -> [`Axis::X`] -> ...
-    ///
-    /// # Panics
-    /// Out of bounds access when `self == Axis::INVALID`
     #[inline]
     pub const fn permute(&self) -> Self {
         Self::PERMUTATION[*self as usize]
@@ -392,9 +434,6 @@ impl Axis {
     /// Circular permutation in the reversed direction of [`Axis::permute()`]
     ///
     /// [`Axis::X`] -> [`Axis::Z`] -> [`Axis::Y`] -> [`Axis::X`] -> ...
-    ///
-    /// # Panics
-    /// Out of bounds access when `self == Axis::INVALID`
     #[inline]
     pub const fn backwards_permute(&self) -> Self {
         Self::BACK_PERMUTATION[*self as usize]
@@ -490,8 +529,7 @@ impl TryFrom<Axis> for SpatialAxis {
             Axis::Z => cfg_select! {
                 feature = "dim2" => Err(()),
                 _ => Ok(Self::Z),
-            },
-            _ => Err(())
+            }
         }
     }
 }
@@ -528,6 +566,20 @@ unsafe impl Zeroable for SpatialAxis {}
 // SAFETY: SpatialAxis has u32 representation, and u32 is also POD.
 unsafe impl Pod for SpatialAxis {}
 
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[repr(i32)]
+pub enum WaveDirection {
+    #[default]
+    Positive = 1,
+    None = 0,
+    Negative = -1,
+}
+
+// SAFETY: WaveDirection has a zero variant.
+unsafe impl Zeroable for WaveDirection {}
+// SAFETY: WaveDirection has i32 representation, and i32 is also POD.
+unsafe impl Pod for WaveDirection {}
+
 macro_rules! impl_vector_indexing {
     ($v:ident, $elem_ty:ty, $axis_ty:ty, $dims: expr) => {
         impl core::ops::Index<$axis_ty> for $v {
@@ -552,6 +604,9 @@ impl_vector_indexing!(Real, Real, Axis, 1);
 impl_vector_indexing!(UVec2, Index, Axis, UVec2::AXES.len());
 impl_vector_indexing!(Vec2, Real, Axis, Vec2::AXES.len());
 impl_vector_indexing!(UVec3, Index, Axis, UVec3::AXES.len());
+cfg_cpu! {
+    impl_vector_indexing!(USizeVec3, usize, Axis, USizeVec3::AXES.len());
+}
 impl_vector_indexing!(Vec3, Real, Axis, Vec3::AXES.len());
 impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 
@@ -570,23 +625,33 @@ pub trait GpuDynamicIndex<Idx: ?Sized> {
     fn dyn_insert(&mut self, index: Idx, val: Self::Output);
 }
 
-
 macro_rules! impl_vector_gpu_indexing_1d {
     ($v:ident, $elem_ty:ty, $axis_ty:ty) => {
         impl GpuDynamicIndex<$axis_ty> for $v {
             type Output = $elem_ty;
-
+            
             #[inline]
             fn dyn_idx(&self, index: $axis_ty) -> Self::Output {
-                let self_copy = [*self];
-                self_copy[index as usize]
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        *self
+                    }
+                    _ => {
+                        (&unsafe { &*(self as *const $v as *const [Self::Output; 1]) }) [index as usize]
+                    }
+                }
             }
-
+            
             #[inline]
             fn dyn_insert(&mut self, index: $axis_ty, val: Self::Output) {
-                let mut self_copy = [*self];
-                self_copy[index as usize] = val;
-                *self = self_copy[0];
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        *self = val;
+                    }
+                    _ => {
+                        (&mut unsafe { &mut *(self as *mut $v as *mut [Self::Output; 1]) }) [index as usize] = val;
+                    }
+                }
             }
         }
     };
@@ -596,34 +661,53 @@ impl_vector_gpu_indexing_1d!(Index, Index, Axis);
 impl_vector_gpu_indexing_1d!(Real, Real, Axis);
 
 macro_rules! impl_vector_gpu_indexing {
-    ($v:ident, $elem_ty:ty, $axis_ty:ty, $to_array_fn:ident, $from_array_fn:ident) => {
+    ($v:ident, $elem_ty:ty, $axis_ty:ty, $dims: expr) => {
         impl GpuDynamicIndex<$axis_ty> for $v {
             type Output = $elem_ty;
 
             #[inline]
             fn dyn_idx(&self, index: $axis_ty) -> Self::Output {
-                let self_copy = (*self).$to_array_fn();
-                self_copy[index as usize]
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        unsafe { spirv_std::arch::vector_extract_dynamic(*self, index as usize) }
+                    }
+                    _ => {
+                        (&unsafe { &*(self as *const $v as *const [Self::Output; $dims]) }) [index as usize]
+                    }
+                }
             }
 
             #[inline]
             fn dyn_insert(&mut self, index: $axis_ty, val: Self::Output) {
-                let mut self_copy = (*self).$to_array_fn();
-                self_copy[index as usize] = val;
-                *self = <$v>::$from_array_fn(self_copy);
+                cfg_select! {
+                    target_arch = "spirv" => {
+                        *self = unsafe { spirv_std::arch::vector_insert_dynamic(*self, index as usize, val) };
+                    }
+                    _ => {
+                        (&mut unsafe { &mut *(self as *mut $v as *mut [Self::Output; $dims]) }) [index as usize] = val;
+                    }
+                }
             }
         }
     };
 }
 
-impl_vector_gpu_indexing!(UVec2, Index, Axis, to_array, from);
-impl_vector_gpu_indexing!(Vec2, Real, Axis, to_array, from);
-impl_vector_gpu_indexing!(UVec3, Index, Axis, to_array, from);
-impl_vector_gpu_indexing!(Vec3, Real, Axis, to_array, from);
-impl_vector_gpu_indexing!(Vec4, Real, Axis, to_array, from);
+impl_vector_gpu_indexing!(UVec2, Index, Axis, 2);
+impl_vector_gpu_indexing!(Vec2, Real, Axis, 2);
+impl_vector_gpu_indexing!(UVec3, Index, Axis, 3);
+impl_vector_gpu_indexing!(Vec3, Real, Axis, 3);
+impl_vector_gpu_indexing!(Vec4, Real, Axis, 4);
 
-impl_vector_gpu_indexing!(Vect, Real, SpatialAxis, into_array, from_array);
-impl_vector_gpu_indexing!(GridIndex, Index, SpatialAxis, into_array, from_index_array);
+cfg_select! {
+    feature = "dim1" => {
+        impl_vector_gpu_indexing_1d!(Vect, Real, SpatialAxis);
+        impl_vector_gpu_indexing_1d!(GridIndex, Index, SpatialAxis);
+    }
+    _ => {
+        impl_vector_gpu_indexing!(Vect, Real, SpatialAxis, DIM);
+        impl_vector_gpu_indexing!(GridIndex, Index, SpatialAxis, DIM);
+    }
+}
 
 /// A trait that computes `a.saturating_sub(b)` on the GPU.
 /// Rust-GPU doesn't have the core library's `saturating_sub()` implemented yet, so we have this trait.

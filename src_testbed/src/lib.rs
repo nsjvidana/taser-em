@@ -140,10 +140,9 @@ pub enum VisualizationMode {
     /// A line graph of vector field magnitudes
     #[cfg(feature = "dim1")]
     LineGraph {
-        color: Color,
-        /// The maximum magnitude of vector field
-        max_magnitude: Real,
+        color_mode: ColorMode,
         graph_max_magnitude: Real,
+        data_point_magnitude: Real,
         positions: Vec<Vec3>,
     },
     #[cfg(feature = "dim2")]
@@ -162,14 +161,14 @@ pub enum VisualizationMode {
 }
 
 impl VisualizationMode {
-    /// Return a new [`Self`] with a new [`Color`] / [`ColorMode`]
-    pub fn with_color(mut self, #[cfg(feature = "dim1")] color: Color, #[cfg(not(feature = "dim1"))] color_mode: ColorMode) -> Self {
+    /// Return a new [`Self`] with a new [`ColorMode`]
+    pub fn with_color_mode(mut self, color_mode: ColorMode) -> Self {
         cfg_select! {
             feature = "dim1" => {
                 let Self::LineGraph {
-                    color: self_color, ..
+                    color_mode: self_color, ..
                 } = &mut self;
-                *self_color = color;
+                *self_color = color_mode;
                 self
             }
             feature = "dim2" => {
@@ -205,11 +204,11 @@ impl VisualizationMode {
         #[cfg(feature = "dim1")]
         {
             let VisualizationMode::LineGraph {
-                positions, graph_max_magnitude, ..
+                positions, data_point_magnitude, ..
             } = self;
             *positions = cell_positions;
             let grid_extents = n_cells.as_vect() * cell_size;
-            *graph_max_magnitude = grid_extents / 100.;
+            *data_point_magnitude = grid_extents / 100.;
         }
 
         #[cfg(any(feature = "dim2", feature = "dim3"))]
@@ -261,23 +260,44 @@ impl VisualizationMode {
         #[cfg(feature = "dim1")]
         {
             let Self::LineGraph {
-                color,
-                max_magnitude,
+                color_mode,
                 graph_max_magnitude,
+                data_point_magnitude: graph_max_val,
                 positions
             } = self;
+
+            let magnitudes = par_iter!(v_field)
+                .map(|v| polarization_mode.get_e_magnitude(v))
+                .collect::<Vec<_>>();
+
+            color_mode.prepare(&magnitudes);
+            #[allow(unreachable_patterns)]
+            let curr_max_mag = match color_mode {
+                ColorMode::AutoScale { v_max, .. } => *v_max,
+                ColorMode::FixedRange { v_max, .. } => *v_max,
+                _ =>
+                    par_iter!(magnitudes)
+                        .copied()
+                        .max_by(|a, b| a.total_cmp(b))
+                        .expect("Cannot have zero-sized vector field")
+            };
+
+            *graph_max_magnitude = graph_max_magnitude.max(curr_max_mag);
 
             let line_positions = par_iter!(positions)
                 .zip(par_iter!(v_field))
                 .map(|(cell_pos, vector)|
-                    cell_pos + (polarization_mode.extract_e_vector(vector) / *max_magnitude) * *graph_max_magnitude
+                    cell_pos + (polarization_mode.extract_e_vector(vector) / *graph_max_magnitude) * *graph_max_val
                 )
                 .collect::<Vec<_>>();
             let mut prev_pos = positions[0];
-            for pos in line_positions {
+            for (pos, magnitude) in line_positions.into_iter()
+                .zip(magnitudes)
+                .skip(1)
+            {
                 window.draw_line(
                     prev_pos, pos,
-                    *color, 2., false
+                    color_mode.compute_color(magnitude), 2., false
                 );
                 prev_pos = pos;
             }
@@ -290,7 +310,7 @@ impl VisualizationMode {
                 instances: &mut Vec<InstanceData3d>,
                 color_mode: &mut ColorMode,
             | {
-                let magnitudes = v_field.iter()
+                let magnitudes = par_iter!(v_field)
                     .map(|v| polarization_mode.get_e_magnitude(v))
                     .collect::<Vec<_>>();
                 color_mode.prepare(&magnitudes);
@@ -320,9 +340,9 @@ impl Default for VisualizationMode {
     fn default() -> Self {
         cfg_select! {
             feature = "dim1" => Self::LineGraph {
-                color: RED,
-                max_magnitude: 1.,
+                color_mode: ColorMode::default(),
                 graph_max_magnitude: 0.,
+                data_point_magnitude: 0.0 ,
                 positions: vec![],
             },
             feature = "dim2" => Self::Quads {
@@ -342,6 +362,7 @@ impl Default for VisualizationMode {
 
 /// How vector field magnitudes are colored
 #[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum ColorMode {
     /// Automatically scale the maximum magnitude as the simulation progresses.
     AutoScale {
@@ -369,7 +390,7 @@ impl ColorMode {
     pub fn prepare(&mut self, magnitudes: &[Real]) {
         match self {
             ColorMode::AutoScale { v_max, .. } => {
-                let curr_max = magnitudes.iter()
+                let curr_max = par_iter!(magnitudes)
                     .copied()
                     .max_by(|a, b| a.total_cmp(b));
                 if let Some(max_mag) = curr_max {
@@ -401,7 +422,10 @@ impl Default for ColorMode {
         #[cfg(not(feature = "dim3"))]
         {
             ColorMode::AutoScale {
-                color_min: BLUE,
+                color_min: cfg_select! {
+                    feature = "dim1" => RED,
+                    feature = "dim2" => BLUE,
+                },
                 color_max: RED,
                 v_max: Real::MIN,
             }

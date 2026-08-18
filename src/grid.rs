@@ -7,7 +7,7 @@ use taser_em_shaders::math::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::{GpuPlaneWave, PlaneWaveCoeffs, PmlCoefficients, PolarizationModeIndex};
+use taser_em_shaders::fdtd::{GpuTfsf, PmlCoefficients, PolarizationModeIndex};
 use crate::consts::{C_0, EPS_0};
 use crate::fdtd::{ElectricMaterial, PmlParameters};
 use crate::util::grid_cells_iter;
@@ -31,15 +31,16 @@ pub enum PolarizationMode {
 }
 
 impl PolarizationMode {
+    // TODO: make these into "get/extract source" functions
     pub fn get_e_magnitude(&self, e: &Vec4) -> Real {
         match self {
             PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => e.y,
-                feature = "dim2" => e.z,
+                feature = "dim1" => e.y.abs(),
+                feature = "dim2" => e.z.abs(),
                 feature = "dim3" => e.length(),
             },
             PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => e.x,
+                feature = "dim1" => e.x.abs(),
                 any(feature = "dim2", feature = "dim3") => e.length(),
             },
         }
@@ -56,6 +57,22 @@ impl PolarizationMode {
                 feature = "dim1" => Vec3::new(e.x, 0., 0.),
                 feature = "dim2" => Vec3::from(((*e).xy(), 0.)),
                 feature = "dim3" => (*e).xyz(),
+            },
+        }
+    }
+
+
+    pub fn e_magnitude(&self, e: &Vec4) -> Real {
+        match self {
+            PolarizationMode::TransverseMagnetic => cfg_select! {
+                feature = "dim1" => e.y,
+                feature = "dim2" => e.z,
+                feature = "dim3" => (*e).xyz().length(),
+            },
+            PolarizationMode::TransverseElectric => cfg_select! {
+                feature = "dim1" => e.x,
+                feature = "dim2" => (*e).xy().length(),
+                feature = "dim3" => (*e).xyz().length(),
             },
         }
     }
@@ -329,15 +346,16 @@ impl PmlCoefficientsGrid {
 
         // PML conductivity terms (1D slices along each axis)
         let sig: [Vec<Real>; MAX_DIM] = Axis::ALL_AXES.map(|axis| {
-            let hi_boundary = (n_cells3[axis] - 1)*2;
-            let lo_boundary = 0;
             const HALF_CELL: Index = 1;
             const ONE_CELL: Index = HALF_CELL*2;
-            (0..n_cells3[axis]*2)
+            let n_axis2x = n_cells3[axis]*2;
+            let hi_end = (n_axis2x - 1).saturating_sub(ONE_CELL);
+            let lo_end = ONE_CELL;
+            (0..n_axis2x)
                 .map(|i| {
-                    if i == lo_boundary || i >= hi_boundary { return 0. }
-                    let lo_dist = i.abs_diff(lo_boundary + ONE_CELL) as Real;
-                    let hi_dist = i.abs_diff(hi_boundary - HALF_CELL) as Real;
+                    if i < lo_end || i > hi_end { return 0. }
+                    let lo_dist = i.abs_diff(lo_end) as Real;
+                    let hi_dist = i.abs_diff(hi_end) as Real;
                     let lo_t = (1. - lo_dist / (pml_widths[axis].lo*2) as Real)
                         .clamp(0., 1.);
                     let hi_t = (1. - hi_dist / (pml_widths[axis].hi*2) as Real)
@@ -352,15 +370,14 @@ impl PmlCoefficientsGrid {
         let cell_count = n_cells3.element_product() as usize;
         let mut coeffs = vec![PmlCoefficients::default(); cell_count];
         let inv_dt = dt.recip();
-        #[cfg(any(feature = "dim2", feature = "dim3"))]
         let c0_dt = C_0 * dt;
         par_iter_mut!(coeffs)
             .enumerate()
             .for_each(|(i, coeff)| {
-                let idx = GridIndex::from_flat_idx(i as u32, n_cells);
+                let cell_idx = GridIndex::from_flat_idx(i as u32, n_cells);
 
                 // Stagger indexing the conductivities as per the Yee grid staggering
-                let idx_2x = (idx * 2).cell_idx_to_3d().as_usizevec3();
+                let idx_2x = (cell_idx * 2).cell_idx_to_3d().as_usizevec3();
                 let dn_sigs: [Vec3; MAX_DIM] = core::array::from_fn(|axis_i| {
                     let mut sig_idx = idx_2x;
                         sig_idx[axis_i] += 1;
@@ -396,13 +413,10 @@ impl PmlCoefficientsGrid {
                             ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
                     );
                     coeff.h2[axis] = -coeff_term0 * C_0 * inv_mu_r_axis;
+                    coeff.h3[axis] = -coeff_term0 * c0_dt * h_sigs_axis[axis] / EPS_0 * inv_mu_r_axis;
                     #[cfg(any(feature = "dim2", feature = "dim3"))]
                     {
-                        coeff.h3[axis] = -coeff_term0 * c0_dt * h_sigs_axis[axis] / EPS_0 * inv_mu_r_axis;
-                        #[cfg(feature = "dim3")]
-                        {
-                            coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
-                        }
+                        coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
                     }
 
                     let dn_sigs_axis = dn_sigs[axis_i];
@@ -418,55 +432,16 @@ impl PmlCoefficientsGrid {
                     coeff.dn2[axis] = coeff_term0 * C_0;
                     coeff.dn_loss1[axis] = -coeff_term0 * mat_sig_axis / EPS_0;
                     coeff.dn_loss2[axis] = -coeff_term0 * dn_sigs_axis[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
+                    coeff.dn3[axis] = coeff_term0 * c0_dt * dn_sigs_axis[axis] / EPS_0;
                     #[cfg(any(feature = "dim2", feature = "dim3"))]
                     {
-                        coeff.dn3[axis] = coeff_term0 * c0_dt * dn_sigs_axis[axis] / EPS_0;
-                        #[cfg(feature = "dim3")]
-                        {
-                            coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
-                        }
+                        coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
                     }
                 }
                 coeff.en1 = Vec4::from((mats[i].eps_r.recip(), 0.));
             });
 
         (*regions_offset, Self { n_cells, coeffs, })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PlaneWaveCoefficientsGrid {
-    pub coeffs: Vec<PlaneWaveCoeffs>,
-    pub n_cells: GridIndex
-}
-
-impl PlaneWaveCoefficientsGrid {
-    pub fn new(mat_grid: &YeeGridMaterials, plane_waves: &[GpuPlaneWave], half_dt: Real) -> Self {
-        let cell_count = mat_grid.n_cells.element_product() as usize;
-        let mut coeffs = vec![PlaneWaveCoeffs::default(); cell_count];
-        let cell_size3 = mat_grid.cell_size.to_3d(Vec3::ZERO);
-        par_iter_mut!(coeffs)
-            .enumerate()
-            .for_each(|(i, c)| {
-                let cell_idx = GridIndex::from_flat_idx(i as Index, mat_grid.n_cells);
-                let is_tfsf_cell = plane_waves.iter()
-                    .any(|w| {
-                        let cell_pos_idx = cell_idx[w.spatial_axis];
-                        cell_pos_idx == w.position_idx
-                    });
-                if !is_tfsf_cell { return; } // Skip cells that don't need their coeffs computed
-
-                let mat = &mat_grid.materials[i];
-                // TODO: Things to try: negate half_dt here
-                //                      negate 1st term of t_offset
-                c.t_offset = -((mat.refractive_index() * cell_size3) / (2. * C_0)) + half_dt;
-                c.h_curl_coeff = (mat.eps_r / mat.mu_r).sqrt();
-                c.en_curl_coeff = (mat.mu_r / mat.eps_r).sqrt();
-            });
-        Self {
-            coeffs,
-            n_cells: mat_grid.n_cells
-        }
     }
 }
 
@@ -495,7 +470,7 @@ impl LayerWidths {
     /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
     pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
         let mut n_cells = n_cells.into_array();
-        for (n_cells_cmp, lo_hi_widths_cmp) in n_cells.iter_mut()
+        for (n_cells_cmp, (_, lo_hi_widths_cmp)) in n_cells.iter_mut()
             .zip(self.iter_spatial_axes())
         {
             *n_cells_cmp += lo_hi_widths_cmp.lo + lo_hi_widths_cmp.hi;
@@ -504,9 +479,9 @@ impl LayerWidths {
     }
 
     #[inline]
-    pub fn iter_spatial_axes(&self) -> impl Iterator<Item = &LoHiWidths> {
+    pub fn iter_spatial_axes(&self) -> impl Iterator<Item = (SpatialAxis, &LoHiWidths)> {
         SpatialAxis::ALL_SPATIAL
-            .map(|axis| &self.widths[Axis::from(axis) as usize])
+            .map(|axis| (axis, &self.widths[Axis::from(axis) as usize]))
             .into_iter()
     }
 }
