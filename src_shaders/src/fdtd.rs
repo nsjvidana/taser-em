@@ -62,11 +62,35 @@ pub fn gpu_compute_source_terms(
 
     let mut h_source_term = Vec4::ZERO;
     let mut dn_source_term = Vec4::ZERO;
-    let t_idx = *t_idx;
-    let t = t_idx as Real * grid.dt;
+    let curr_t_idx = *t_idx;
+    
+    // Dipoles
+    for i in 0..dipoles.len() {
+        let GpuDipole {
+            cell_idx, vals_start, vals_end, t_start, moment, dipole_type, ..
+        } = dipoles.read(i);
+        let src_t_idx = curr_t_idx.gpu_saturating_sub(t_start);
+        let vals_i = vals_start + src_t_idx;
 
-    // TODO: dipoles
+        let enable = (cell_idx as usize == idx) &&
+            (curr_t_idx >= t_start) &&
+            (vals_i <= vals_end);
+        let src_val = source_vals.read(vals_i.min(vals_end) as usize);
+        match dipole_type {
+            DipoleType::Electric => {
+                dn_source_term += src_val * enable as u32 as Real * moment;
+            }
+            DipoleType::Magnetic => {
+                // add half-dt advance for current loop
+                let next_src_val = source_vals.read((vals_i + 1).min(vals_end) as usize);
+                h_source_term += Real::lerp(src_val, next_src_val, 0.5) *
+                    enable as u32 as Real *
+                    moment;
+            }
+        };
+    }
 
+    // TF/SF sources
     let coeffs = pml_coeffs.read(idx);
     for i in 0..tfsf_sources.len() {
         let GpuTfsf {
@@ -740,8 +764,25 @@ pub struct GpuDipole {
     pub vals_end: u32,
     pub t_start: u32,
     pub moment: Vec4,
+    pub dipole_type: DipoleType,
+    pub _padding0: [u32; 3]
     // TODO: pub repeat_count: u32,
 }
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(u32)]
+pub enum DipoleType {
+    /// An oscillating point charge
+    #[default]
+    Electric = 0,
+    /// An infinitesimal current loop
+    Magnetic = 1,
+}
+
+// SAFETY: DipoleType has a zero variant.
+unsafe impl Zeroable for DipoleType {}
+// SAFETY: DipoleType has u32 representation, and u32 is also POD.
+unsafe impl Pod for DipoleType {}
 
 /// A plane wave source (TF/SF)
 ///

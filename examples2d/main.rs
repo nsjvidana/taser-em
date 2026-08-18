@@ -55,6 +55,13 @@ pub async fn single_rod() -> anyhow::Result<()> {
         tfsf_buffer_width: LayerWidths::splat_spatial(5),
     };
     simulation.add_source(source);
+    simulation.add_source(Source::Dipole {
+        dipole_type: DipoleType::Electric,
+        position: quad_min - wavelen,
+        t_start: dt * 1000.,
+        vals: Source::gaussian_max_f(f_max, 1., dt),
+        moment: Vec3::Z,
+    });
     
     // Set up buffers and pipeline
     let backend = create_backend().await?;

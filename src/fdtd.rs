@@ -1,3 +1,5 @@
+pub use taser_em_shaders::fdtd::DipoleType;
+
 use crate::prelude::*;
 use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
 use derivative::Derivative;
@@ -71,7 +73,7 @@ impl FdtdLossySimulation {
         let regions_offset = Vect::from_vec3(regions_offset);
         let mut dipoles = self.sources.iter()
             .filter_map(|source| {
-                let Source::Dipole { position, t_start, vals, moment } = source else {
+                let Source::Dipole { dipole_type, position, t_start, vals, moment } = source else {
                     return None;
                 };
                 let pos = (regions_offset + position) / cell_size;
@@ -86,6 +88,8 @@ impl FdtdLossySimulation {
                     vals_end: source_vals.len() as u32 - 1,
                     t_start: (t_start / dt) as u32,
                     moment: Vec4::from((*moment, 0.)),
+                    dipole_type: *dipole_type,
+                    _padding0: [0; 3],
                 })
             })
             .collect::<Vec<_>>();
@@ -718,6 +722,8 @@ impl ElectricMaterial {
 pub enum Source {
     /// Dipole (magnetic or electric).
     Dipole {
+        /// Choose between an electric and magnetic dipole source.
+        dipole_type: DipoleType,
         /// The position in space where the source should be injected.
         position: Vect,
         /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
