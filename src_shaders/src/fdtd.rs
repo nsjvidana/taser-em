@@ -70,13 +70,11 @@ pub fn gpu_compute_source_terms(
     let coeffs = pml_coeffs.read(idx);
     for i in 0..tfsf_sources.len() {
         let GpuTfsf {
-            prop_axis, a, a1, a2, direction,
-            tf_min_a, tf_min_a1,tf_min_a2,
-            tf_max_a, tf_max_a1, tf_max_a2,
-            grid_start, vals_start, vals_end, t_start, n_cells,
-            polarization_a1, polarization_a2,
+            a, a1, a2,
+            tf_min_a, vals_start, vals_end,
             corrections_start, num_correction_cells,
             inv_d_a, inv_d_a1, inv_d_a2,
+            ..
         } = tfsf_sources.read(i);
         if vals_start == vals_end { continue; } // skip invalid/inactive tfsf sources
 
@@ -247,13 +245,11 @@ pub fn aux_grid_update(
 ) {
     let wave_idx = cell_idx3.x as usize;
     let GpuTfsf {
-        prop_axis, a, a1, a2, direction,
-        tf_min_a, tf_min_a1,tf_min_a2,
-        tf_max_a, tf_max_a1, tf_max_a2,
+        direction,
         grid_start, vals_start, vals_end, t_start, n_cells,
         polarization_a1, polarization_a2,
         corrections_start, num_correction_cells,
-        inv_d_a, inv_d_a1, inv_d_a2,
+        inv_d_a, ..
     } = tfsf_sources.read(wave_idx);
     if vals_start == vals_end { return; } // skip invalid/inactive tfsf sources
 
@@ -761,7 +757,6 @@ pub struct GpuDipole {
 #[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
 pub struct GpuTfsf {
-    pub prop_axis: SpatialAxis, // TODO: store a, a1, a2 here for performance
     pub a: Axis,
     pub a1: Axis,
     pub a2: Axis,

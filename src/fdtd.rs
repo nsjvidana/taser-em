@@ -296,7 +296,6 @@ impl FdtdLossySimulation {
                 zeroed_vector_fields.extend_from_slice(&vec![AuxVect::ZERO; n_cells as usize]);
 
                 Some(GpuTfsf {
-                    prop_axis: *spatial_axis,
                     a,
                     a1,
                     a2,
