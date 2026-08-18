@@ -52,10 +52,12 @@ impl FdtdLossySimulation {
 
         let sim_bb = self.compute_bounding_box();
         let n_cells = self.compute_n_cells(&sim_bb, stability);
+        let n_cells3 = n_cells.n_cells_to_3d();
 
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
         let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
 
+        let cell_count = n_cells.element_product();
         let mut problem_space_min = GridIndex::ONE;
         self.pml_parameters.widths
             .iter_spatial_axes()
@@ -90,7 +92,7 @@ impl FdtdLossySimulation {
         let tfsf_dispatch_data = self.create_tfsf_sources(
             backend,
             &mut source_vals,
-            regions_offset,
+            n_cells3,
             problem_space_min.cell_idx_to_3d(),
             problem_space_max.cell_idx_to_3d()
         )?;
@@ -117,7 +119,7 @@ impl FdtdLossySimulation {
             d: cell_size3,
             inv_dt: dt.recip(),
             polarization_mode_index: polarization_mode.into(),
-            _padding0: 0,
+            cell_count,
             inv_d: cell_size3.recip(),
             problem_space_min: problem_space_min.to_3d(UVec3::ONE),
             _padding1: 0,
@@ -181,7 +183,7 @@ impl FdtdLossySimulation {
         &self,
         backend: &GpuBackend,
         source_vals: &mut Vec<Real>,
-        regions_offset: Vect,
+        n_cells3: UVec3,
         problem_space_min: UVec3,
         problem_space_max: UVec3,
     ) -> GpuResult<TfsfDispatchData> {
@@ -191,11 +193,12 @@ impl FdtdLossySimulation {
         let FdtdParameters {
             dt, cell_size, ..
         } = &self.fdtd_parameters;
+        let cell_count = n_cells3.element_product() as usize;
 
         let mut corrections = Vec::new();
         let mut coeffs = Vec::new();
         let mut zeroed_vector_fields = Vec::new();
-        let mut n_cells_max = 0;
+        let mut aux_grid_n_cells_max = 0;
 
         let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
         let mut tfsf_srcs = self.sources.iter()
@@ -222,7 +225,7 @@ impl FdtdLossySimulation {
                 let num_correction_cells = (tf_max_a - tf_min_a + 1) + 2;
                 let source_cell = 1;
                 let n_cells = num_correction_cells + source_cell + pml_width.get();
-                n_cells_max = n_cells_max.max(n_cells);
+                aux_grid_n_cells_max = aux_grid_n_cells_max.max(n_cells);
 
                 let corrections_start = corrections.len() as u32;
                 corrections.resize(corrections.len() + num_correction_cells as usize, TfsfCorrections::default());
@@ -320,6 +323,8 @@ impl FdtdLossySimulation {
             })
             .collect::<Vec<_>>();
 
+        let tfsf_masks = vec![TfsfMask::default(); tfsf_srcs.len() * cell_count];
+
         let has_tfsf_sources = !tfsf_srcs.is_empty();
 
         if tfsf_srcs.is_empty() { tfsf_srcs.push(GpuTfsf::default()) }
@@ -327,16 +332,26 @@ impl FdtdLossySimulation {
         if coeffs.is_empty() { coeffs.push(AuxGridPmlCoeffs::default()) }
 
         let aux_grid_thread_count = has_tfsf_sources
-            .then_some([tfsf_srcs.len() as u32, 1, n_cells_max]);
+            .then_some([tfsf_srcs.len() as u32, 1, aux_grid_n_cells_max]);
+        let mask_init_thread_count = has_tfsf_sources
+            .then(|| {
+                cfg_select! {
+                    feature = "dim1" => n_cells3.with_x(tfsf_srcs.len() as Index).to_array(),
+                    feature = "dim2" => n_cells3.with_z(tfsf_srcs.len() as Index).to_array(),
+                    feature = "dim3" => n_cells3.with_z(tfsf_srcs.len() as Index * n_cells3.z).to_array(),
+                }
+            });
 
         Ok(TfsfDispatchData {
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
+            tfsf_masks: tfsf_masks.create_gpu_buffer(backend)?,
             corrections: corrections.create_gpu_buffer_readable(backend)?,
             auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,
             h: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
             dn: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
             en: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
-            aux_grid_thread_count
+            aux_grid_thread_count,
+            mask_init_thread_count,
         })
     }
 
@@ -376,6 +391,7 @@ impl FdtdLossySimulation {
 
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
 pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
+    init_tfsf_masks: InitTfsfMasks,
     boundary_condition: BC,
     aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
@@ -387,11 +403,47 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> GpuResult<Self> {
         Ok(Self {
             boundary_condition,
+            init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             update: GpuLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             num_steps_per_submission,
         })
+    }
+
+    /// Create new pipeline and dispatch initialization shaders to the GPU at the same time (calls [`FdtdLossyPipeline::initialize`]).
+    pub fn new_initialized(
+        backend: &GpuBackend,
+        boundary_condition: BC,
+        num_steps_per_submission: usize,
+        gpu_data: &mut FdtdLossyDispatchData
+    ) -> GpuResult<Self> {
+        let pipeline = Self::new(backend, boundary_condition, num_steps_per_submission)?;
+
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("2d fdtd example", None);
+        pipeline.initialize(&mut pass, gpu_data)?;
+        drop(pass);
+        backend.submit(encoder)?;
+
+        Ok(pipeline)
+    }
+
+    pub fn initialize(
+        &self,
+        pass: &mut GpuPass,
+        gpu_data: &mut FdtdLossyDispatchData
+    ) -> GpuResult<()> {
+        if let Some(thread_count) = gpu_data.tfsf_dispatch_data.mask_init_thread_count {
+            self.init_tfsf_masks.call(
+                pass,
+                DispatchGrid::ThreadCount(thread_count),
+                &gpu_data.grid_params,
+                &gpu_data.tfsf_dispatch_data.tfsf_sources,
+                &mut gpu_data.tfsf_dispatch_data.tfsf_masks,
+            )?;
+        }
+        Ok(())
     }
 
     pub fn dispatch_steps(
@@ -435,7 +487,8 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &gpu_data.dipoles,
                 &gpu_data.tfsf_dispatch_data.tfsf_sources,
                 &gpu_data.tfsf_dispatch_data.corrections.buffer,
-                &gpu_data.grid_coeffs
+                &gpu_data.tfsf_dispatch_data.tfsf_masks,
+                &gpu_data.grid_coeffs,
             )?;
             self.update.call(
                 pass,
@@ -463,6 +516,7 @@ pub struct FdtdParameters {
 }
 
 /// Buffers and data needed for running the shader
+// TODO: rename to FdtdLossyState
 pub struct FdtdLossyDispatchData {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
@@ -493,6 +547,7 @@ pub struct TfsfParameters {
 
 pub struct TfsfDispatchData {
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
+    pub tfsf_masks: GpuBuffer<TfsfMask>,
     pub corrections: GpuBufferReadable<TfsfCorrections>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
     pub h: GpuBufferReadable<AuxVect>,
@@ -502,6 +557,7 @@ pub struct TfsfDispatchData {
     ///
     /// Is [`None`] only when there are no TF/SF sources.
     pub aux_grid_thread_count: Option<[u32; 3]>,
+    pub mask_init_thread_count: Option<[u32; 3]>,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation

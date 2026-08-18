@@ -62,7 +62,12 @@ pub async fn single_rod() -> anyhow::Result<()> {
     println!("Running on backend: {backend_name}");
     let mut gpu_data = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
-    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let mut pipeline = FdtdLossyPipeline::new_initialized(
+        &backend,
+        boundary_condition,
+        sim_speed,
+        &mut gpu_data
+    )?;
     
     // Create viewer and set up camera
     let n_cells = gpu_data.n_cells;
