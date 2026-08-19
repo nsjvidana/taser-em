@@ -45,22 +45,22 @@ pub async fn single_rod() -> anyhow::Result<()> {
     simulation.material_regions.fill_region(quad_min, quad_max, mat);
 
     // Compute source position and gaussian curve data points
-    let source = Source::TFSF {
+    let source_values = Source::gaussian_max_f(f_max, 1., dt);
+    simulation.add_source(Source::TFSF {
         spatial_axis: SpatialAxis::X,
         // direction: WaveDirection::Positive,
         direction: WaveDirection::Negative,
         t_start: 0.0,
-        vals: Source::gaussian_max_f(f_max, 1., dt),
+        vals: source_values.clone(),
         polarization: Vec3::Z,
         tfsf_buffer_width: LayerWidths::splat_spatial(5),
-    };
-    simulation.add_source(source);
+    });
     simulation.add_source(Source::Dipole {
-        dipole_type: DipoleType::Electric,
+        dipole_type: DipoleType::Magnetic,
         position: quad_min - wavelen,
         t_start: dt * 1000.,
-        vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec3::Z,
+        vals: source_values,
+        moment: Vec3::new(1., 1., 0.).normalize(),
     });
     
     // Set up buffers and pipeline
