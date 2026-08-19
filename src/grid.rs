@@ -7,7 +7,7 @@ use taser_em_shaders::math::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::{GpuTfsf, PmlCoefficients, PolarizationModeIndex};
+use taser_em_shaders::fdtd::{PmlCoefficients, PolarizationModeIndex};
 use crate::consts::{C_0, EPS_0};
 use crate::fdtd::{ElectricMaterial, PmlParameters};
 use crate::util::grid_cells_iter;

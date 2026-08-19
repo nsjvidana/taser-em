@@ -106,12 +106,12 @@ pub fn gpu_compute_source_terms(
         let corrections_end = (corrections_start + num_correction_cells - 1) as usize;
         let correction_idx = ((corrections_start + cell_idx_a.gpu_saturating_sub(tf_min_a.gpu_saturating_sub(1))) as usize)
             .min(corrections_end);
-        // plane wave vals at wavefront in this cell's location
-        let mut src = tfsf_corrections.read(correction_idx);
-        // src vals of wavefront just before this cell's location
-        let mut src_ma = tfsf_corrections.read(correction_idx.gpu_saturating_sub(1).max(corrections_start as _));
-        // src vals of wavefront just after this cell's location
-        let mut src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
+        // plane wave vals at wavefront in this cell'
+        let src = tfsf_corrections.read(correction_idx);
+        // src vals of wavefront just before this cell'
+        let src_ma = tfsf_corrections.read(correction_idx.gpu_saturating_sub(1).max(corrections_start as _));
+        // src vals of wavefront just after this cell'
+        let src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
 
         let mask_idx = i * grid.cell_count as usize + idx;
         let mask = tfsf_masks.read(mask_idx);
