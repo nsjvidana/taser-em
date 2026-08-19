@@ -185,9 +185,9 @@ pub fn init_tfsf_masks(
         feature = "dim3" => (cell_idx3.z / grid.n_cells3.z) as usize,
     };
     let idx = src_idx * grid.cell_count as usize + cell_idx.to_flat_idx(n_cells) as usize;
-    #[cfg_attr(not(feature = "dim1"), allow(unused_variables))]
     let GpuTfsf {
         a, a1, a2,
+        #[cfg_attr(not(feature = "dim1"), allow(unused_variables))]
         direction,
         tf_min_a, tf_min_a1,tf_min_a2,
         tf_max_a, tf_max_a1, tf_max_a2,
@@ -399,7 +399,8 @@ pub fn gpu_lossy_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dn: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] en: &mut [Vec4],
     // Field update terms
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
+    #[cfg_attr(feature = "dim1", allow(unused_variables))]
+        #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
 ) {
@@ -413,6 +414,7 @@ pub fn gpu_lossy_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = grid_coeffs.read(idx);
+    #[cfg(not(feature = "dim1"))]
     let mut ints = integrals.read(idx);
 
     let en_self = en.read(idx);
