@@ -41,8 +41,8 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(4.),
         mu_r: Vec3::splat(1.),
-        // sig: Vec3::splat(0.3),
-        sig: Vec3::splat(0.),
+        sig: Vec3::splat(0.3),
+        // sig: Vec3::splat(0.),
     };
     simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
 

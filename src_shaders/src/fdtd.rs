@@ -399,8 +399,7 @@ pub fn gpu_lossy_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dn: &mut [Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] en: &mut [Vec4],
     // Field update terms
-    #[cfg_attr(feature = "dim1", allow(unused_variables))]
-        #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
 ) {
@@ -414,7 +413,6 @@ pub fn gpu_lossy_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = grid_coeffs.read(idx);
-    #[cfg(not(feature = "dim1"))]
     let mut ints = integrals.read(idx);
 
     let en_self = en.read(idx);
@@ -525,7 +523,8 @@ pub fn gpu_lossy_update(
             dn_self = m.dn1 * dn_self + m.dn2 * h_curl + m.dn3 * ints.h_curl + m.dn4 * ints.dn;
         }
     }
-    dn_self += src.dn;
+    ints.en += en_self;
+    dn_self += m.dn_loss1 * en_self + m.dn_loss2 * ints.en + src.dn;
     dn.write(idx, dn_self);
 
     en.write(idx, m.en1 * dn_self);

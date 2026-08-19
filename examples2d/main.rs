@@ -39,8 +39,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
-        // sig: Vec3::splat(0.3),
-        sig: Vec3::splat(0.),
+        sig: Vec3::splat(0.3),
+        // sig: Vec3::splat(0.),
     };
     simulation.material_regions.fill_region(quad_min, quad_max, mat);
 

@@ -42,8 +42,8 @@ pub async fn cube() -> anyhow::Result<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(2.),
         mu_r: Vec3::splat(1.),
-        // sig: Vec3::splat(0.3),
-        sig: Vec3::splat(0.),
+        sig: Vec3::splat(0.3),
+        // sig: Vec3::splat(0.),
     };
     simulation.material_regions.fill_region(box_min, box_max, mat);
 
