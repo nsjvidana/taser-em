@@ -106,11 +106,11 @@ pub fn gpu_compute_source_terms(
         let corrections_end = (corrections_start + num_correction_cells - 1) as usize;
         let correction_idx = ((corrections_start + cell_idx_a.gpu_saturating_sub(tf_min_a.gpu_saturating_sub(1))) as usize)
             .min(corrections_end);
-        // plane wave vals at wavefront in this cell'
+        // plane wave vals at wavefront in this cell
         let src = tfsf_corrections.read(correction_idx);
-        // src vals of wavefront just before this cell'
+        // src vals of wavefront just before this cell
         let src_ma = tfsf_corrections.read(correction_idx.gpu_saturating_sub(1).max(corrections_start as _));
-        // src vals of wavefront just after this cell'
+        // src vals of wavefront just after this cell
         let src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
 
         let mask_idx = i * grid.cell_count as usize + idx;
@@ -203,8 +203,8 @@ pub fn init_tfsf_masks(
     let a2_spatial = SpatialAxis::is_spatial_axis(a2);
     
     let inside_tf = (cell_idx_a >= tf_min_a && cell_idx_a <= tf_max_a) &&
-        (a1_spatial && (cell_idx_a1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1) || !a1_spatial) &&
-        (a2_spatial && (cell_idx_a2 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2) || !a2_spatial);
+        (!a1_spatial || (cell_idx_a1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1)) &&
+        (!a2_spatial || (cell_idx_a2 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2));
     let at_max_tf_edge_a = [
         inside_tf && (cell_idx_a == tf_max_a),
         inside_tf && (cell_idx_a1 == tf_max_a1),
@@ -217,8 +217,8 @@ pub fn init_tfsf_masks(
     ];
 
     let sf_edge_or_in_tf = (cell_idx_a+1 >= tf_min_a && cell_idx_a <= tf_max_a+1) &&
-        (a1_spatial && (cell_idx_a1+1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1+1) || !a1_spatial) &&
-        (a2_spatial && (cell_idx_a2+1 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2+1) || !a2_spatial);
+        (!a1_spatial || (cell_idx_a1+1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1+1)) &&
+        (!a2_spatial || (cell_idx_a2+1 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2+1));
     let at_max_sf_edge_a = [
         sf_edge_or_in_tf && (cell_idx_a == tf_max_a+1),
         sf_edge_or_in_tf && (cell_idx_a1 == tf_max_a1+1),
