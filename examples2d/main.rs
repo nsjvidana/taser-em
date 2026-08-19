@@ -53,7 +53,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
         t_start: 0.0,
         vals: source_values.clone(),
         polarization: Vec3::Z,
-        tfsf_buffer_width: LayerWidths::splat_spatial(5),
+        tfsf_buffer_width: LayerWidths::splat_spatial(3)
+            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(8)),
     });
     simulation.add_source(Source::Dipole {
         dipole_type: DipoleType::Magnetic,

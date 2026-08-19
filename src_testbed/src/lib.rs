@@ -136,6 +136,7 @@ impl FdtdTestbedViewer {
 /// The mode in which vector fields are visualized.
 ///
 /// Includes modes for all dimensions.
+#[non_exhaustive]
 pub enum VisualizationMode {
     /// A line graph of vector field magnitudes
     #[cfg(feature = "dim1")]
@@ -188,6 +189,13 @@ impl VisualizationMode {
         }
     }
 
+    #[cfg(feature = "dim3")]
+    pub fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+        let Self::Cubes { alpha_mode, .. } = &mut self;
+        *alpha_mode = alpha;
+        self
+    }
+
     pub fn initialize(
         &mut self,
         #[cfg_attr(feature = "dim1", allow(unused_variables))] scene: &mut SceneNode3d,
@@ -208,7 +216,7 @@ impl VisualizationMode {
             } = self;
             *positions = cell_positions;
             let grid_extents = n_cells.as_vect() * cell_size;
-            *data_point_magnitude = grid_extents / 100.;
+            *data_point_magnitude = grid_extents / 10.;
         }
 
         #[cfg(any(feature = "dim2", feature = "dim3"))]

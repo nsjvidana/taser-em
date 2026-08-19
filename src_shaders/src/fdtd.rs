@@ -63,7 +63,7 @@ pub fn gpu_compute_source_terms(
     let mut h_source_term = Vec4::ZERO;
     let mut dn_source_term = Vec4::ZERO;
     let curr_t_idx = *t_idx;
-    
+
     // Dipoles
     for i in 0..dipoles.len() {
         let GpuDipole {
@@ -185,8 +185,10 @@ pub fn init_tfsf_masks(
         feature = "dim3" => (cell_idx3.z / grid.n_cells3.z) as usize,
     };
     let idx = src_idx * grid.cell_count as usize + cell_idx.to_flat_idx(n_cells) as usize;
+    #[cfg_attr(not(feature = "dim1"), allow(unused_variables))]
     let GpuTfsf {
         a, a1, a2,
+        direction,
         tf_min_a, tf_min_a1,tf_min_a2,
         tf_max_a, tf_max_a1, tf_max_a2,
         vals_start, vals_end, ..
@@ -228,11 +230,27 @@ pub fn init_tfsf_masks(
         sf_edge_or_in_tf && (cell_idx_a2+1 == tf_min_a2),
     ];
 
-    let mut at_sf_edge_count = 0;
-    for i in 0..3 {
-        at_sf_edge_count += at_min_sf_edge_a[i] as usize + at_max_sf_edge_a[i] as usize;
+    // Skip corrections at opposite end of the source in 1D since the entire plane wave is
+    // guaranteed to hit the object.
+    #[cfg(feature = "dim1")]
+    {
+        if (direction == WaveDirection::Positive && (at_max_sf_edge_a[0] || at_max_tf_edge_a[0])) ||
+            (direction == WaveDirection::Negative && (at_min_sf_edge_a[0] || at_min_tf_edge_a[0]))
+        {
+            return;
+        }
     }
-    let not_sf_corner = at_sf_edge_count < 2;
+
+    let not_sf_corner = cfg_select! {
+        feature = "dim1" => true,
+        _ => {{
+            let mut at_sf_edge_count = 0;
+            for i in 0..3 {
+                at_sf_edge_count += at_min_sf_edge_a[i] as usize + at_max_sf_edge_a[i] as usize;
+            }
+            at_sf_edge_count < 2
+        }}
+    };
 
     let neg = if inside_tf { -1. } else { 1. };
     tfsf_masks.write(idx, TfsfMask {
@@ -248,7 +266,7 @@ pub fn init_tfsf_masks(
 }
 
 /// A mask that enables and/or negates TFSF source values used in the correction terms
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct TfsfMask {
     pub en_src_a2_pa1: Real,
@@ -401,41 +419,110 @@ pub fn gpu_lossy_update(
     let src = source_terms.read(idx);
 
     // H update
+    let en_neighbors = [
+        cfg_select! {
+            feature = "dim1" => Vec4::ZERO,
+            _ => en.read(idx + grid.flat_idx_incrs.x as usize)
+        },
+        cfg_select! {
+            feature = "dim1" => Vec4::ZERO,
+            _ => en.read(idx + grid.flat_idx_incrs.y as usize)
+        },
+        cfg_select! {
+            feature = "dim2" => Vec4::ZERO,
+            _ => en.read(idx + grid.flat_idx_incrs.z as usize)
+        }
+    ];
     let mut h_self = h.read(idx);
     let en_curl = Vec4::new(
-        (en.read(idx + grid.flat_idx_incrs.y as usize).z - en_self.z) * grid.inv_d.y,
-        -(en.read(idx + grid.flat_idx_incrs.x as usize).z - en_self.z) * grid.inv_d.x,
-        (en.read(idx + grid.flat_idx_incrs.x as usize).y - en_self.y) * grid.inv_d.x -
-            (en.read(idx + grid.flat_idx_incrs.y as usize).x - en_self.x) * grid.inv_d.y,
+        cfg_select! {
+            feature = "dim1" => -(en_neighbors[2].y - en_self.y) * grid.inv_d.z,
+            feature = "dim2" => (en_neighbors[1].z - en_self.z) * grid.inv_d.y,
+            _ => (en_neighbors[1].z - en_self.z) * grid.inv_d.y - (en_neighbors[2].y - en_self.y) * grid.inv_d.z,
+        },
+        cfg_select! {
+            feature = "dim1" => (en_neighbors[2].x - en_self.x) * grid.inv_d.z,
+            feature = "dim2" => -(en_neighbors[0].z - en_self.z) * grid.inv_d.x,
+            _ => (en_neighbors[2].x - en_self.x) * grid.inv_d.z - (en_neighbors[0].z - en_self.z) * grid.inv_d.x,
+        },
+        cfg_select! {
+            feature = "dim1" => 0.,
+            _ => (en_neighbors[0].y - en_self.y) * grid.inv_d.x - (en_neighbors[1].x - en_self.x) * grid.inv_d.y,
+        },
         0.
     );
-    ints.en_curl += en_curl;
-    ints.h += h_self;
-    h_self.x = m.h1.x * h_self.x + m.h2.x * en_curl.x + m.h3.x * ints.en_curl.x;
-    h_self.y = m.h1.y * h_self.y + m.h2.y * en_curl.y + m.h3.y * ints.en_curl.y;
-    h_self.z = m.h1.z * h_self.z + m.h2.z * en_curl.z + m.h4.z * ints.h.z;
+    cfg_select! {
+        feature = "dim1" => {
+            h_self.x = m.h1.x * h_self.x + m.h2.x * en_curl.x;
+            h_self.y = m.h1.y * h_self.y + m.h2.y * en_curl.y;
+        }
+        feature = "dim2" => {
+            ints.en_curl += en_curl;
+            ints.h += h_self;
+            h_self.x = m.h1.x * h_self.x + m.h2.x * en_curl.x + m.h3.x * ints.en_curl.x;
+            h_self.y = m.h1.y * h_self.y + m.h2.y * en_curl.y + m.h3.y * ints.en_curl.y;
+            h_self.z = m.h1.z * h_self.z + m.h2.z * en_curl.z + m.h4.z * ints.h.z;
+        }
+        feature = "dim3" => {
+            ints.en_curl += en_curl;
+            ints.h += h_self;
+            h_self = m.h1 * h_self + m.h2 * en_curl + m.h3 * ints.en_curl + m.h4 * ints.h;
+        }
+    }
     h_self += src.h;
     h.write(idx, h_self);
 
     // Dn update
     let mut dn_self = dn.read(idx);
+    let h_neighbors = [
+        cfg_select! {
+            feature = "dim1" => Vec4::ZERO,
+            _ => h.read(idx - grid.flat_idx_incrs.x as usize)
+        },
+        cfg_select! {
+            feature = "dim1" => Vec4::ZERO,
+            _ => h.read(idx - grid.flat_idx_incrs.y as usize)
+        },
+        cfg_select! {
+            feature = "dim2" => Vec4::ZERO,
+            _ => h.read(idx - grid.flat_idx_incrs.z as usize)
+        }
+    ];
     let h_curl = Vec4::new(
-        (h_self.z - h.read(idx - grid.flat_idx_incrs.y as usize).z) * grid.inv_d.y,
-        -(h_self.z - h.read(idx - grid.flat_idx_incrs.x as usize).z) * grid.inv_d.x,
-        (h_self.y - h.read(idx - grid.flat_idx_incrs.x as usize).y) * grid.inv_d.x -
-            (h_self.x - h.read(idx - grid.flat_idx_incrs.y as usize).x) * grid.inv_d.y,
+        cfg_select! {
+            feature = "dim1" => -(h_self.y - h_neighbors[2].y) * grid.inv_d.z,
+            feature = "dim2" => (h_self.z - h_neighbors[1].z) * grid.inv_d.y,
+            _ => (h_self.z - h_neighbors[1].z) * grid.inv_d.y - (h_self.y - h_neighbors[2].y) * grid.inv_d.z,
+        },
+        cfg_select! {
+            feature = "dim1" => (h_self.x - h_neighbors[2].x) * grid.inv_d.z,
+            feature = "dim2" => -(h_self.z - h_neighbors[0].z) * grid.inv_d.x,
+            _ => (h_self.x - h_neighbors[2].x) * grid.inv_d.z - (h_self.z - h_neighbors[0].z) * grid.inv_d.x,
+        },
+        cfg_select! {
+            feature = "dim1" => 0.,
+            _ => (h_self.y - h_neighbors[0].y) * grid.inv_d.x - (h_self.x - h_neighbors[1].x) * grid.inv_d.y,
+        },
         0.
     );
-    ints.h_curl += h_curl;
-    ints.en += en_self;
-    ints.dn += dn_self;
-
-    dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl.x + m.dn3.x * ints.h_curl.x +
-        m.dn_loss1.x * en_self.x + m.dn_loss2.x * ints.en.x;
-    dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl.y + m.dn3.y * ints.h_curl.y +
-        m.dn_loss1.y * en_self.y + m.dn_loss2.y * ints.en.y;
-    dn_self.z = m.dn1.z * dn_self.z + m.dn2.z * h_curl.z + m.dn4.z * ints.dn.z +
-        m.dn_loss1.z * en_self.z + m.dn_loss2.z * ints.en.z;
+    cfg_select! {
+        feature = "dim1" => {
+            dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl.x;
+            dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl.y;
+        }
+        feature = "dim2" => {
+            ints.h_curl += h_curl;
+            ints.dn += dn_self;
+            dn_self.x = m.dn1.x * dn_self.x + m.dn2.x * h_curl.x + m.dn3.x * ints.h_curl.x;
+            dn_self.y = m.dn1.y * dn_self.y + m.dn2.y * h_curl.y + m.dn3.y * ints.h_curl.y;
+            dn_self.z = m.dn1.z * dn_self.z + m.dn2.z * h_curl.z + m.dn4.z * ints.dn.z;
+        }
+        feature = "dim3" => {
+            ints.h_curl += h_curl;
+            ints.dn += dn_self;
+            dn_self = m.dn1 * dn_self + m.dn2 * h_curl + m.dn3 * ints.h_curl + m.dn4 * ints.dn;
+        }
+    }
     dn_self += src.dn;
     dn.write(idx, dn_self);
 

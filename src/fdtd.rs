@@ -326,11 +326,12 @@ impl FdtdLossySimulation {
             })
             .collect::<Vec<_>>();
 
-        let tfsf_masks = vec![TfsfMask::default(); tfsf_srcs.len() * cell_count];
+        let mut tfsf_masks = vec![TfsfMask::default(); tfsf_srcs.len() * cell_count];
 
         let has_tfsf_sources = !tfsf_srcs.is_empty();
 
         if tfsf_srcs.is_empty() { tfsf_srcs.push(GpuTfsf::default()) }
+        if tfsf_masks.is_empty() { tfsf_masks.push(TfsfMask::default()) }
         if corrections.is_empty() { corrections.push(TfsfSourceValues::default()) }
         if coeffs.is_empty() { coeffs.push(AuxGridPmlCoeffs::default()) }
 

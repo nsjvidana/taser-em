@@ -478,6 +478,12 @@ impl LayerWidths {
         GridIndex::from_index_array(n_cells)
     }
 
+    /// Returns `self` with widths along `spatial_axis` set to `widths`
+    pub fn with_axis_widths(mut self, spatial_axis: SpatialAxis, widths: LoHiWidths) -> Self {
+        self[spatial_axis] = widths;
+        self
+    }
+
     #[inline]
     pub fn iter_spatial_axes(&self) -> impl Iterator<Item = (SpatialAxis, &LoHiWidths)> {
         SpatialAxis::ALL_SPATIAL

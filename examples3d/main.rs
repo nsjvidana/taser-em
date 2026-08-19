@@ -10,12 +10,12 @@ async fn main() {
 
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
-    let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 6;
+    let f_max = 1.0e9; // 1.0 GHz
+    let sim_speed = 10;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 8.,
+        dt_safety_factor: 19.,
         material_resolution: NonZeroU32::new(3).unwrap(),
         ..Default::default()
     };
@@ -25,10 +25,10 @@ pub async fn cube() -> anyhow::Result<()> {
     let fdtd_params = FdtdParameters {
         cell_size,
         dt,
-        // material_discretization: MaterialDiscretization::Smooth {
-        //     resolution: stability.material_resolution
-        // },
-        material_discretization: MaterialDiscretization::Rough,
+        material_discretization: MaterialDiscretization::Smooth {
+            resolution: stability.material_resolution
+        },
+        // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseElectric
     };
     let pml_params = PmlParameters::new(dt);
@@ -38,11 +38,9 @@ pub async fn cube() -> anyhow::Result<()> {
     let wavelen = C_0 / f_max;
     let box_min = Vect::splat(-20.);
     let box_max = box_min + Vect::splat(wavelen);
-    let box_extents = box_max - box_min;
-    let box_center = (box_min + box_max) / 2.;
     // construct the cube
     let mat = ElectricMaterial {
-        eps_r: Vec3::splat(3.),
+        eps_r: Vec3::splat(2.),
         mu_r: Vec3::splat(1.),
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
@@ -50,13 +48,13 @@ pub async fn cube() -> anyhow::Result<()> {
     simulation.material_regions.fill_region(box_min, box_max, mat);
 
     // Compute source position and gaussian curve data points
-    let source = Source::PlaneWave {
+    let source = Source::TFSF {
         spatial_axis: SpatialAxis::Z,
-        position: box_center.z - (box_extents.z / 2.) - wavelen,
         direction: WaveDirection::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        polarization: Vec3::new(1., 1., 0.).normalize()
+        polarization: Vec3::new(1., 1., 0.).normalize(),
+        tfsf_buffer_width: LayerWidths::splat_spatial(3),
     };
     simulation.add_source(source);
 
@@ -66,15 +64,13 @@ pub async fn cube() -> anyhow::Result<()> {
     println!("Running on backend: {backend_name}");
     let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
-    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
 
     println!("n_cells: {}", state.n_cells);
 
     // Create viewer and set up camera
-    let mut testbed = FdtdTestbedViewer::new(
-        &simulation,
-        &stability,
-        VisualizationMode::default().with_color_mode(
+    let vis_mode = VisualizationMode::default()
+        .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
                 v_max: 0.1,
@@ -82,6 +78,11 @@ pub async fn cube() -> anyhow::Result<()> {
                 color_max: RED
             }
         )
+        .with_alpha(AlphaMode::Mask(0.2));
+    let mut testbed = FdtdTestbedViewer::new(
+        &simulation,
+        &stability,
+        vis_mode
     ).await?;
     testbed.window.set_ambient(0.5);
     let n_cells = state.n_cells;
