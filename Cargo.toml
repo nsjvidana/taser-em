@@ -19,15 +19,14 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 authors = ["Nilson Sampath J Vidanapatiranage <nilsonjvidana@gmail.com>"]
-# TODO: repository = ""
+repository = "https://github.com/nsjvidana/taser-em/"
 categories = [
     "science",
     "simulation",
     "mathematics",
 ]
 keywords = ["physics", "electromagnetics", "fdtd", "n-dimensional"]
-# TODO: license = ""
-# TODO: rust-version = ""
+license = "Apache-2.0"
 edition = "2024"
 
 [workspace.dependencies]
