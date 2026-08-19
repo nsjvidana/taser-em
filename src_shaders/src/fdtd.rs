@@ -150,6 +150,13 @@ pub fn gpu_compute_source_terms(
     });
 }
 
+#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
+#[repr(C)]
+pub struct SourceTerms {
+    pub h: Vec4,
+    pub dn: Vec4,
+}
+
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
@@ -339,6 +346,8 @@ pub fn aux_grid_update(
     });
 }
 
+pub type AuxVect = Vec2;
+
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct AuxGridPmlCoeffs {
@@ -349,7 +358,6 @@ pub struct AuxGridPmlCoeffs {
     pub en1: Vec2,
 }
 
-pub type AuxVect = Vec2;
 
 #[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
 #[repr(C)]
@@ -358,71 +366,6 @@ pub struct TfsfSourceValues {
     pub en_a2: Real,
     pub h_a1: Real,
     pub h_a2: Real,
-}
-
-#[spirv_bindgen]
-#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
-#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
-#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn gpu_compute_source_terms_old(
-    #[spirv(global_invocation_id)] cell_idx3: UVec3,
-    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &u32,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] plane_waves: &[GpuTfsf],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
-) {
-    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
-    let cell_idx = GridIndex::from_uvec3(cell_idx3);
-    let outside_problem_space = {
-        let min = GridIndex::from_uvec3(grid.problem_space_min);
-        let max = GridIndex::from_uvec3(grid.problem_space_max);
-        cell_idx.cmplt(min).any() || cell_idx.cmpgt(max).any() || cell_idx3.cmpge(grid.n_cells3).any()
-    };
-    if outside_problem_space { return; }
-
-    let idx = cell_idx.to_flat_idx(n_cells) as usize;
-
-    let curr_t_idx = *t_idx;
-    let mut h_source_term = Vec4::ZERO;
-    let mut dn_source_term = Vec4::ZERO;
-    let t = curr_t_idx as f32 * grid.dt;
-
-    // Dipoles
-    for i in 0..dipoles.len() {
-        let dipole = dipoles.read(i);
-        let src_t_idx = curr_t_idx.gpu_saturating_sub(dipole.t_start);
-        let vals_i = dipole.vals_start + src_t_idx;
-
-        let enable = (dipole.cell_idx as usize == idx) &&
-            (curr_t_idx >= dipole.t_start) &&
-            (vals_i <= dipole.vals_end);
-        let source_term = source_vals.read(vals_i.min(dipole.vals_end) as usize) *
-            enable as u32 as f32 *
-            dipole.moment;
-        grid.polarization_mode_index.inject_h_source(&mut h_source_term, source_term);
-        grid.polarization_mode_index.inject_dn_source(&mut dn_source_term, source_term);
-    }
-
-    // Plane waves
-    let pml_coeffs = pml_coeffs.read(idx);
-    for i in 0..plane_waves.len() {
-        todo!()
-    }
-
-    source_terms.write(idx, SourceTerms {
-        h: h_source_term,
-        dn: dn_source_term,
-    });
-}
-
-#[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
-#[repr(C)]
-pub struct SourceTerms {
-    pub h: Vec4,
-    pub dn: Vec4,
 }
 
 #[spirv_bindgen]
