@@ -16,7 +16,6 @@ in the same codebase.
 - Uniaxial Perfectly Matched Layer
 - Visualizer crates for all dimensions
 ### Unfinished Features
-- 3D simulations are currently broken...
 - NVIDIA support isn't tested yet
 - Arbitrary anisotropy through spatial approximations (just on the roadmap at the moment)
 - Python bindings (I might add this far into the future, since I don't know how yet...)
