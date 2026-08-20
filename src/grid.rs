@@ -139,30 +139,16 @@ pub struct MaterialRegion {
     pub shape: SharedShape,
     pub pose: Pose3,
     pub material: ElectricMaterial,
-    #[cfg(feature = "render")]
-    pub mesh: Option<RegionMesh>,
 }
 
 impl MaterialRegion {
     pub fn new(shape: SharedShape, pose: Pose3, material: ElectricMaterial) -> Self {
-        #[cfg(feature = "render")]
-        let mesh = crate::util::generate_mesh(&*shape.0)
-            .map(|(vertices, indices)| RegionMesh { vertices, indices });
         Self {
             shape,
             pose,
             material,
-            #[cfg(feature = "render")]
-            mesh
         }
     }
-}
-
-#[cfg(feature = "render")]
-#[derive(Clone, Debug)]
-pub struct RegionMesh {
-    pub vertices: Vec<Vec3>,
-    pub indices: Vec<[u32; 3]>,
 }
 
 /// The materials in a Yee Grid. It's the output of functions like [`MaterialRegions::material_yee_grid`].

@@ -105,7 +105,7 @@ impl FdtdTestbedViewer {
     /// Add material regions as meshes rendered in the scene.
     pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, regions_offset: Vec3) {
         for MaterialRegion {
-            shape, pose, material, mesh
+            shape, pose, ..
         } in mat_regions.regions.iter()
         {
             let node = shape.as_trimesh()
