@@ -104,16 +104,44 @@ impl FdtdTestbedViewer {
 
     /// Add material regions as meshes rendered in the scene.
     pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, regions_offset: Vec3) {
-        for (mesh, pose) in mat_regions.regions.iter()
-            .filter_map(|r| r.mesh.as_ref().map(|mesh| (mesh, r.pose)))
+        for MaterialRegion {
+            shape, pose, material, mesh
+        } in mat_regions.regions.iter()
         {
-            let kiss3d_mesh = Rc::new(RefCell::new(GpuMesh3d::new(
-                mesh.vertices.clone(), mesh.indices.clone(), None, None, false
-            )));
-            self.scene.add_mesh(kiss3d_mesh, Vec3::ONE)
-                .set_pose((mat_regions.scene_pose * pose).append_translation(regions_offset))
-                .set_color(GRAY.with_alpha(self.material_region_alpha))
-                .enable_backface_culling(false);
+            let node = shape.as_trimesh()
+                .map(|mesh| {
+                    let kiss3d_mesh = Rc::new(RefCell::new(GpuMesh3d::new(
+                        mesh.vertices().to_vec(), mesh.indices().to_vec(), None, None, false
+                    )));
+                    self.scene
+                        .add_mesh(kiss3d_mesh, Vec3::ONE)
+                })
+                .or_else(||
+                    shape
+                        .as_cuboid()
+                        .map(|cuboid| {
+                            let ext = cuboid.half_extents * 2.;
+                            self.scene
+                                .add_cube(ext.x, ext.y, ext.z)
+                        })
+                )
+                .or_else(||
+                    shape
+                        .as_capsule()
+                        .map(|caps| self.scene.add_capsule(caps.radius, caps.height()))
+                )
+                .or_else(||
+                    shape
+                        .as_ball()
+                        .map(|ball| self.scene.add_sphere(ball.radius))
+                );
+            if let Some(mut node) = node {
+                let region_pose_world = (mat_regions.scene_pose * pose).append_translation(regions_offset);
+                node
+                    .set_pose(region_pose_world)
+                    .set_color(GRAY.with_alpha(self.material_region_alpha))
+                    .enable_backface_culling(false);
+            }
         }
     }
 
