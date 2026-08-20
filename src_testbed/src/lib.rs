@@ -346,17 +346,25 @@ impl VisualizationMode {
                 instances: &mut Vec<InstanceData3d>,
                 color_mode: &mut ColorMode,
             | {
-                let magnitudes = par_iter!(v_field)
-                    .map(|v| polarization_mode.get_e_magnitude(v))
-                    .collect::<Vec<_>>();
-                color_mode.prepare(&magnitudes);
-
-                par_iter_mut!(instances)
-                    .zip(into_par_iter!(magnitudes))
-                    .for_each(|(inst, mag)| {
-                        inst.color = color_mode.compute_color(mag);
-                    });
-                instanced_obj.set_instances(instances);
+                instanced_obj.apply_to_object_mut(&mut |o| {
+                    let magnitudes = par_iter!(v_field)
+                        .map(|v| polarization_mode.get_e_magnitude(v))
+                        .collect::<Vec<_>>();
+                    color_mode.prepare(&magnitudes);
+                    let inst_count = o
+                        .instances()
+                        .borrow_mut()
+                        .colors
+                        .len();
+                    let colors = into_par_iter!(magnitudes)
+                        .take(inst_count)
+                        .map(|mag| {
+                            let c = color_mode.compute_color(mag);
+                            [c.r, c.g, c.b, c.a]
+                        })
+                        .collect::<Vec<_>>();
+                    *o.instances().borrow_mut().colors.data_mut() = Some(colors);
+                });
             };
             match self {
                 #[cfg(feature = "dim2")]
