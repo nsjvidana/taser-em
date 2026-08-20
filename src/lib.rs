@@ -10,6 +10,7 @@ pub mod consts {
     /// Free space wave impedance
     pub const IMPEDANCE_0: f32 = 376.73032;
 }
+pub mod mesh_loading;
 pub mod util;
 pub mod gpu_util;
 
@@ -31,6 +32,7 @@ pub mod prelude {
     pub use crate::fdtd::*;
     pub use crate::grid::*;
     pub use crate::consts::*;
+    pub use crate::mesh_loading::*;
     pub use crate::util::*;
     pub use taser_em_shaders::math::*;
     pub use khal::backend::*;

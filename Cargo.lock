@@ -1860,6 +1860,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mesh-loader"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47168834301d6956a01e8e0a7772891a40918067c18d02c34d0932739426b7d2"
+dependencies = [
+ "roxmltree",
+]
+
+[[package]]
 name = "metal"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2943,6 +2952,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839"
 
 [[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
 name = "rstar"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3423,9 +3438,11 @@ dependencies = [
  "itertools 0.15.0",
  "khal",
  "khal-builder",
+ "mesh-loader",
  "parry3d",
  "rayon",
  "taser-em-shaders1d",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3439,9 +3456,11 @@ dependencies = [
  "itertools 0.15.0",
  "khal",
  "khal-builder",
+ "mesh-loader",
  "parry3d",
  "rayon",
  "taser-em-shaders2d",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3455,9 +3474,11 @@ dependencies = [
  "itertools 0.15.0",
  "khal",
  "khal-builder",
+ "mesh-loader",
  "parry3d",
  "rayon",
  "taser-em-shaders3d",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
