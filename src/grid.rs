@@ -1,16 +1,21 @@
 use crate::par_iter_mut;
+use crate::prelude::*;
 use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
-use parry3d::shape::{Cuboid, SharedShape};
+use parry3d::math::Vector;
+use parry3d::shape::{Cuboid, Shape, SharedShape};
 use std::num::NonZeroU32;
+use std::path::Path;
 use taser_em_shaders::math::*;
 
+use crate::consts::{C_0, EPS_0};
+use crate::fdtd::{ElectricMaterial, PmlParameters};
+use crate::mesh_loading::MeshConverter;
+use crate::prelude::load_from_path;
+use crate::util::grid_cells_iter;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use taser_em_shaders::fdtd::{PmlCoefficients, PolarizationModeIndex};
-use crate::consts::{C_0, EPS_0};
-use crate::fdtd::{ElectricMaterial, PmlParameters};
-use crate::util::grid_cells_iter;
 
 /// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
 /// In 3D, all axes are computed for all fields.
@@ -108,7 +113,7 @@ impl MaterialRegions {
         let region_dims = end - start;
         let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element()));
 
-        let shape = SharedShape::new(Cuboid::new(half_extents));
+        let shape = Cuboid::new(half_extents);
         let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
         let pose = Pose3::from_translation(middle);
 
@@ -116,8 +121,35 @@ impl MaterialRegions {
         self
     }
 
-    pub fn import_shape_from_file(&mut self) -> &mut Self {
-        todo!()
+    /// Loads a scene of meshes/objects from `path` and appends it to `self` as a [`MaterialRegion`].
+    /// Returns a reference to the newly-added [`MaterialRegion`].
+    ///
+    /// The poses of objects in scene at `path` are assumed to be local to the region, thus the `pose` field
+    /// of the new [`MaterialRegion`] will be [`Pose3::IDENTITY`] no matter what.
+    pub fn load_trimesh_region(&mut self, material: ElectricMaterial, path: impl AsRef<Path>) -> Result<&mut MaterialRegion, Error> {
+        self.load_path_as_region(material, path, &MeshConverter::TriMesh, Vector::ONE)
+    }
+
+    /// A version of [`MaterialRegions::load_trimesh_region`] with more parameters for the user to control.
+    pub fn load_path_as_region(
+        &mut self,
+        material: ElectricMaterial,
+        path: impl AsRef<Path>,
+        converter: &MeshConverter,
+        scale: Vector,
+    ) -> Result<&mut MaterialRegion, Error> {
+        let shapes = load_from_path(path, converter, scale)?
+            .into_iter()
+            .map(|v| v.map(|s| (s.pose, s.shape)))
+            .map(|v| v.map_err(Error::from))
+            .collect::<Result<Vec<(Pose3, SharedShape)>, _>>()?;
+
+        self.regions.push(MaterialRegion::new(
+            parry3d::shape::Compound::new(shapes),
+            Pose3::IDENTITY,
+            material,
+        ));
+        Ok(self.regions.last_mut().unwrap())
     }
 
     pub fn compute_bounding_box(&self) -> Aabb {
@@ -142,9 +174,9 @@ pub struct MaterialRegion {
 }
 
 impl MaterialRegion {
-    pub fn new(shape: SharedShape, pose: Pose3, material: ElectricMaterial) -> Self {
+    pub fn new(shape: impl Shape, pose: Pose3, material: ElectricMaterial) -> Self {
         Self {
-            shape,
+            shape: SharedShape::new(shape),
             pose,
             material,
         }
