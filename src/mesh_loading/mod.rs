@@ -1,3 +1,14 @@
+//! This entire module directory consists of code copied
+//! and adapted from [rapier](https://github.com/dimforge/rapier/)
+//! Commit: ccd01cd294e84945da55d61548002a5b6f73df31 (2026-08-16)
+//! License: Apache-2.0
+//!
+//! See LICENSE_rapier file in this directory for rapier's copyright notice.
+//!
+//! Modifications:
+//! - Removed all imports of rapier.
+//! - Bundled MeshConverter into same module directory as the copied/adapted rapier3d_meshloader code.
+
 pub mod mesh_converter;
 
 use std::path::Path;
