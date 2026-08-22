@@ -316,7 +316,9 @@ impl VisualizationMode {
                     .collect();
                 instanced_obj.set_instances(instances)
                     .set_casts_shadows(false)
-                    .enable_backface_culling(false);
+                    .set_roughness(1.)
+                    .set_reflectance(0.)
+                    .enable_backface_culling(true);
             };
             match self {
                 #[cfg(feature = "dim2")]
