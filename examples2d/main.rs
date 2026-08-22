@@ -88,10 +88,13 @@ pub async fn single_rod() -> anyhow::Result<()> {
         pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
         state.dn.encode_copy_cmd(&mut encoder)?;
-        state.t_idx.encode_copy_cmd(&mut encoder)?;
-        state.tfsf_dispatch_data.en.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
     }
+
+    let mut encoder = backend.begin_encoding();
+    state.t_idx.encode_copy_cmd(&mut encoder)?;
+    backend.submit(encoder)?;
+    backend.synchronize()?;
     let mut steps = vec![0];
     state.t_idx.read(&backend, &mut steps).await?;
     println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
