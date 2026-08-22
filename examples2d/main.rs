@@ -15,7 +15,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 10.,
-        cells_per_wavelength: 10,
+        cells_per_wavelength: 15,
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -37,8 +37,8 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
-        sig: Vec3::splat(0.3),
-        // sig: Vec3::splat(0.),
+        // sig: Vec3::splat(0.3),
+        sig: Vec3::splat(0.),
     };
     simulation.material_regions.load_path_as_region(
         mat,
