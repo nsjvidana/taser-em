@@ -41,7 +41,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
     };
-    simulation.material_regions.load_trimesh_region(
+    simulation.material_regions.load_trimesh_regions(
         mat,
         "assets/suzanne.obj",
         Vec3::ONE
