@@ -171,6 +171,7 @@ impl FdtdTestbedViewer {
             node
                 .set_pose(region_pose_world)
                 .set_color(GRAY.with_alpha(self.material_region_alpha))
+                .set_casts_shadows(false)
                 .enable_backface_culling(false);
         }
     }
@@ -313,8 +314,9 @@ impl VisualizationMode {
                         }
                     })
                     .collect();
-                instanced_obj.set_instances(instances);
-                instanced_obj.enable_backface_culling(false);
+                instanced_obj.set_instances(instances)
+                    .set_casts_shadows(false)
+                    .enable_backface_culling(false);
             };
             match self {
                 #[cfg(feature = "dim2")]
