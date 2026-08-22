@@ -76,8 +76,6 @@ pub async fn cube() -> anyhow::Result<()> {
     let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
 
-    println!("n_cells: {}", state.n_cells);
-
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
         .with_color_mode(

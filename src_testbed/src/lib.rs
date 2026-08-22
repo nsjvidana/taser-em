@@ -31,6 +31,8 @@ pub struct FdtdTestbedViewer {
     pub cell_size: Vect,
     pub polarization_mode: PolarizationMode,
     pub visualization_mode: VisualizationMode,
+    /// A light source locked at the camera's location (optional, but is a point source by default)
+    pub cam_light: Option<SceneNode3d>,
 }
 
 impl FdtdTestbedViewer {
@@ -54,20 +56,27 @@ impl FdtdTestbedViewer {
             feature = "dim3" => "3D",
         };
         let window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
-        let mut camera = OrbitCamera3d::default();
-
-        #[cfg(not(feature = "dim1"))]
-        camera.set_up_axis(Vec3::Z);
-        #[cfg(not(feature = "dim3"))]
-        camera.set_projection(Projection::Orthographic);
-        #[cfg(feature = "dim3")]
-        camera.set_projection(Projection::Perspective);
+        let camera = {
+            let mut camera = OrbitCamera3d::default();
+            #[cfg(not(feature = "dim1"))]
+            camera.set_up_axis(Vec3::Z);
+            #[cfg(not(feature = "dim3"))]
+            camera.set_projection(Projection::Orthographic);
+            #[cfg(feature = "dim3")]
+            camera.set_projection(Projection::Perspective);
+            camera
+        };
         let mut scene = SceneNode3d::default();
 
         let sim_bb = simulation.compute_bounding_box();
         let n_cells = simulation.compute_n_cells(&sim_bb, stability);
         let cell_size = simulation.fdtd_parameters.cell_size;
         visualization_mode.initialize(&mut scene, n_cells, cell_size);
+
+        // Default cam light
+        let cam_light = Some(
+            scene.add_point_light((n_cells.as_vect() * cell_size).length() * 2.)
+        );
 
         let mut selff = Self {
             window,
@@ -77,13 +86,15 @@ impl FdtdTestbedViewer {
             n_cells,
             cell_size,
             polarization_mode: simulation.fdtd_parameters.polarization_mode,
-            visualization_mode
+            visualization_mode,
+            cam_light,
         };
         let regions_offset = YeeGridMaterials::compute_simulation_offset(
             &simulation.compute_bounding_box(),
             n_cells,
             simulation.fdtd_parameters.cell_size,
         );
+        selff.update_cam_light();
         selff.add_region_meshes(&simulation.material_regions, regions_offset);
 
         Ok(selff)
@@ -154,12 +165,20 @@ impl FdtdTestbedViewer {
         &mut self,
         v_field: &[Vec4],
     ) -> bool {
+        let window_bool = self.window.render_3d(&mut self.scene, &mut self.camera).await;
         self.visualization_mode.visualize(
             v_field,
             &mut self.window,
             self.polarization_mode
         );
-        self.window.render_3d(&mut self.scene, &mut self.camera).await
+        self.update_cam_light();
+        window_bool
+    }
+
+    pub fn update_cam_light(&mut self) {
+        let Some(cam_light) = &mut self.cam_light else { return; };
+        let eye = self.camera.eye();
+        cam_light.set_position(eye);
     }
 }
 

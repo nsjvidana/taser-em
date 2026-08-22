@@ -7,7 +7,7 @@ keywords.workspace = true
 edition.workspace = true
 
 [features]
-default = ["webgpu", "rayon"] # enable rayon since 3D has several more cells to deal with.
+default = ["webgpu", "rayon"]
 unsafe_remove_boundchecks = ["taser-em3d/unsafe_remove_boundchecks"]
 rayon = ["taser-em3d/rayon", "taser-em-testbed3d/rayon"]
 webgpu = ["taser-em3d/webgpu"]
