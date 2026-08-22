@@ -40,6 +40,5 @@ pub mod prelude {
     pub use khal::backend::*;
     pub use khal::shader::Shader;
 
-    pub type GpuResult<T> = core::result::Result<T, GpuBackendError>;
-    // pub type Result<T> = core::result::Result<T, Error>;
+    pub type TaserResult<T> = core::result::Result<T, Error>;
 }

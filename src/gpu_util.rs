@@ -3,6 +3,8 @@ use khal::backend::{Backend, Buffer, DeviceValue, Encoder, GpuBackend, GpuBuffer
 use khal::re_exports::bytemuck::{AnyBitPattern, NoUninit};
 use khal::BufferUsages;
 
+pub type GpuResult<T> = core::result::Result<T, GpuBackendError>;
+
 pub struct GpuBufferReadable<T: DeviceValue + NoUninit + AnyBitPattern> {
     pub buffer: GpuBuffer<T>,
     pub readback: GpuBuffer<T>,

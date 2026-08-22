@@ -47,7 +47,7 @@ impl FdtdLossySimulation {
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-    ) -> GpuResult<FdtdLossyState> {
+    ) -> TaserResult<FdtdLossyState> {
         let FdtdParameters {
             cell_size, dt, polarization_mode, ..
         } = self.fdtd_parameters;
@@ -190,7 +190,7 @@ impl FdtdLossySimulation {
         n_cells3: UVec3,
         problem_space_min: UVec3,
         problem_space_max: UVec3,
-    ) -> GpuResult<TfsfDispatchData> {
+    ) -> TaserResult<TfsfDispatchData> {
         let TfsfParameters {
             pml_width, pml_sig_max, pml_grading_order
         } = &self.tfsf_parameters;
@@ -404,7 +404,7 @@ pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
 }
 
 impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
-    pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> GpuResult<Self> {
+    pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> TaserResult<Self> {
         Ok(Self {
             boundary_condition,
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
@@ -421,7 +421,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         boundary_condition: BC,
         num_steps_per_submission: usize,
         state: &mut FdtdLossyState
-    ) -> GpuResult<Self> {
+    ) -> TaserResult<Self> {
         let pipeline = Self::new(backend, boundary_condition, num_steps_per_submission)?;
 
         let mut encoder = backend.begin_encoding();
@@ -437,7 +437,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         &self,
         pass: &mut GpuPass,
         state: &mut FdtdLossyState
-    ) -> GpuResult<()> {
+    ) -> TaserResult<()> {
         if let Some(thread_count) = state.tfsf_dispatch_data.mask_init_thread_count {
             self.init_tfsf_masks.call(
                 pass,
@@ -454,7 +454,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         &mut self,
         pass: &mut GpuPass,
         state: &mut FdtdLossyState,
-    ) -> GpuResult<()> {
+    ) -> TaserResult<()> {
         for _ in 0..self.num_steps_per_submission {
             self.boundary_condition.call(
                 pass,
@@ -657,7 +657,7 @@ impl BoundaryCondition for PECBoundary {
         dn: &mut GpuBuffer<Vec4>,
         en: &mut GpuBuffer<Vec4>,
         thread_count: [u32; 3]
-    ) -> GpuResult<()>
+    ) -> TaserResult<()>
     {
         self.kernel.call(
             pass,
@@ -666,7 +666,8 @@ impl BoundaryCondition for PECBoundary {
             h,
             dn,
             en
-        )
+        )?;
+        Ok(())
     }
 }
 
@@ -680,7 +681,7 @@ pub trait BoundaryCondition {
         dn: &mut GpuBuffer<Vec4>,
         en: &mut GpuBuffer<Vec4>,
         thread_count: [u32; 3],
-    ) -> GpuResult<()>;
+    ) -> TaserResult<()>;
 }
 
 #[derive(Copy, Clone, Debug)]
