@@ -41,7 +41,7 @@ pub async fn cube() -> anyhow::Result<()> {
     // Compute cube dimensions
     // construct the cube
     let mat = ElectricMaterial {
-        eps_r: Vec3::splat(2.),
+        eps_r: Vec3::splat(4.),
         mu_r: Vec3::splat(1.),
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
@@ -77,7 +77,7 @@ pub async fn cube() -> anyhow::Result<()> {
         .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.4,
+                v_max: 0.5,
                 color_min: TRANSPARENT,
                 color_max: RED
             }
