@@ -244,7 +244,7 @@ impl VectExt for Vect {
     }
 
     #[inline]
-    #[cfg_attr(feature = "dim3", allow(unconditional_recursion))]
+    #[cfg_attr(not(feature = "dim1"), allow(unconditional_recursion))]
     fn length(&self) -> Real {
         cfg_select! {
             feature = "dim1" => *self,

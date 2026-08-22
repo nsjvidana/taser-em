@@ -56,16 +56,7 @@ impl FdtdTestbedViewer {
             feature = "dim3" => "3D",
         };
         let window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
-        let camera = {
-            let mut camera = OrbitCamera3d::default();
-            #[cfg(not(feature = "dim1"))]
-            camera.set_up_axis(Vec3::Z);
-            #[cfg(not(feature = "dim3"))]
-            camera.set_projection(Projection::Orthographic);
-            #[cfg(feature = "dim3")]
-            camera.set_projection(Projection::Perspective);
-            camera
-        };
+        let camera = OrbitCamera3d::default();
         let mut scene = SceneNode3d::default();
 
         let sim_bb = simulation.compute_bounding_box();
@@ -94,10 +85,36 @@ impl FdtdTestbedViewer {
             n_cells,
             simulation.fdtd_parameters.cell_size,
         );
+        selff.default_cam_setup();
         selff.update_cam_light();
         selff.add_region_meshes(&simulation.material_regions, regions_offset);
 
         Ok(selff)
+    }
+
+    /// Position the camera with the default camera setup.
+    pub fn default_cam_setup(&mut self) {
+        let n_cells = self.n_cells;
+        let cell_size = self.cell_size;
+        let grid_extents = n_cells.as_vect() * cell_size;
+        let grid_diagonal_len = grid_extents.length();
+        self
+            .set_clipping_planes(
+                cell_size.min_element() / 1000.,
+                grid_diagonal_len * 1000.
+            )
+            .camera
+            .look_at(
+                grid_extents.to_3d(Vec3::splat(grid_extents.element_sum() / DIM as Real)) * 2.,
+                grid_extents.to_3d(Vec3::ZERO) / 2.
+            );
+
+        #[cfg(not(feature = "dim1"))]
+        self.camera.set_up_axis(Vec3::Z);
+        #[cfg(not(feature = "dim3"))]
+        self.camera.set_projection(Projection::Orthographic);
+        #[cfg(feature = "dim3")]
+        self.camera.set_projection(Projection::Perspective);
     }
 
     /// Set clipping planes of camera. Conserves FOV, eye, at, and projection; the rest

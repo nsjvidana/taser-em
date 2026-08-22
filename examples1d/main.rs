@@ -47,18 +47,8 @@ pub async fn single_slab() -> anyhow::Result<()> {
         &MeshConverter::ConvexDecomposition,
         Vec3::ONE
     )?;
-    // let wavelen = C_0 / f_max;
-    // let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
-    // simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
 
     // Compute source position and gaussian curve data points
-    // simulation.add_source(Source::Dipole {
-    //     dipole_type: DipoleType::Electric,
-    //     position: slab_extents[0] - wavelen * 3.,
-    //     t_start: 0.,
-    //     vals: Source::gaussian_max_f(f_max, 1., dt),
-    //     moment: Vec3::Y
-    // });
     simulation.add_source(Source::TFSF {
         spatial_axis: SpatialAxis::Z,
         direction: WaveDirection::Negative,
@@ -77,15 +67,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
 
     // Create viewer and set up camera
-    let n_cells = state.n_cells;
-    let grid_extents = n_cells.as_vect() * cell_size;
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
-    testbed.set_clipping_planes(cell_size / 3., cell_size * 1000.)
-        .camera
-        .look_at(
-            Vec3::new(-grid_extents, 0., grid_extents / 2.),
-            Vec3::Z * grid_extents / 2.
-        );
 
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];

@@ -19,8 +19,8 @@ pub async fn cube() -> anyhow::Result<()> {
         cells_per_wavelength: 13,
         material_resolution: NonZeroU32::new(3).unwrap(),
         spacer_region_widths: LayerWidths::splat_spatial(10)
-            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(3))
-            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(3)),
+            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(6))
+            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(6)),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -53,9 +53,6 @@ pub async fn cube() -> anyhow::Result<()> {
         &MeshConverter::ConvexDecomposition,
         Vec3::splat(wavelen)
     )?;
-    // let box_min = Vect::splat(-20.);
-    // let box_max = box_min + Vect::splat(wavelen);
-    // simulation.material_regions.fill_region(box_min, box_max, mat);
 
     // Compute source position and gaussian curve data points
     let source = Source::TFSF {
@@ -92,17 +89,6 @@ pub async fn cube() -> anyhow::Result<()> {
         vis_mode
     ).await?;
     testbed.window.set_ambient(0.5);
-    let n_cells = state.n_cells;
-    let grid_extents = n_cells.as_vect() * cell_size;
-    let grid_center = grid_extents / 2.;
-    testbed
-        .set_clipping_planes(cell_size.min_element() / 100., cell_size.max_element() * 1000.)
-        .camera
-        .look_at(
-            Vec3::new(-grid_extents.x * 2., -grid_extents.y * 2., grid_extents.z * 2.),
-            grid_center
-        );
-    testbed.camera.set_up_axis_dir(Vec3::Z);
 
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];

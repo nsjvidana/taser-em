@@ -46,9 +46,6 @@ pub async fn single_rod() -> anyhow::Result<()> {
         &MeshConverter::ConvexDecomposition,
         Vec3::splat(wavelen)
     )?;
-    // let quad_min = Vect::splat(-20.);
-    // let quad_max = Vect::splat(-20. + wavelen * 0.5);
-    // simulation.material_regions.fill_region(quad_min, quad_max, mat);
 
     // Compute source position and gaussian curve data points
     let source_values = Source::gaussian_max_f(f_max, 1., dt);
@@ -77,19 +74,9 @@ pub async fn single_rod() -> anyhow::Result<()> {
     )?;
     
     // Create viewer and set up camera
-    let n_cells = state.n_cells;
-    let grid_extents = n_cells.as_vect() * cell_size;
-    let grid_center = grid_extents / 2.;
     let vis_mode = VisualizationMode::default();
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode).await?;
     testbed.window.set_ambient(0.5);
-    testbed.set_clipping_planes(cell_size.min_element() / 3., cell_size.max_element() * 1000.)
-        .camera
-        .look_at(
-            grid_center.to_3d(Vec3::Z * grid_extents.length()),
-            grid_center.to_3d(Vec3::ZERO)
-        );
-    testbed.camera.set_up_axis(Vec3::Z);
         
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
