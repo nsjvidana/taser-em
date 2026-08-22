@@ -11,12 +11,16 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 1.0e9; // 1.0 GHz
-    let sim_speed = 10;
+    let sim_speed = 8;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 19.,
+        cells_per_wavelength: 13,
         material_resolution: NonZeroU32::new(3).unwrap(),
+        spacer_region_widths: LayerWidths::splat_spatial(10)
+            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(3))
+            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(3)),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -35,17 +39,23 @@ pub async fn cube() -> anyhow::Result<()> {
     let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);
 
     // Compute cube dimensions
-    let wavelen = C_0 / f_max;
-    let box_min = Vect::splat(-20.);
-    let box_max = box_min + Vect::splat(wavelen);
     // construct the cube
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(2.),
         mu_r: Vec3::splat(1.),
-        sig: Vec3::splat(0.3),
-        // sig: Vec3::splat(0.),
+        // sig: Vec3::splat(0.3),
+        sig: Vec3::splat(0.),
     };
-    simulation.material_regions.fill_region(box_min, box_max, mat);
+    let wavelen = C_0 / f_max;
+    simulation.material_regions.load_path_as_region(
+        mat,
+        "assets/suzanne.obj".to_string(),
+        &MeshConverter::ConvexDecomposition,
+        Vec3::splat(wavelen)
+    )?;
+    // let box_min = Vect::splat(-20.);
+    // let box_max = box_min + Vect::splat(wavelen);
+    // simulation.material_regions.fill_region(box_min, box_max, mat);
 
     // Compute source position and gaussian curve data points
     let source = Source::TFSF {
@@ -78,7 +88,7 @@ pub async fn cube() -> anyhow::Result<()> {
                 color_max: RED
             }
         )
-        .with_alpha(AlphaMode::Mask(0.2));
+        .with_alpha(AlphaMode::Mask(0.1));
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,
