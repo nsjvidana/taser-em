@@ -153,7 +153,7 @@ impl MaterialRegions {
                             mesh: Some(RegionMesh {
                                 vertices: loaded_shape.raw_mesh.vertices
                                     .into_iter()
-                                    .map(|arr| Vec3::from_array(arr))
+                                    .map(|arr| Vec3::from_array(arr) * scale)
                                     .collect(),
                                 indices: loaded_shape.raw_mesh.faces,
                             })

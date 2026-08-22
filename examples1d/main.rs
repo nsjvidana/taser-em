@@ -34,10 +34,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
-    // Compute slab dimensions
-    let wavelen = C_0 / f_max;
-    let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
-    // construct the slab
+    // Construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
@@ -50,6 +47,8 @@ pub async fn single_slab() -> anyhow::Result<()> {
         &MeshConverter::ConvexDecomposition,
         Vec3::ONE
     )?;
+    // let wavelen = C_0 / f_max;
+    // let slab_extents = [Vect::splat(-20.), Vect::splat(-20. + wavelen * 2.)];
     // simulation.material_regions.fill_region(slab_extents[0], slab_extents[1], mat);
 
     // Compute source position and gaussian curve data points

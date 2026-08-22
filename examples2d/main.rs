@@ -1,3 +1,4 @@
+use kiss3d::glamx::Vec3;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
 
@@ -31,18 +32,23 @@ pub async fn single_rod() -> anyhow::Result<()> {
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
-    // Compute slab dimensions
+    // Construct device
     let wavelen = C_0 / f_max;
-    let quad_min = Vect::splat(-20.);
-    let quad_max = Vect::splat(-20. + wavelen * 0.5);
-    // construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
         sig: Vec3::splat(0.3),
         // sig: Vec3::splat(0.),
     };
-    simulation.material_regions.fill_region(quad_min, quad_max, mat);
+    simulation.material_regions.load_path_as_region(
+        mat,
+        "assets/suzanne.obj".to_string(),
+        &MeshConverter::ConvexDecomposition,
+        Vec3::splat(wavelen)
+    )?;
+    // let quad_min = Vect::splat(-20.);
+    // let quad_max = Vect::splat(-20. + wavelen * 0.5);
+    // simulation.material_regions.fill_region(quad_min, quad_max, mat);
 
     // Compute source position and gaussian curve data points
     let source_values = Source::gaussian_max_f(f_max, 1., dt);
@@ -55,13 +61,6 @@ pub async fn single_rod() -> anyhow::Result<()> {
         polarization: Vec3::Z,
         tfsf_buffer_width: LayerWidths::splat_spatial(3)
             .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(8)),
-    });
-    simulation.add_source(Source::Dipole {
-        dipole_type: DipoleType::Magnetic,
-        position: quad_min - wavelen,
-        t_start: dt * 1000.,
-        vals: source_values,
-        moment: Vec3::new(1., 1., 0.).normalize(),
     });
     
     // Set up buffers and pipeline
