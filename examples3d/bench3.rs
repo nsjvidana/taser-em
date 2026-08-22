@@ -1,22 +1,15 @@
-mod bench3;
-
-use kiss3d::prelude::*;
 use std::num::NonZeroU32;
 use taser_em3d::prelude::*;
-use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
+use taser_em3d::re_exports::anyhow;
 
-#[kiss3d::main]
-async fn main() {
-    // cube().await.unwrap()
-    bench3::benchmark().await.unwrap()
-}
+const WARMUP: usize = 10;
+const BENCH: usize = 1000;
 
-pub async fn cube() -> anyhow::Result<()> {
-    // Gaussian pulse maximum frequency
+pub async fn benchmark() -> anyhow::Result<()> {
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 3;
+    let sim_speed = 1;
 
-    // Simulation parameters w/ default stability values.
+    // Params
     let stability = FdtdStability {
         dt_safety_factor: 16.,
         cells_per_wavelength: 10,
@@ -35,14 +28,12 @@ pub async fn cube() -> anyhow::Result<()> {
         material_discretization: MaterialDiscretization::Smooth {
             resolution: stability.material_resolution
         },
-        // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseElectric
     };
     let pml_params = PmlParameters::new(dt);
     let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);
 
-    // Compute cube dimensions
-    // construct the cube
+    // Device
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(4.),
         mu_r: Vec3::splat(1.),
@@ -50,13 +41,11 @@ pub async fn cube() -> anyhow::Result<()> {
         sig: Vec3::splat(0.),
     };
     let wavelen = C_0 / f_max;
-    simulation.material_regions.load_trimesh_regions(
-        mat,
-        "assets/suzanne.obj",
-        Vec3::splat(wavelen)
-    )?;
+    let box_min = Vect::splat(-20.);
+    let box_max = box_min + Vect::splat(wavelen);
+    simulation.material_regions.fill_region(box_min, box_max, mat);
 
-    // Compute source position and gaussian curve data points
+    // Source
     let source = Source::TFSF {
         spatial_axis: SpatialAxis::Z,
         direction: WaveDirection::Positive,
@@ -69,51 +58,55 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Set up buffers and pipeline
     let backend = create_backend().await?;
-    let backend_name = backend_name(&backend);
-    println!("Running on backend: {backend_name}");
     let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
 
-    // Create viewer and set up camera
-    let vis_mode = VisualizationMode::default()
-        .with_color_mode(
-            ColorMode::FixedRange {
-                v_min: 0.,
-                v_max: 0.5,
-                color_min: TRANSPARENT,
-                color_max: RED
-            }
-        );
-    let mut testbed = FdtdTestbedViewer::new(
-        &simulation,
-        &stability,
-        vis_mode
-    ).await?;
-    testbed.window.set_ambient(0.5);
-
-    // Render simulation
-    let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
-    while testbed.render_frame(&dn_field).await {
-        state.dn.read(&backend, &mut dn_field).await?;
-        backend.synchronize()?;
-
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("3d fdtd example", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
-        drop(pass);
-        state.dn.encode_copy_cmd(&mut encoder)?;
-        backend.submit(encoder)?;
+    macro_rules! get_n_steps {
+        () => {{
+            let mut encoder = backend.begin_encoding();
+            state.t_idx.encode_copy_cmd(&mut encoder)?;
+            backend.submit(encoder)?;
+            backend.synchronize()?;
+            let mut steps = vec![0];
+            state.t_idx.read(&backend, &mut steps).await?;
+            steps[0]
+        }};
     }
 
-    let mut encoder = backend.begin_encoding();
-    state.t_idx.encode_copy_cmd(&mut encoder)?;
-    backend.submit(encoder)?;
-    backend.synchronize()?;
-    let mut steps = vec![0];
-    state.t_idx.read(&backend, &mut steps).await?;
-    println!("Simulated time: {} ns", dt * steps[0] as f32 * 1e9);
-    println!("steps: {}", steps[0]);
+    // Run simulation
+    for _ in 0..WARMUP {
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("3d fdtd bench", None);
+        pipeline.dispatch_steps(&mut pass, &mut state)?;
+        drop(pass);
+        backend.submit(encoder)?;
+        backend.synchronize()?;
+    }
+
+    let n_steps_warmup = get_n_steps!();
+
+    let start = std::time::Instant::now();
+    for _ in 0..BENCH {
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("3d fdtd bench", None);
+        pipeline.dispatch_steps(&mut pass, &mut state)?;
+        drop(pass);
+        backend.submit(encoder)?;
+        backend.synchronize()?;
+    }
+    let elapsed = start.elapsed();
+
+    let n_steps = get_n_steps!() - n_steps_warmup;
+
+    let avg_per_step = elapsed / n_steps;
+    let backend_name = backend_name(&backend);
+    println!("===============3D FDTD BENCHMARK===============");
+    println!("Backend: {backend_name}");
+    println!("Average time per step: {avg_per_step:?}");
+    println!("Number of steps steps: {n_steps}");
+    println!("Steps per GPU submission (simulation speed): {sim_speed}");
+    println!("Number of cells: {}", state.n_cells.element_product());
 
     Ok(())
 }
