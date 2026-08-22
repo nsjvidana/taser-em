@@ -121,13 +121,15 @@ impl MaterialRegions {
         self
     }
 
-    /// Loads a scene of meshes/objects from `path` and appends it to `self` as a [`MaterialRegion`].
-    /// Returns a reference to the newly-added [`MaterialRegion`].
+    /// Loads a scene of meshes/objects from `path` and appends it to `self` as a
+    /// collection of [`MaterialRegion`].
+    /// Returns mutable references to the newly-added [`MaterialRegion`]s.
     ///
-    /// The poses of objects in scene at `path` are assumed to be local to the region, thus the `pose` field
-    /// of the new [`MaterialRegion`] will be [`Pose3::IDENTITY`] no matter what.
-    pub fn load_trimesh_region(&mut self, material: ElectricMaterial, path: impl AsRef<Path>) -> Result<&mut MaterialRegion, Error> {
-        self.load_path_as_region(material, path, &MeshConverter::TriMesh, Vector::ONE)
+    /// The poses of objects in scene at `path` are assumed to be world-space, thus the `pose` field
+    /// of the new [`MaterialRegion`]s will be the poses of the objects as described in the file
+    /// at `path`.
+    pub fn load_trimesh_region(&mut self, material: ElectricMaterial, path: impl AsRef<Path>) -> Result<&mut [MaterialRegion], Error> {
+        self.load_path_as_region(material, path, &MeshConverter::TriMesh, Vec3::ONE)
     }
 
     /// A version of [`MaterialRegions::load_trimesh_region`] with more parameters for the user to control.
@@ -136,20 +138,24 @@ impl MaterialRegions {
         material: ElectricMaterial,
         path: impl AsRef<Path>,
         converter: &MeshConverter,
-        scale: Vector,
-    ) -> Result<&mut MaterialRegion, Error> {
+        scale: Vec3,
+    ) -> Result<&mut [MaterialRegion], Error> {
         let shapes = load_from_path(path, converter, scale)?
             .into_iter()
             .map(|v| v.map(|s| (s.pose, s.shape)))
             .map(|v| v.map_err(Error::from))
             .collect::<Result<Vec<(Pose3, SharedShape)>, _>>()?;
+        let num_shapes = shapes.len();
+        for (pose, shape) in shapes.into_iter() {
+            self.regions.push(MaterialRegion {
+                shape,
+                pose,
+                material,
+            });
+        }
 
-        self.regions.push(MaterialRegion::new(
-            parry3d::shape::Compound::new(shapes),
-            Pose3::IDENTITY,
-            material,
-        ));
-        Ok(self.regions.last_mut().unwrap())
+        let num_regions = self.regions.len();
+        Ok(&mut self.regions[num_regions - num_shapes..])
     }
 
     pub fn compute_bounding_box(&self) -> Aabb {
