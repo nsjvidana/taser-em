@@ -121,18 +121,14 @@ impl MaterialRegions {
         self
     }
 
+
     /// Loads a scene of meshes/objects from `path` and appends it to `self` as a
     /// collection of [`MaterialRegion`].
-    /// Returns mutable references to the newly-added [`MaterialRegion`]s.
+    /// Returns mutable slice of the newly-added [`MaterialRegion`]s stored in `self`.
     ///
-    /// The poses of objects in scene at `path` are assumed to be world-space, thus the `pose` field
+    /// The transforms of objects in scene at `path` are assumed to be world-space, thus the `pose` field
     /// of the new [`MaterialRegion`]s will be the poses of the objects as described in the file
     /// at `path`.
-    pub fn load_trimesh_region(&mut self, material: ElectricMaterial, path: impl AsRef<Path>) -> Result<&mut [MaterialRegion], Error> {
-        self.load_path_as_region(material, path, &MeshConverter::TriMesh, Vec3::ONE)
-    }
-
-    /// A version of [`MaterialRegions::load_trimesh_region`] with more parameters for the user to control.
     pub fn load_path_as_region(
         &mut self,
         material: ElectricMaterial,
