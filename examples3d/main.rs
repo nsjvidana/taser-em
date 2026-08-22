@@ -11,7 +11,7 @@ async fn main() {
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 1.0e9; // 1.0 GHz
-    let sim_speed = 8;
+    let sim_speed = 10;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -49,7 +49,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let wavelen = C_0 / f_max;
     simulation.material_regions.load_path_as_region(
         mat,
-        "assets/suzanne.obj".to_string(),
+        "assets/suzanne.obj",
         &MeshConverter::ConvexDecomposition,
         Vec3::splat(wavelen)
     )?;
@@ -83,12 +83,11 @@ pub async fn cube() -> anyhow::Result<()> {
         .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.1,
+                v_max: 0.6,
                 color_min: TRANSPARENT,
                 color_max: RED
             }
-        )
-        .with_alpha(AlphaMode::Mask(0.1));
+        );
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,

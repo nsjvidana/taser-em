@@ -43,7 +43,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     };
     simulation.material_regions.load_path_as_region(
         mat,
-        "assets/suzanne.obj".to_string(),
+        "assets/suzanne.obj",
         &MeshConverter::ConvexDecomposition,
         Vec3::ONE
     )?;

@@ -26,7 +26,6 @@ pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
-    pub vector_field_color: Color,
     pub material_region_alpha: f32,
     pub n_cells: GridIndex,
     pub cell_size: Vect,
@@ -35,6 +34,11 @@ pub struct FdtdTestbedViewer {
 }
 
 impl FdtdTestbedViewer {
+    pub const DEFAULT_REGION_ALPHA: f32 = cfg_select! {
+        feature = "dim3" => 1.,
+        _ => 0.8
+    };
+
     /// Create a new testbed viewer window, camera, and scene with the visualized vector field color
     /// set to [`RED`].
     ///
@@ -42,7 +46,7 @@ impl FdtdTestbedViewer {
     pub async fn new(
         simulation: &FdtdLossySimulation,
         stability: &FdtdStability,
-        mut visualization_mode: VisualizationMode
+        mut visualization_mode: VisualizationMode,
     ) -> anyhow::Result<Self> {
         let title_dim = cfg_select! {
             feature = "dim1" => "1D",
@@ -69,8 +73,7 @@ impl FdtdTestbedViewer {
             window,
             camera,
             scene,
-            vector_field_color: RED,
-            material_region_alpha: 0.9,
+            material_region_alpha: Self::DEFAULT_REGION_ALPHA,
             n_cells,
             cell_size,
             polarization_mode: simulation.fdtd_parameters.polarization_mode,
@@ -184,11 +187,15 @@ pub enum VisualizationMode {
         instanced_cube: SceneNode3d,
         instances: Vec<InstanceData3d>,
         color_mode: ColorMode,
-        alpha_mode: AlphaMode
+        alpha_mode: AlphaMode,
+        alpha: f32
     },
 }
 
 impl VisualizationMode {
+    #[cfg(feature = "dim3")]
+    pub const DEFAULT_VISUAL_ALPHA: f32 = 0.2;
+
     /// Return a new [`Self`] with a new [`ColorMode`]
     pub fn with_color_mode(mut self, color_mode: ColorMode) -> Self {
         cfg_select! {
@@ -216,10 +223,14 @@ impl VisualizationMode {
         }
     }
 
+    /// Set the [`AlphaMode`] and alpha of the visual.
+    ///
+    /// `vis_alpha` edits the alpha applied to the entire visual.
     #[cfg(feature = "dim3")]
-    pub fn with_alpha(mut self, alpha: AlphaMode) -> Self {
-        let Self::Cubes { alpha_mode, .. } = &mut self;
-        *alpha_mode = alpha;
+    pub fn with_alpha(mut self, alpha_mode: AlphaMode, vis_alpha: f32) -> Self {
+        let Self::Cubes { alpha_mode: mode, alpha, .. } = &mut self;
+        *mode = alpha_mode;
+        *alpha = vis_alpha;
         self
     }
 
@@ -279,11 +290,12 @@ impl VisualizationMode {
                 },
                 #[cfg(feature = "dim3")]
                 VisualizationMode::Cubes {
-                    instanced_cube, instances, color_mode, alpha_mode
+                    instanced_cube, instances, color_mode, alpha_mode, alpha
                 } => {
                     *instanced_cube = scene
                         .add_cube(cell_size.x, cell_size.y, cell_size.z)
-                        .set_alpha_mode(*alpha_mode);
+                        .set_alpha_mode(*alpha_mode)
+                        .set_color(WHITE.with_alpha(*alpha));
                     initialize_instances(instanced_cube, instances, color_mode)
                 }
             }
@@ -397,7 +409,8 @@ impl Default for VisualizationMode {
                 color_mode: ColorMode::default(),
                 instanced_cube: SceneNode3d::default(),
                 instances: vec![],
-                alpha_mode: AlphaMode::Mask(ColorMode::DEFAULT_ALPHA * 0.1),
+                alpha_mode: AlphaMode::Blend,
+                alpha: Self::DEFAULT_VISUAL_ALPHA,
             }
         }
     }
