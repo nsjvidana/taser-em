@@ -10,17 +10,17 @@ async fn main() {
 
 pub async fn cube() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
-    let f_max = 1.0e9; // 1.0 GHz
-    let sim_speed = 10;
+    let f_max = 2.4e9; // 2.4 GHz
+    let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 19.,
-        cells_per_wavelength: 13,
+        dt_safety_factor: 16.,
+        cells_per_wavelength: 10,
         material_resolution: NonZeroU32::new(3).unwrap(),
         spacer_region_widths: LayerWidths::splat_spatial(10)
-            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(6))
-            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(6)),
+            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(5))
+            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(5)),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -77,7 +77,7 @@ pub async fn cube() -> anyhow::Result<()> {
         .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.6,
+                v_max: 0.4,
                 color_min: TRANSPARENT,
                 color_max: RED
             }
@@ -92,8 +92,8 @@ pub async fn cube() -> anyhow::Result<()> {
     // Render simulation
     let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
     while testbed.render_frame(&dn_field).await {
-        backend.synchronize()?;
         state.dn.read(&backend, &mut dn_field).await?;
+        backend.synchronize()?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("3d fdtd example", None);
@@ -103,7 +103,6 @@ pub async fn cube() -> anyhow::Result<()> {
         state.t_idx.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
     }
-
     let mut steps = vec![0];
     state.t_idx.read(&backend, &mut steps).await?;
     println!("Simulated time: {} ns", dt * steps[0] as f32 * 1e9);
