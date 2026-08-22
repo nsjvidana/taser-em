@@ -117,7 +117,7 @@ impl MaterialRegions {
         let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
         let pose = Pose3::from_translation(middle);
 
-        self.regions.push(MaterialRegion::new(shape, pose, material));
+        self.regions.push(MaterialRegion::new(SharedShape::new(shape), pose, material));
         self
     }
 
@@ -142,20 +142,30 @@ impl MaterialRegions {
     ) -> Result<&mut [MaterialRegion], Error> {
         let shapes = load_from_path(path, converter, scale)?
             .into_iter()
-            .map(|v| v.map(|s| (s.pose, s.shape)))
             .map(|v| v.map_err(Error::from))
-            .collect::<Result<Vec<(Pose3, SharedShape)>, _>>()?;
-        let num_shapes = shapes.len();
-        for (pose, shape) in shapes.into_iter() {
-            self.regions.push(MaterialRegion {
-                shape,
-                pose,
-                material,
-            });
-        }
+            .collect::<Result<Vec<_>, _>>()?;
+        let new_regions_start = self.regions.len();
+        self.regions
+            .extend(
+                shapes.into_iter()
+                    .map(|loaded_shape| {
+                        MaterialRegion {
+                            shape: loaded_shape.shape,
+                            pose: loaded_shape.pose,
+                            material,
+                            #[cfg(feature = "render")]
+                            mesh: Some(RegionMesh {
+                                vertices: loaded_shape.raw_mesh.vertices
+                                    .into_iter()
+                                    .map(|arr| Vec3::from_array(arr))
+                                    .collect(),
+                                indices: loaded_shape.raw_mesh.faces,
+                            })
+                        }
+                    })
+            );
 
-        let num_regions = self.regions.len();
-        Ok(&mut self.regions[num_regions - num_shapes..])
+        Ok(&mut self.regions[new_regions_start..])
     }
 
     pub fn compute_bounding_box(&self) -> Aabb {
@@ -177,16 +187,30 @@ pub struct MaterialRegion {
     pub shape: SharedShape,
     pub pose: Pose3,
     pub material: ElectricMaterial,
+    #[cfg(feature = "render")]
+    pub mesh: Option<RegionMesh>,
 }
 
 impl MaterialRegion {
-    pub fn new(shape: impl Shape, pose: Pose3, material: ElectricMaterial) -> Self {
+    pub fn new(shape: SharedShape, pose: Pose3, material: ElectricMaterial) -> Self {
+        #[cfg(feature = "render")]
+        let mesh = crate::util::generate_mesh(&*shape)
+            .map(|(vertices, indices)| RegionMesh { vertices, indices });
         Self {
-            shape: SharedShape::new(shape),
+            shape,
             pose,
             material,
+            #[cfg(feature = "render")]
+            mesh,
         }
     }
+}
+
+#[cfg(feature = "render")]
+#[derive(Clone, Debug)]
+pub struct RegionMesh {
+    pub vertices: Vec<Vec3>,
+    pub indices: Vec<[u32; 3]>,
 }
 
 /// The materials in a Yee Grid. It's the output of functions like [`MaterialRegions::material_yee_grid`].

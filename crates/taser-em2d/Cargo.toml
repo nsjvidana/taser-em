@@ -15,6 +15,7 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = [
 [features]
 default = ["dim2", "webgpu"]
 dim2 = []
+render = []
 unsafe_remove_boundchecks = ["taser-em-shaders/unsafe_remove_boundchecks"]
 rayon = ["dep:rayon"]
 webgpu = ["khal/webgpu"]
