@@ -11,11 +11,11 @@ async fn main() {
 pub async fn single_slab() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 5;
+    let sim_speed = 10;
 
     // Simulation parameters
     let stability = FdtdStability {
-        dt_safety_factor: 10.,
+        dt_safety_factor: 18.,
         cells_per_wavelength: 10,
         spacer_region_widths: LayerWidths::splat_spatial(20),
         ..Default::default()
@@ -41,10 +41,9 @@ pub async fn single_slab() -> anyhow::Result<()> {
         // sig: Vec3::splat(0.3),
         sig: Vec3::splat(0.),
     };
-    simulation.material_regions.load_path_as_region(
+    simulation.material_regions.load_trimesh_region(
         mat,
         "assets/suzanne.obj",
-        &MeshConverter::ConvexDecomposition,
         Vec3::ONE
     )?;
 

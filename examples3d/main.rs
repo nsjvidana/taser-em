@@ -47,10 +47,9 @@ pub async fn cube() -> anyhow::Result<()> {
         sig: Vec3::splat(0.),
     };
     let wavelen = C_0 / f_max;
-    simulation.material_regions.load_path_as_region(
+    simulation.material_regions.load_trimesh_regions(
         mat,
         "assets/suzanne.obj",
-        &MeshConverter::ConvexDecomposition,
         Vec3::splat(wavelen)
     )?;
 

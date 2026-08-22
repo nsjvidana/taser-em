@@ -120,6 +120,24 @@ impl MaterialRegions {
         self
     }
 
+    /// Utility function that uses [`MaterialRegions::load_path_as_regions`] to load a mesh at `path`
+    /// as a trimesh region using helpful [`TriMeshFlags`].
+    ///
+    /// `mesh_path` must contain a mesh whose face indices are **oriented**.
+    pub fn load_trimesh_regions(
+        &mut self,
+        material: ElectricMaterial,
+        mesh_path: impl AsRef<Path>,
+        scale: Vec3,
+    ) -> Result<&mut [MaterialRegion], Error> {
+        self.load_path_as_regions(
+            material,
+            mesh_path,
+            &MeshConverter::TriMeshWithFlags(TriMeshFlags::ORIENTED | TriMeshFlags::FIX_INTERNAL_EDGES),
+            scale
+        )
+    }
+
 
     /// Loads a scene of meshes/objects from `path` and appends it to `self` as a
     /// collection of [`MaterialRegion`].
@@ -128,7 +146,7 @@ impl MaterialRegions {
     /// The transforms of objects in scene at `path` are assumed to be world-space, thus the `pose` field
     /// of the new [`MaterialRegion`]s will be the poses of the objects as described in the file
     /// at `path`.
-    pub fn load_path_as_region(
+    pub fn load_path_as_regions(
         &mut self,
         material: ElectricMaterial,
         path: impl AsRef<Path>,
