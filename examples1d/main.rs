@@ -53,7 +53,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
         direction: WaveDirection::Negative,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        polarization: Vec3::Y,
+        polarization: Vec3::Y, // Ey/Hx mode
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
     });
 
@@ -64,32 +64,28 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
+    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
     // Create viewer and set up camera
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
 
     // Render simulation
-    let mut dn_field = vec![Vec4::ZERO; state.dn.len()];
-    while testbed.render_frame(&dn_field).await {
-        backend.synchronize()?;
-        state.dn.read(&backend, &mut dn_field).await?;
+    while testbed.render_frame(&readback.get_dn_field()).await {
+        readback.read_back_dn(&backend)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("1d fdtd example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
-        state.dn.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
+        readback.request_copy_dn(&backend, &state)?;
     }
 
-    let mut encoder = backend.begin_encoding();
-    state.t_idx.encode_copy_cmd(&mut encoder)?;
-    backend.submit(encoder)?;
-    backend.synchronize()?;
-    let mut steps = vec![0];
-    state.t_idx.read(&backend, &mut steps).await?;
-    println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
-    println!("steps: {:?}", steps[0]);
+    readback.request_copy_t_idx(&backend, &state)?;
+    readback.read_back_t_idx(&backend)?;
+    let n_steps = readback.get_t_idx();
+    println!("simulated time: {:?} ns", n_steps as Real * dt * 1e9);
+    println!("steps: {:?}", n_steps);
 
     Ok(())
 }
