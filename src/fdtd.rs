@@ -7,6 +7,7 @@ use khal::Shader;
 use parry3d::bounding_volume::Aabb;
 use std::num::{NonZeroI32, NonZeroU32};
 use taser_em_shaders::fdtd::*;
+use taser_em_shaders::boundary::*;
 use crate::*;
 
 #[cfg(feature = "rayon")]
