@@ -78,7 +78,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     testbed.window.set_ambient(0.5);
         
     // Render simulation
-    let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
+    let mut dn_field = vec![Vec4::ZERO; state.dn.len()];
     while testbed.render_frame(&dn_field).await {
         backend.synchronize()?;
         state.dn.read(&backend, &mut dn_field).await?;

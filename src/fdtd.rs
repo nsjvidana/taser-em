@@ -1,7 +1,7 @@
 pub use taser_em_shaders::fdtd::DipoleType;
 
 use crate::prelude::*;
-use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
+use crate::gpu_util::CreateGpuBuffer;
 use derivative::Derivative;
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
@@ -137,11 +137,11 @@ impl FdtdLossySimulation {
         let buffers = FdtdLossyState {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
-            t_idx: 0.create_gpu_buffer_readable(backend)?,
+            t_idx: 0.create_gpu_buffer(backend)?,
             // Vector fields
-            h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-            dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-            en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+            h: zeroed_vector_field.create_gpu_buffer(backend)?,
+            dn: zeroed_vector_field.create_gpu_buffer(backend)?,
+            en: zeroed_vector_field.create_gpu_buffer(backend)?,
             // For computing source terms
             dipoles: dipoles.create_gpu_buffer(backend)?,
             source_vals: source_vals.create_gpu_buffer(backend)?,
@@ -349,11 +349,11 @@ impl FdtdLossySimulation {
         Ok(TfsfDispatchData {
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
             tfsf_masks: tfsf_masks.create_gpu_buffer(backend)?,
-            corrections: corrections.create_gpu_buffer_readable(backend)?,
+            corrections: corrections.create_gpu_buffer(backend)?,
             auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,
-            h: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
-            dn: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
-            en: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            h: zeroed_vector_fields.create_gpu_buffer(backend)?,
+            dn: zeroed_vector_fields.create_gpu_buffer(backend)?,
+            en: zeroed_vector_fields.create_gpu_buffer(backend)?,
             aux_grid_thread_count,
             mask_init_thread_count,
         })
@@ -459,9 +459,9 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
             self.boundary_condition.call(
                 pass,
                 &state.grid_params,
-                &mut state.h.buffer,
-                &mut state.dn.buffer,
-                &mut state.en.buffer,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
                 state.thread_count
             )?;
 
@@ -471,13 +471,13 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                     pass,
                     DispatchGrid::ThreadCount(thread_count),
                     &tfsf.tfsf_sources,
-                    &state.t_idx.buffer,
-                    &mut tfsf.corrections.buffer,
+                    &state.t_idx,
+                    &mut tfsf.corrections,
                     &state.source_vals,
                     &tfsf.auxgr_coeffs,
-                    &mut tfsf.h.buffer,
-                    &mut tfsf.dn.buffer,
-                    &mut tfsf.en.buffer
+                    &mut tfsf.h,
+                    &mut tfsf.dn,
+                    &mut tfsf.en
                 )?;
             }
 
@@ -485,12 +485,12 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
                 &state.grid_params,
-                &state.t_idx.buffer,
+                &state.t_idx,
                 &mut state.source_terms,
                 &state.source_vals,
                 &state.dipoles,
                 &state.tfsf_dispatch_data.tfsf_sources,
-                &state.tfsf_dispatch_data.corrections.buffer,
+                &state.tfsf_dispatch_data.corrections,
                 &state.tfsf_dispatch_data.tfsf_masks,
                 &state.grid_coeffs,
             )?;
@@ -498,10 +498,10 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
                 &state.grid_params,
-                &mut state.t_idx.buffer,
-                &mut state.h.buffer,
-                &mut state.dn.buffer,
-                &mut state.en.buffer,
+                &mut state.t_idx,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
                 &mut state.int_terms,
                 &state.grid_coeffs,
                 &state.source_terms,
@@ -523,11 +523,11 @@ pub struct FdtdParameters {
 pub struct FdtdLossyState {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
-    pub t_idx: GpuBufferReadable<u32>,
+    pub t_idx: GpuBuffer<u32>,
     // Vector fields
-    pub h: GpuBufferReadable<Vec4>,
-    pub dn: GpuBufferReadable<Vec4>,
-    pub en: GpuBufferReadable<Vec4>,
+    pub h: GpuBuffer<Vec4>,
+    pub dn: GpuBuffer<Vec4>,
+    pub en: GpuBuffer<Vec4>,
     // For computing source terms
     pub dipoles: GpuBuffer<GpuDipole>,
     pub tfsf_dispatch_data: TfsfDispatchData,
@@ -551,11 +551,11 @@ pub struct TfsfParameters {
 pub struct TfsfDispatchData {
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
     pub tfsf_masks: GpuBuffer<TfsfMask>,
-    pub corrections: GpuBufferReadable<TfsfSourceValues>,
+    pub corrections: GpuBuffer<TfsfSourceValues>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
-    pub h: GpuBufferReadable<AuxVect>,
-    pub dn: GpuBufferReadable<AuxVect>,
-    pub en: GpuBufferReadable<AuxVect>,
+    pub h: GpuBuffer<AuxVect>,
+    pub dn: GpuBuffer<AuxVect>,
+    pub en: GpuBuffer<AuxVect>,
     /// Thread count for simulating auxiliary grids for ALL plane waves.
     ///
     /// Is [`None`] only when there are no TF/SF sources.
@@ -814,7 +814,7 @@ macro_rules! request_copy_fn {
         #[inline]
         pub fn $name(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
             if self.$read.is_idle() {
-                self.$read.request_copy(backend, &state.$buf.buffer, 0)?
+                self.$read.request_copy(backend, &state.$buf, 0)?
             }
             Ok(())
         }

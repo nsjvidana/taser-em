@@ -69,7 +69,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
 
     // Render simulation
-    let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
+    let mut dn_field = vec![Vec4::ZERO; state.dn.len()];
     while testbed.render_frame(&dn_field).await {
         backend.synchronize()?;
         state.dn.read(&backend, &mut dn_field).await?;
