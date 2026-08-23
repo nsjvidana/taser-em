@@ -458,15 +458,6 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         state: &mut FdtdLossyState,
     ) -> TaserResult<()> {
         for _ in 0..self.num_steps_per_submission {
-            self.boundary_condition.call(
-                pass,
-                &state.grid_params,
-                &mut state.h,
-                &mut state.dn,
-                &mut state.en,
-                state.thread_count
-            )?;
-
             if let Some(thread_count) = state.tfsf_dispatch_data.aux_grid_thread_count {
                 let tfsf = &mut state.tfsf_dispatch_data;
                 self.aux_grid_update.call(
@@ -497,6 +488,15 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.grid_coeffs,
             )?;
 
+            self.boundary_condition.pre_update(
+                pass,
+                &state.grid_params,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
+                state.thread_count
+            )?;
+
             self.h_update.call(
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
@@ -508,7 +508,14 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.source_terms,
             )?;
 
-            // TODO: 2nd boundary condition update
+            self.boundary_condition.before_de_update(
+                pass,
+                &state.grid_params,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
+                state.thread_count
+            )?;
 
             self.dn_en_update.call(
                 pass,
@@ -665,7 +672,7 @@ pub struct PECBoundary {
 }
 
 impl BoundaryCondition for PECBoundary {
-    fn call(
+    fn pre_update(
         &mut self,
         pass: &mut GpuPass,
         grid: &GpuBuffer<GridParameters>,
@@ -685,11 +692,33 @@ impl BoundaryCondition for PECBoundary {
         )?;
         Ok(())
     }
+
+    fn before_de_update(
+        &mut self,
+        _pass: &mut GpuPass,
+        _grid: &GpuBuffer<GridParameters>,
+        _h: &mut GpuBuffer<Vec4>,
+        _dn: &mut GpuBuffer<Vec4>,
+        _en: &mut GpuBuffer<Vec4>,
+        _thread_count: [u32; 3],
+    ) -> TaserResult<()> { Ok(()) }
 }
 
+// TODO: might need different parameters for anisotropy...
 pub trait BoundaryCondition {
-    // TODO: might need different parameters for anisotropy...
-    fn call(
+    /// Runs before updating H field in each step.
+    fn pre_update(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        dn: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> TaserResult<()>;
+
+    /// Runs before update the Dn and En fields in each step (runs immediately after H field update).
+    fn before_de_update(
         &mut self,
         pass: &mut GpuPass,
         grid: &GpuBuffer<GridParameters>,
