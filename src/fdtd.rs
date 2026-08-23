@@ -802,9 +802,11 @@ pub struct FdtdStateReadback {
     h: Vec<Vec4>,
     dn: Vec<Vec4>,
     en: Vec<Vec4>,
+    t_idx: Vec<u32>,
     h_read: GpuReadback<Vec4>,
     dn_read: GpuReadback<Vec4>,
     en_read: GpuReadback<Vec4>,
+    t_idx_read: GpuReadback<u32>,
     #[cfg(not(feature = "dim3"))]
     mode: FdtdSimulationMode
 }
@@ -860,9 +862,11 @@ impl FdtdStateReadback {
             h: zeroed_vector_field.clone(),
             dn: zeroed_vector_field.clone(),
             en: zeroed_vector_field,
+            t_idx: vec![0],
             h_read: GpuReadback::new(backend, cell_count)?,
             dn_read: GpuReadback::new(backend, cell_count)?,
             en_read: GpuReadback::new(backend, cell_count)?,
+            t_idx_read: GpuReadback::new(backend, 1)?,
             #[cfg(not(feature = "dim3"))]
             mode,
         })
@@ -878,6 +882,7 @@ impl FdtdStateReadback {
     request_copy_fn!(request_copy_h, h_read, h);
     request_copy_fn!(request_copy_dn, dn_read, dn);
     request_copy_fn!(request_copy_en, en_read, en);
+    request_copy_fn!(request_copy_t_idx, t_idx_read, t_idx);
 
     /// Blocks the thread until all vector fields are read into `self`. Must be called after [`request_copy_fields`](Self::request_copy_fields).
     #[inline]
@@ -890,6 +895,7 @@ impl FdtdStateReadback {
     read_back_fn!(read_back_h, try_read_back_h);
     read_back_fn!(read_back_dn, try_read_back_dn);
     read_back_fn!(read_back_en, try_read_back_en);
+    read_back_fn!(read_back_t_idx, try_read_back_t_idx);
 
     /// Try reading back fields without blocking the thread. Must be called after [`request_copy_fields`](Self::request_copy_fields).
     pub fn try_read_back_fields(&mut self, backend: &GpuBackend) -> bool {
@@ -901,10 +907,14 @@ impl FdtdStateReadback {
     try_read_back_fn!(try_read_back_h, h_read, h);
     try_read_back_fn!(try_read_back_dn, dn_read, dn);
     try_read_back_fn!(try_read_back_en, en_read, en);
+    try_read_back_fn!(try_read_back_t_idx, t_idx_read, t_idx);
 
     get_vect_field_fn!(get_h_field, h);
     get_vect_field_fn!(get_dn_field, dn);
     get_vect_field_fn!(get_en_field, en);
+
+    /// The time step index that the simulation is currently on (a.k.a. the number of time steps simulated).
+    pub fn get_t_idx(&self) -> u32 { self.t_idx[0] }
 
     /// Get magnitudes of the H vector field.
     /// Must be called after [`request_copy_h`](Self::request_copy_h) for updated results.
