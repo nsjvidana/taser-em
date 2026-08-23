@@ -5,6 +5,7 @@ use khal::BufferUsages;
 
 pub type GpuResult<T> = core::result::Result<T, GpuBackendError>;
 
+// TODO: delete this struct
 pub struct GpuBufferReadable<T: DeviceValue + NoUninit + AnyBitPattern> {
     pub buffer: GpuBuffer<T>,
     pub readback: GpuBuffer<T>,

@@ -789,3 +789,189 @@ impl Source {
         vals
     }
 }
+
+/// Utility struct for reading back vector field data to the host device (CPU):
+///
+/// Follow these steps to get data:
+/// 1. Use the request functions (e.g. [`request_copy_dn`](Self::request_copy_dn), [`request_copy_fields`](Self::request_copy_fields))
+///    to initiate readback.
+/// 2. Use the read-back functions to copy data to the CPU (e.g. [`read_back_dn`](Self::read_back_dn), [`read_back_fields`](Self::read_back_fields))
+/// 3. Get vector field data using the appropriate functions
+///    (e.g. [`get_dn_field`](Self::get_dn_field), [`dn_magnitudes`](Self::dn_magnitudes), [`h_magnitudes`](Self::h_magnitudes))
+pub struct FdtdStateReadback {
+    h: Vec<Vec4>,
+    dn: Vec<Vec4>,
+    en: Vec<Vec4>,
+    h_read: GpuReadback<Vec4>,
+    dn_read: GpuReadback<Vec4>,
+    en_read: GpuReadback<Vec4>,
+    #[cfg(not(feature = "dim3"))]
+    mode: FdtdSimulationMode
+}
+
+macro_rules! request_copy_fn {
+    ($name:ident, $read:ident, $buf:ident) => {
+        #[inline]
+        pub fn $name(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+            if self.$read.is_idle() {
+                self.$read.request_copy(backend, &state.$buf.buffer, 0)?
+            }
+            Ok(())
+        }
+    };
+}
+
+macro_rules! try_read_back_fn {
+    ($name:ident, $read:ident, $vfield:ident) => {
+        #[inline]
+        pub fn $name(&mut self, backend: &GpuBackend) -> bool { self.$read.try_take(backend, &mut self.$vfield) }
+    };
+}
+
+macro_rules! read_back_fn {
+    ($name:ident, $try_read:ident) => {
+        #[inline]
+        pub fn $name(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+            backend.synchronize()?;
+            self.$try_read(backend);
+            Ok(())
+        }
+    };
+}
+
+macro_rules! get_vect_field_fn {
+    ($name:ident, $field:ident) => {
+        #[inline]
+        pub fn $name(&self) -> &Vec<Vec4> {
+            &self.$field
+        }
+    };
+}
+
+impl FdtdStateReadback {
+    pub fn new(
+        backend: &GpuBackend,
+        state: &FdtdLossyState,
+        #[cfg(not(feature = "dim3"))] mode: FdtdSimulationMode
+    ) -> TaserResult<Self> {
+        let zeroed_vector_field = vec![Vec4::ZERO; state.n_cells.element_product() as usize];
+        let cell_count = zeroed_vector_field.len();
+        Ok(Self {
+            h: zeroed_vector_field.clone(),
+            dn: zeroed_vector_field.clone(),
+            en: zeroed_vector_field,
+            h_read: GpuReadback::new(backend, cell_count)?,
+            dn_read: GpuReadback::new(backend, cell_count)?,
+            en_read: GpuReadback::new(backend, cell_count)?,
+            #[cfg(not(feature = "dim3"))]
+            mode,
+        })
+    }
+
+    /// Submit a command for copying all vector field data from GPU to CPU
+    pub fn request_copy_fields(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+        self.request_copy_h(backend, state)?;
+        self.request_copy_dn(backend, state)?;
+        self.request_copy_en(backend, state)
+    }
+
+    request_copy_fn!(request_copy_h, h_read, h);
+    request_copy_fn!(request_copy_dn, dn_read, dn);
+    request_copy_fn!(request_copy_en, en_read, en);
+
+    /// Blocks the thread until all vector fields are read into `self`. Must be called after [`request_copy_fields`](Self::request_copy_fields).
+    #[inline]
+    pub fn read_back_fields(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back_fields(backend);
+        Ok(())
+    }
+
+    read_back_fn!(read_back_h, try_read_back_h);
+    read_back_fn!(read_back_dn, try_read_back_dn);
+    read_back_fn!(read_back_en, try_read_back_en);
+
+    /// Try reading back fields without blocking the thread. Must be called after [`request_copy_fields`](Self::request_copy_fields).
+    pub fn try_read_back_fields(&mut self, backend: &GpuBackend) -> bool {
+        self.try_read_back_h(backend) &&
+            self.try_read_back_dn(backend) &&
+            self.try_read_back_en(backend)
+    }
+
+    try_read_back_fn!(try_read_back_h, h_read, h);
+    try_read_back_fn!(try_read_back_dn, dn_read, dn);
+    try_read_back_fn!(try_read_back_en, en_read, en);
+
+    get_vect_field_fn!(get_h_field, h);
+    get_vect_field_fn!(get_dn_field, dn);
+    get_vect_field_fn!(get_en_field, en);
+
+    /// Get magnitudes of the H vector field.
+    /// Must be called after [`request_copy_h`](Self::request_copy_h) for updated results.
+    pub fn h_magnitudes(&self) -> Vec<Real> {
+        cfg_select! {
+            feature = "dim3" => self.h.iter().map(|v| v.length()).collect(),
+            _ =>
+                match self.mode {
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::EyHx => self.h.iter().map(|v| v.x).collect(),
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::ExHy => self.h.iter().map(|v| v.y).collect(),
+                    #[cfg(feature = "dim2")]
+                    FdtdSimulationMode::TransverseMagneticZ => self.h.iter().map(|v| v.xy().length()).collect(),
+                    #[cfg(feature = "dim3")]
+                    FdtdSimulationMode::TransverseElectricZ => self.h.iter().map(|v| v.z).collect(),
+                },
+        }
+    }
+
+    /// Get magnitudes of the Dn vector field.
+    /// Must be called after [`request_copy_dn`](Self::request_copy_dn) for updated results.
+    pub fn dn_magnitudes(&self) -> Vec<Real> {
+        cfg_select! {
+            feature = "dim3" => self.dn.iter().map(|v| v.length()).collect(),
+            _ =>
+                match self.mode {
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::EyHx => self.dn.iter().map(|v| v.y).collect(),
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::ExHy => self.dn.iter().map(|v| v.x).collect(),
+                    #[cfg(feature = "dim2")]
+                    FdtdSimulationMode::TransverseMagneticZ => self.dn.iter().map(|v| v.z).collect(),
+                    #[cfg(feature = "dim3")]
+                    FdtdSimulationMode::TransverseElectricZ => self.dn.iter().map(|v| v.xy().length()).collect(),
+                },
+        }
+    }
+
+    /// Get magnitudes of the En vector field.
+    /// Must be called after [`request_copy_en`](Self::request_copy_en) for updated results.
+    pub fn en_magnitudes(&self) -> Vec<Real> {
+        cfg_select! {
+            feature = "dim3" => self.en.iter().map(|v| v.length()).collect(),
+            _ =>
+                match self.mode {
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::EyHx => self.en.iter().map(|v| v.y).collect(),
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::ExHy => self.en.iter().map(|v| v.x).collect(),
+                    #[cfg(feature = "dim2")]
+                    FdtdSimulationMode::TransverseMagneticZ => self.en.iter().map(|v| v.z).collect(),
+                    #[cfg(feature = "dim3")]
+                    FdtdSimulationMode::TransverseElectricZ => self.en.iter().map(|v| v.xy().length()).collect(),
+                }
+        }
+    }
+}
+
+#[cfg(not(feature = "dim3"))]
+pub enum FdtdSimulationMode {
+    #[cfg(feature = "dim1")]
+    EyHx,
+    #[cfg(feature = "dim1")]
+    ExHy,
+    #[cfg(feature = "dim2")]
+    TransverseMagneticZ,
+    #[cfg(feature = "dim3")]
+    TransverseElectricZ,
+}
