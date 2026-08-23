@@ -399,7 +399,8 @@ pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     boundary_condition: BC,
     aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
-    update: GpuLossyUpdate,
+    h_update: GpuLossyHUpdate,
+    dn_en_update: GpuLossyDnEnUpdate,
     pub num_steps_per_submission: usize,
 }
 
@@ -410,7 +411,8 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
-            update: GpuLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            dn_en_update: GpuLossyDnEnUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             num_steps_per_submission,
         })
     }
@@ -494,7 +496,21 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.tfsf_dispatch_data.tfsf_masks,
                 &state.grid_coeffs,
             )?;
-            self.update.call(
+
+            self.h_update.call(
+                pass,
+                DispatchGrid::ThreadCount(state.thread_count),
+                &state.grid_params,
+                &mut state.h,
+                &mut state.en,
+                &mut state.int_terms,
+                &state.grid_coeffs,
+                &state.source_terms,
+            )?;
+
+            // TODO: 2nd boundary condition update
+
+            self.dn_en_update.call(
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
                 &state.grid_params,
