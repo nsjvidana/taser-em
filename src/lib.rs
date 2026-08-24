@@ -1,5 +1,6 @@
 pub mod fdtd;
 pub mod grid;
+pub mod boundary_condition;
 pub mod consts {
     /// Speed of EM wave in free space
     pub const C_0: f32 = 299792458.0;
