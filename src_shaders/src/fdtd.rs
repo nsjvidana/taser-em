@@ -365,18 +365,18 @@ pub struct TfsfSourceValues {
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
 #[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
-pub fn gpu_lossy_update(
+pub fn gpu_lossy_h_update(
     #[spirv(global_invocation_id)] cell_idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &mut u32,
     // Vector fields
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &mut [Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dn: &mut [Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] en: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
     // Field update terms
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
+    #[cfg_attr(feature = "dim1", allow(unused_variables))]
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)]
+        integrals: &mut [PmlIntegrals],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] source_terms: &[SourceTerms],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
@@ -388,12 +388,12 @@ pub fn gpu_lossy_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = grid_coeffs.read(idx);
+    #[cfg(not(feature = "dim1"))]
     let mut ints = integrals.read(idx);
 
     let en_self = en.read(idx);
     let src = source_terms.read(idx);
 
-    // H update
     let en_neighbors = [
         cfg_select! {
             feature = "dim1" => Vec4::ZERO,
@@ -446,8 +446,41 @@ pub fn gpu_lossy_update(
     }
     h_self += src.h;
     h.write(idx, h_self);
+}
 
-    // Dn update
+#[spirv_bindgen]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn gpu_lossy_dn_en_update(
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] steps: &mut u32,
+    // Vector fields
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dn: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] en: &mut [Vec4],
+    // Field update terms
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
+) {
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let boundary_or_out_of_bounds = cell_idx.cmpeq(GridIndex::ZERO).any() ||
+        cell_idx.cmpeq(n_cells - 1).any() ||
+        cell_idx3.cmpge(grid.n_cells3).any();
+    if boundary_or_out_of_bounds { return; }
+
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+
+    let m = grid_coeffs.read(idx);
+    let mut ints = integrals.read(idx);
+
+    let en_self = en.read(idx);
+    let h_self = h.read(idx);
+    let src = source_terms.read(idx);
+
     let mut dn_self = dn.read(idx);
     let h_neighbors = [
         cfg_select! {
