@@ -68,3 +68,37 @@ impl BoundaryCondition for PECBoundary {
         Ok(())
     }
 }
+
+#[derive(Shader)]
+pub struct PeriodicXBoundary {
+    en_kernel: GpuPeriodicXEn,
+    h_kernel: GpuPeriodicXH,
+}
+
+impl BoundaryCondition for PeriodicXBoundary {
+    fn pre_update(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        _: &mut GpuBuffer<Vec4>,
+        _: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> TaserResult<()> {
+        Ok(self.en_kernel.call(pass, DispatchGrid::ThreadCount(thread_count), grid, en, )?)
+    }
+
+    fn before_de_update(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        _: &mut GpuBuffer<Vec4>,
+        _: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> TaserResult<()> {
+        Ok(self.h_kernel.call(pass, DispatchGrid::ThreadCount(thread_count), grid, h, )?)
+    }
+}
+
+// TODO: blanket impl BoundaryCondition for tuple of boundary conditions No newline at end of file
