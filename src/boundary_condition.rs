@@ -101,4 +101,42 @@ impl BoundaryCondition for PeriodicXBoundary {
     }
 }
 
-// TODO: blanket impl BoundaryCondition for tuple of boundary conditions No newline at end of file
+macro_rules! impl_bc_tuple {
+    ($($T:ident),*) => {
+        impl<$($T: BoundaryCondition),*> BoundaryCondition for ($($T,)*) {
+            fn pre_update(
+                &mut self,
+                pass: &mut GpuPass,
+                grid: &GpuBuffer<GridParameters>,
+                h: &mut GpuBuffer<Vec4>,
+                dn: &mut GpuBuffer<Vec4>,
+                en: &mut GpuBuffer<Vec4>,
+                thread_count: [u32; 3],
+            ) -> TaserResult<()> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                $($T.pre_update(pass, grid, h, dn, en, thread_count)?;)*
+                Ok(())
+            }
+
+            fn before_de_update(
+                &mut self,
+                pass: &mut GpuPass,
+                grid: &GpuBuffer<GridParameters>,
+                h: &mut GpuBuffer<Vec4>,
+                dn: &mut GpuBuffer<Vec4>,
+                en: &mut GpuBuffer<Vec4>,
+                thread_count: [u32; 3],
+            ) -> TaserResult<()> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                $($T.before_de_update(pass, grid, h, dn, en, thread_count)?;)*
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_bc_tuple!(A);
+impl_bc_tuple!(A, B);
+impl_bc_tuple!(A, B, C);
