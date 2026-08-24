@@ -33,6 +33,7 @@ pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 pub mod prelude {
     pub use crate::fdtd::*;
     pub use crate::grid::*;
+    pub use crate::boundary_condition::*;
     pub use crate::consts::*;
     pub use crate::mesh_loading::*;
     pub use crate::util::*;
