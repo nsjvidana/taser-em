@@ -1,7 +1,7 @@
 pub use taser_em_shaders::fdtd::DipoleType;
 
 use crate::prelude::*;
-use crate::gpu_util::{CreateGpuBuffer, CreateGpuBufferReadable, GpuBufferReadable};
+use crate::gpu_util::CreateGpuBuffer;
 use derivative::Derivative;
 use khal::Shader;
 use parry3d::bounding_volume::Aabb;
@@ -137,11 +137,11 @@ impl FdtdLossySimulation {
         let buffers = FdtdLossyState {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
-            t_idx: 0.create_gpu_buffer_readable(backend)?,
+            t_idx: 0.create_gpu_buffer(backend)?,
             // Vector fields
-            h: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-            dn: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
-            en: zeroed_vector_field.create_gpu_buffer_readable(backend)?,
+            h: zeroed_vector_field.create_gpu_buffer(backend)?,
+            dn: zeroed_vector_field.create_gpu_buffer(backend)?,
+            en: zeroed_vector_field.create_gpu_buffer(backend)?,
             // For computing source terms
             dipoles: dipoles.create_gpu_buffer(backend)?,
             source_vals: source_vals.create_gpu_buffer(backend)?,
@@ -349,11 +349,11 @@ impl FdtdLossySimulation {
         Ok(TfsfDispatchData {
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
             tfsf_masks: tfsf_masks.create_gpu_buffer(backend)?,
-            corrections: corrections.create_gpu_buffer_readable(backend)?,
+            corrections: corrections.create_gpu_buffer(backend)?,
             auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,
-            h: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
-            dn: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
-            en: zeroed_vector_fields.create_gpu_buffer_readable(backend)?,
+            h: zeroed_vector_fields.create_gpu_buffer(backend)?,
+            dn: zeroed_vector_fields.create_gpu_buffer(backend)?,
+            en: zeroed_vector_fields.create_gpu_buffer(backend)?,
             aux_grid_thread_count,
             mask_init_thread_count,
         })
@@ -399,7 +399,8 @@ pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     boundary_condition: BC,
     aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
-    update: GpuLossyUpdate,
+    h_update: GpuLossyHUpdate,
+    dn_en_update: GpuLossyDnEnUpdate,
     pub num_steps_per_submission: usize,
 }
 
@@ -410,7 +411,8 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
-            update: GpuLossyUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            dn_en_update: GpuLossyDnEnUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             num_steps_per_submission,
         })
     }
@@ -456,28 +458,19 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
         state: &mut FdtdLossyState,
     ) -> TaserResult<()> {
         for _ in 0..self.num_steps_per_submission {
-            self.boundary_condition.call(
-                pass,
-                &state.grid_params,
-                &mut state.h.buffer,
-                &mut state.dn.buffer,
-                &mut state.en.buffer,
-                state.thread_count
-            )?;
-
             if let Some(thread_count) = state.tfsf_dispatch_data.aux_grid_thread_count {
                 let tfsf = &mut state.tfsf_dispatch_data;
                 self.aux_grid_update.call(
                     pass,
                     DispatchGrid::ThreadCount(thread_count),
                     &tfsf.tfsf_sources,
-                    &state.t_idx.buffer,
-                    &mut tfsf.corrections.buffer,
+                    &state.t_idx,
+                    &mut tfsf.corrections,
                     &state.source_vals,
                     &tfsf.auxgr_coeffs,
-                    &mut tfsf.h.buffer,
-                    &mut tfsf.dn.buffer,
-                    &mut tfsf.en.buffer
+                    &mut tfsf.h,
+                    &mut tfsf.dn,
+                    &mut tfsf.en
                 )?;
             }
 
@@ -485,23 +478,53 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
                 &state.grid_params,
-                &state.t_idx.buffer,
+                &state.t_idx,
                 &mut state.source_terms,
                 &state.source_vals,
                 &state.dipoles,
                 &state.tfsf_dispatch_data.tfsf_sources,
-                &state.tfsf_dispatch_data.corrections.buffer,
+                &state.tfsf_dispatch_data.corrections,
                 &state.tfsf_dispatch_data.tfsf_masks,
                 &state.grid_coeffs,
             )?;
-            self.update.call(
+
+            self.boundary_condition.pre_update(
+                pass,
+                &state.grid_params,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
+                state.thread_count
+            )?;
+
+            self.h_update.call(
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
                 &state.grid_params,
-                &mut state.t_idx.buffer,
-                &mut state.h.buffer,
-                &mut state.dn.buffer,
-                &mut state.en.buffer,
+                &mut state.h,
+                &mut state.en,
+                &mut state.int_terms,
+                &state.grid_coeffs,
+                &state.source_terms,
+            )?;
+
+            self.boundary_condition.before_de_update(
+                pass,
+                &state.grid_params,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
+                state.thread_count
+            )?;
+
+            self.dn_en_update.call(
+                pass,
+                DispatchGrid::ThreadCount(state.thread_count),
+                &state.grid_params,
+                &mut state.t_idx,
+                &mut state.h,
+                &mut state.dn,
+                &mut state.en,
                 &mut state.int_terms,
                 &state.grid_coeffs,
                 &state.source_terms,
@@ -523,11 +546,11 @@ pub struct FdtdParameters {
 pub struct FdtdLossyState {
     // Uniforms / thread-independent vars
     pub grid_params: GpuBuffer<GridParameters>,
-    pub t_idx: GpuBufferReadable<u32>,
+    pub t_idx: GpuBuffer<u32>,
     // Vector fields
-    pub h: GpuBufferReadable<Vec4>,
-    pub dn: GpuBufferReadable<Vec4>,
-    pub en: GpuBufferReadable<Vec4>,
+    pub h: GpuBuffer<Vec4>,
+    pub dn: GpuBuffer<Vec4>,
+    pub en: GpuBuffer<Vec4>,
     // For computing source terms
     pub dipoles: GpuBuffer<GpuDipole>,
     pub tfsf_dispatch_data: TfsfDispatchData,
@@ -551,11 +574,11 @@ pub struct TfsfParameters {
 pub struct TfsfDispatchData {
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
     pub tfsf_masks: GpuBuffer<TfsfMask>,
-    pub corrections: GpuBufferReadable<TfsfSourceValues>,
+    pub corrections: GpuBuffer<TfsfSourceValues>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
-    pub h: GpuBufferReadable<AuxVect>,
-    pub dn: GpuBufferReadable<AuxVect>,
-    pub en: GpuBufferReadable<AuxVect>,
+    pub h: GpuBuffer<AuxVect>,
+    pub dn: GpuBuffer<AuxVect>,
+    pub en: GpuBuffer<AuxVect>,
     /// Thread count for simulating auxiliary grids for ALL plane waves.
     ///
     /// Is [`None`] only when there are no TF/SF sources.
@@ -649,7 +672,7 @@ pub struct PECBoundary {
 }
 
 impl BoundaryCondition for PECBoundary {
-    fn call(
+    fn pre_update(
         &mut self,
         pass: &mut GpuPass,
         grid: &GpuBuffer<GridParameters>,
@@ -669,11 +692,33 @@ impl BoundaryCondition for PECBoundary {
         )?;
         Ok(())
     }
+
+    fn before_de_update(
+        &mut self,
+        _pass: &mut GpuPass,
+        _grid: &GpuBuffer<GridParameters>,
+        _h: &mut GpuBuffer<Vec4>,
+        _dn: &mut GpuBuffer<Vec4>,
+        _en: &mut GpuBuffer<Vec4>,
+        _thread_count: [u32; 3],
+    ) -> TaserResult<()> { Ok(()) }
 }
 
+// TODO: might need different parameters for anisotropy...
 pub trait BoundaryCondition {
-    // TODO: might need different parameters for anisotropy...
-    fn call(
+    /// Runs before updating H field in each step.
+    fn pre_update(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        dn: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> TaserResult<()>;
+
+    /// Runs before update the Dn and En fields in each step (runs immediately after H field update).
+    fn before_de_update(
         &mut self,
         pass: &mut GpuPass,
         grid: &GpuBuffer<GridParameters>,
@@ -788,4 +833,200 @@ impl Source {
         }
         vals
     }
+}
+
+/// Utility struct for reading back vector field data to the host device (CPU):
+///
+/// Follow these steps to get data:
+/// 1. Use the request functions (e.g. [`request_copy_dn`](Self::request_copy_dn), [`request_copy_fields`](Self::request_copy_fields))
+///    to initiate readback.
+/// 2. Use the read-back functions to copy data to the CPU (e.g. [`read_back_dn`](Self::read_back_dn), [`read_back_fields`](Self::read_back_fields))
+/// 3. Get vector field data using the appropriate functions
+///    (e.g. [`get_dn_field`](Self::get_dn_field), [`dn_magnitudes`](Self::dn_magnitudes), [`h_magnitudes`](Self::h_magnitudes))
+pub struct FdtdStateReadback {
+    h: Vec<Vec4>,
+    dn: Vec<Vec4>,
+    en: Vec<Vec4>,
+    t_idx: Vec<u32>,
+    h_read: GpuReadback<Vec4>,
+    dn_read: GpuReadback<Vec4>,
+    en_read: GpuReadback<Vec4>,
+    t_idx_read: GpuReadback<u32>,
+    #[cfg(not(feature = "dim3"))]
+    mode: FdtdSimulationMode
+}
+
+macro_rules! request_copy_fn {
+    ($name:ident, $read:ident, $buf:ident) => {
+        #[inline]
+        pub fn $name(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+            if self.$read.is_idle() {
+                self.$read.request_copy(backend, &state.$buf, 0)?
+            }
+            Ok(())
+        }
+    };
+}
+
+macro_rules! try_read_back_fn {
+    ($name:ident, $read:ident, $vfield:ident) => {
+        #[inline]
+        pub fn $name(&mut self, backend: &GpuBackend) -> bool { self.$read.try_take(backend, &mut self.$vfield) }
+    };
+}
+
+macro_rules! read_back_fn {
+    ($name:ident, $try_read:ident) => {
+        #[inline]
+        pub fn $name(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+            backend.synchronize()?;
+            self.$try_read(backend);
+            Ok(())
+        }
+    };
+}
+
+macro_rules! get_vect_field_fn {
+    ($name:ident, $field:ident) => {
+        #[inline]
+        pub fn $name(&self) -> &Vec<Vec4> {
+            &self.$field
+        }
+    };
+}
+
+impl FdtdStateReadback {
+    pub fn new(
+        backend: &GpuBackend,
+        state: &FdtdLossyState,
+        #[cfg(not(feature = "dim3"))] mode: FdtdSimulationMode
+    ) -> TaserResult<Self> {
+        let zeroed_vector_field = vec![Vec4::ZERO; state.n_cells.element_product() as usize];
+        let cell_count = zeroed_vector_field.len();
+        Ok(Self {
+            h: zeroed_vector_field.clone(),
+            dn: zeroed_vector_field.clone(),
+            en: zeroed_vector_field,
+            t_idx: vec![0],
+            h_read: GpuReadback::new(backend, cell_count)?,
+            dn_read: GpuReadback::new(backend, cell_count)?,
+            en_read: GpuReadback::new(backend, cell_count)?,
+            t_idx_read: GpuReadback::new(backend, 1)?,
+            #[cfg(not(feature = "dim3"))]
+            mode,
+        })
+    }
+
+    /// Submit a command for copying all vector field data from GPU to CPU
+    pub fn request_copy_fields(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+        self.request_copy_h(backend, state)?;
+        self.request_copy_dn(backend, state)?;
+        self.request_copy_en(backend, state)
+    }
+
+    request_copy_fn!(request_copy_h, h_read, h);
+    request_copy_fn!(request_copy_dn, dn_read, dn);
+    request_copy_fn!(request_copy_en, en_read, en);
+    request_copy_fn!(request_copy_t_idx, t_idx_read, t_idx);
+
+    /// Blocks the thread until all vector fields are read into `self`. Must be called after [`request_copy_fields`](Self::request_copy_fields).
+    #[inline]
+    pub fn read_back_fields(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back_fields(backend);
+        Ok(())
+    }
+
+    read_back_fn!(read_back_h, try_read_back_h);
+    read_back_fn!(read_back_dn, try_read_back_dn);
+    read_back_fn!(read_back_en, try_read_back_en);
+    read_back_fn!(read_back_t_idx, try_read_back_t_idx);
+
+    /// Try reading back fields without blocking the thread. Must be called after [`request_copy_fields`](Self::request_copy_fields).
+    pub fn try_read_back_fields(&mut self, backend: &GpuBackend) -> bool {
+        self.try_read_back_h(backend) &&
+            self.try_read_back_dn(backend) &&
+            self.try_read_back_en(backend)
+    }
+
+    try_read_back_fn!(try_read_back_h, h_read, h);
+    try_read_back_fn!(try_read_back_dn, dn_read, dn);
+    try_read_back_fn!(try_read_back_en, en_read, en);
+    try_read_back_fn!(try_read_back_t_idx, t_idx_read, t_idx);
+
+    get_vect_field_fn!(get_h_field, h);
+    get_vect_field_fn!(get_dn_field, dn);
+    get_vect_field_fn!(get_en_field, en);
+
+    /// The time step index that the simulation is currently on (a.k.a. the number of time steps simulated).
+    pub fn get_t_idx(&self) -> u32 { self.t_idx[0] }
+
+    /// Get magnitudes of the H vector field.
+    /// Must be called after [`request_copy_h`](Self::request_copy_h) for updated results.
+    pub fn h_magnitudes(&self) -> Vec<Real> {
+        cfg_select! {
+            feature = "dim3" => self.h.iter().map(|v| v.length()).collect(),
+            _ =>
+                match self.mode {
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::EyHx => self.h.iter().map(|v| v.x).collect(),
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::ExHy => self.h.iter().map(|v| v.y).collect(),
+                    #[cfg(feature = "dim2")]
+                    FdtdSimulationMode::TransverseMagneticZ => self.h.iter().map(|v| v.xy().length()).collect(),
+                    #[cfg(feature = "dim3")]
+                    FdtdSimulationMode::TransverseElectricZ => self.h.iter().map(|v| v.z).collect(),
+                },
+        }
+    }
+
+    /// Get magnitudes of the Dn vector field.
+    /// Must be called after [`request_copy_dn`](Self::request_copy_dn) for updated results.
+    pub fn dn_magnitudes(&self) -> Vec<Real> {
+        cfg_select! {
+            feature = "dim3" => self.dn.iter().map(|v| v.length()).collect(),
+            _ =>
+                match self.mode {
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::EyHx => self.dn.iter().map(|v| v.y).collect(),
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::ExHy => self.dn.iter().map(|v| v.x).collect(),
+                    #[cfg(feature = "dim2")]
+                    FdtdSimulationMode::TransverseMagneticZ => self.dn.iter().map(|v| v.z).collect(),
+                    #[cfg(feature = "dim3")]
+                    FdtdSimulationMode::TransverseElectricZ => self.dn.iter().map(|v| v.xy().length()).collect(),
+                },
+        }
+    }
+
+    /// Get magnitudes of the En vector field.
+    /// Must be called after [`request_copy_en`](Self::request_copy_en) for updated results.
+    pub fn en_magnitudes(&self) -> Vec<Real> {
+        cfg_select! {
+            feature = "dim3" => self.en.iter().map(|v| v.length()).collect(),
+            _ =>
+                match self.mode {
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::EyHx => self.en.iter().map(|v| v.y).collect(),
+                    #[cfg(feature = "dim1")]
+                    FdtdSimulationMode::ExHy => self.en.iter().map(|v| v.x).collect(),
+                    #[cfg(feature = "dim2")]
+                    FdtdSimulationMode::TransverseMagneticZ => self.en.iter().map(|v| v.z).collect(),
+                    #[cfg(feature = "dim3")]
+                    FdtdSimulationMode::TransverseElectricZ => self.en.iter().map(|v| v.xy().length()).collect(),
+                }
+        }
+    }
+}
+
+#[cfg(not(feature = "dim3"))]
+pub enum FdtdSimulationMode {
+    #[cfg(feature = "dim1")]
+    EyHx,
+    #[cfg(feature = "dim1")]
+    ExHy,
+    #[cfg(feature = "dim2")]
+    TransverseMagneticZ,
+    #[cfg(feature = "dim3")]
+    TransverseElectricZ,
 }

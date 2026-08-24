@@ -61,16 +61,13 @@ pub async fn benchmark() -> anyhow::Result<()> {
     let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
+    let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     macro_rules! get_n_steps {
         () => {{
-            let mut encoder = backend.begin_encoding();
-            state.t_idx.encode_copy_cmd(&mut encoder)?;
-            backend.submit(encoder)?;
-            backend.synchronize()?;
-            let mut steps = vec![0];
-            state.t_idx.read(&backend, &mut steps).await?;
-            steps[0]
+            readback.request_copy_t_idx(&backend, &state)?;
+            readback.read_back_t_idx(&backend)?;
+            readback.get_t_idx()
         }};
     }
 

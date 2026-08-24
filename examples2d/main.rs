@@ -54,7 +54,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
         direction: WaveDirection::Negative,
         t_start: 0.0,
         vals: source_values.clone(),
-        polarization: Vec3::Z,
+        polarization: Vec3::Z,  // Transverse Magnetic Z mode
         tfsf_buffer_width: LayerWidths::splat_spatial(3)
             .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(8)),
     });
@@ -71,6 +71,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
         sim_speed,
         &mut state
     )?;
+    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
     
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default();
@@ -78,27 +79,22 @@ pub async fn single_rod() -> anyhow::Result<()> {
     testbed.window.set_ambient(0.5);
         
     // Render simulation
-    let mut dn_field = vec![Vec4::ZERO; state.dn.buffer.len()];
-    while testbed.render_frame(&dn_field).await {
-        backend.synchronize()?;
-        state.dn.read(&backend, &mut dn_field).await?;
+    while testbed.render_frame(&readback.get_dn_field()).await {
+        readback.read_back_dn(&backend)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
-        state.dn.encode_copy_cmd(&mut encoder)?;
         backend.submit(encoder)?;
+        readback.request_copy_dn(&backend, &state)?;
     }
-
-    let mut encoder = backend.begin_encoding();
-    state.t_idx.encode_copy_cmd(&mut encoder)?;
-    backend.submit(encoder)?;
-    backend.synchronize()?;
-    let mut steps = vec![0];
-    state.t_idx.read(&backend, &mut steps).await?;
-    println!("simulated time: {:?} ns", steps[0] as Real * dt * 1e9);
-    println!("steps: {:?}", steps[0]);
+    
+    readback.request_copy_t_idx(&backend, &state)?;
+    readback.read_back_t_idx(&backend)?;
+    let n_steps = readback.get_t_idx();
+    println!("simulated time: {:?} ns", n_steps as Real * dt * 1e9);
+    println!("steps: {:?}", n_steps);
 
     Ok(())
 }
