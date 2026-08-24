@@ -48,29 +48,40 @@ pub async fn single_rod() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source_values = Source::gaussian_max_f(f_max, 1., dt);
-    simulation.add_source(Source::TFSF {
-        spatial_axis: SpatialAxis::X,
-        // direction: WaveDirection::Positive,
-        direction: WaveDirection::Negative,
+    // simulation.add_source(Source::TFSF {
+    //     spatial_axis: SpatialAxis::X,
+    //     // direction: WaveDirection::Positive,
+    //     direction: WaveDirection::Negative,
+    //     t_start: 0.0,
+    //     vals: source_values.clone(),
+    //     polarization: Vec3::Z,  // Transverse Magnetic Z mode
+    //     tfsf_buffer_width: LayerWidths::splat_spatial(3)
+    //         .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(8)),
+    // });
+    simulation.add_source(Source::Dipole {
+        dipole_type: DipoleType::Electric,
+        position: Vect::from_vec3(simulation.compute_bounding_box().mins - wavelen),
         t_start: 0.0,
-        vals: source_values.clone(),
-        polarization: Vec3::Z,  // Transverse Magnetic Z mode
-        tfsf_buffer_width: LayerWidths::splat_spatial(3)
-            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(8)),
+        vals: source_values,
+        moment: Vec3::Z,
     });
     
     // Set up buffers and pipeline
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
-    let mut state = simulation.finalize(&backend, &stability)?;
-    let boundary_condition = BoundaryConditions::new(
-        PECBoundaryX::from_backend(&backend)?,
-        PECBoundaryY::from_backend(&backend)?,
+    let boundary_conditions = BoundaryConditions::new(
+        PeriodicBoundaryX::from_backend(&backend)?,
+        PeriodicBoundaryY::from_backend(&backend)?,
+        // PECBoundaryY::from_backend(&backend)?,
     );
+    simulation.pml_parameters.widths = simulation.pml_parameters.widths
+        .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(0))
+        .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(0));
+    let mut state = simulation.finalize(&backend, &stability)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(
         &backend,
-        boundary_condition,
+        boundary_conditions,
         sim_speed,
         &mut state
     )?;

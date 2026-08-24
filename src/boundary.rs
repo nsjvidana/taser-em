@@ -248,3 +248,56 @@ unit_type_bc!(X);
 unit_type_bc!(Y);
 #[cfg(feature = "dim2")]
 unit_type_bc!(Z);
+
+macro_rules! periodic_boundary {
+    ($name:ident, $en_kernel:ident, $h_kernel:ident, $boundary_axis:ident) => {
+        #[derive(Shader)]
+        pub struct $name {
+            en_kernel: $en_kernel,
+            h_kernel: $h_kernel,
+        }
+        
+        impl BoundaryCondition<$boundary_axis> for $name {
+            fn pre_update(
+                &mut self,
+                pass: &mut GpuPass,
+                grid: &GpuBuffer<GridParameters>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                en: &mut GpuBuffer<Vec4>,
+                thread_count: [u32; 3],
+            ) -> TaserResult<()> {
+                Ok(self.en_kernel.call(
+                    pass,
+                    DispatchGrid::ThreadCount(thread_count),
+                    grid,
+                    en,
+                )?)
+            }
+        
+            fn before_de_update(
+                &mut self,
+                pass: &mut GpuPass,
+                grid: &GpuBuffer<GridParameters>,
+                h: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                thread_count: [u32; 3],
+            ) -> TaserResult<()> {
+                Ok(self.h_kernel.call(
+                    pass,
+                    DispatchGrid::ThreadCount(thread_count),
+                    grid,
+                    h,
+                )?)
+            }
+        }
+    };
+}
+
+#[cfg(not(feature = "dim1"))]
+periodic_boundary!(PeriodicBoundaryX, GpuPeriodicXEn, GpuPeriodicXH, X);
+#[cfg(not(feature = "dim1"))]
+periodic_boundary!(PeriodicBoundaryY, GpuPeriodicYEn, GpuPeriodicYH, Y);
+#[cfg(not(feature = "dim2"))]
+periodic_boundary!(PeriodicBoundaryZ, GpuPeriodicZEn, GpuPeriodicZH, Z);
