@@ -64,7 +64,10 @@ pub async fn single_rod() -> anyhow::Result<()> {
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
     let mut state = simulation.finalize(&backend, &stability)?;
-    let boundary_condition = PECBoundary::from_backend(&backend)?;
+    let boundary_condition = BoundaryConditions::new(
+        PECBoundaryX::from_backend(&backend)?,
+        PECBoundaryY::from_backend(&backend)?,
+    );
     let mut pipeline = FdtdLossyPipeline::new_initialized(
         &backend,
         boundary_condition,
