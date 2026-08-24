@@ -1,5 +1,6 @@
 pub mod fdtd;
 pub mod grid;
+pub mod boundary;
 pub mod consts {
     /// Speed of EM wave in free space
     pub const C_0: f32 = 299792458.0;
@@ -32,6 +33,7 @@ pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 pub mod prelude {
     pub use crate::fdtd::*;
     pub use crate::grid::*;
+    pub use crate::boundary::*;
     pub use crate::consts::*;
     pub use crate::mesh_loading::*;
     pub use crate::util::*;
