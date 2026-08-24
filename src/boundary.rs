@@ -43,6 +43,88 @@ pub struct Z;
 
 impl BoundaryAxis for Z {}
 
+pub struct BoundaryConditions<X, Y, Z>
+where
+    X: BoundaryCondition<self::X>,
+    Y: BoundaryCondition<self::Y>,
+    Z: BoundaryCondition<self::Z>,
+{
+    pub(crate) x_boundary: X,
+    pub(crate) y_boundary: Y,
+    pub(crate) z_boundary: Z,
+}
+
+impl<X, Y, Z> BoundaryConditions<X, Y, Z>
+where
+    X: BoundaryCondition<self::X>,
+    Y: BoundaryCondition<self::Y>,
+    Z: BoundaryCondition<self::Z>,
+{
+    pub fn pre_update(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        dn: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> TaserResult<()> {
+        self.x_boundary.pre_update(pass, grid, h, dn, en, thread_count)?;
+        self.y_boundary.pre_update(pass, grid, h, dn, en, thread_count)?;
+        self.z_boundary.pre_update(pass, grid, h, dn, en, thread_count)
+    }
+
+    pub fn before_de_update(
+        &mut self,
+        pass: &mut GpuPass,
+        grid: &GpuBuffer<GridParameters>,
+        h: &mut GpuBuffer<Vec4>,
+        dn: &mut GpuBuffer<Vec4>,
+        en: &mut GpuBuffer<Vec4>,
+        thread_count: [u32; 3],
+    ) -> TaserResult<()> {
+        self.x_boundary.before_de_update(pass, grid, h, dn, en, thread_count)?;
+        self.y_boundary.before_de_update(pass, grid, h, dn, en, thread_count)?;
+        self.z_boundary.before_de_update(pass, grid, h, dn, en, thread_count)
+    }
+}
+
+cfg_select! {
+    feature = "dim1" => {
+        impl<Z> BoundaryConditions<(), (), Z>
+        where
+            Z: BoundaryCondition<self::Z>,
+        {
+            pub fn new(z_boundary: Z) -> Self {
+                Self { x_boundary: (), y_boundary: (), z_boundary }
+            }
+        }
+    }
+    feature = "dim2" => {
+        impl<X, Y> BoundaryConditions<X, Y, ()>
+        where
+            X: BoundaryCondition<self::X>,
+            Y: BoundaryCondition<self::Y>,
+        {
+            pub fn new(x_boundary: X, y_boundary: Y) -> Self {
+                Self { x_boundary, y_boundary, z_boundary: () }
+            }
+        }
+    }
+    feature = "dim3" => {
+        impl<X, Y, Z> BoundaryConditions<X, Y, Z>
+        where
+            X: BoundaryCondition<self::X>,
+            Y: BoundaryCondition<self::Y>,
+            Z: BoundaryCondition<self::Z>,
+        {
+            pub fn new(x_boundary: X, y_boundary: Y, z_boundary: Z) -> Self {
+                Self { x_boundary, y_boundary, z_boundary }
+            }
+        }
+    }
+}
+
 #[derive(Shader)]
 pub struct PECBoundary {
     kernel: GpuPecBoundary
@@ -129,3 +211,40 @@ impl_pec_boundary!(PECBoundaryX, X, GpuPecBoundaryX);
 impl_pec_boundary!(PECBoundaryY, Y, GpuPecBoundaryY);
 #[cfg(not(feature = "dim2"))]
 impl_pec_boundary!(PECBoundaryZ, Z, GpuPecBoundaryZ);
+
+macro_rules! unit_type_bc {
+    ($axis:ident) => {
+        impl BoundaryCondition<$axis> for () {
+            fn pre_update(
+                &mut self,
+                _: &mut GpuPass,
+                _: &GpuBuffer<GridParameters>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: [u32; 3],
+            ) -> TaserResult<()> {
+                Ok(())
+            }
+
+            fn before_de_update(
+                &mut self,
+                _: &mut GpuPass,
+                _: &GpuBuffer<GridParameters>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: [u32; 3],
+            ) -> TaserResult<()> {
+                Ok(())
+            }
+        }
+    };
+}
+
+#[cfg(feature = "dim1")]
+unit_type_bc!(X);
+#[cfg(feature = "dim1")]
+unit_type_bc!(Y);
+#[cfg(feature = "dim2")]
+unit_type_bc!(Z);

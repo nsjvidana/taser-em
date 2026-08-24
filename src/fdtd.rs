@@ -394,9 +394,14 @@ impl FdtdLossySimulation {
 }
 
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
-pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
+pub struct FdtdLossyPipeline<BCx, BCy, BCz>
+where
+    BCx: BoundaryCondition<X>,
+    BCy: BoundaryCondition<Y>,
+    BCz: BoundaryCondition<Z>,
+{
     init_tfsf_masks: InitTfsfMasks,
-    boundary_condition: BC,
+    boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
     aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
     h_update: GpuLossyHUpdate,
@@ -404,11 +409,20 @@ pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     pub num_steps_per_submission: usize,
 }
 
-impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
-    pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> TaserResult<Self> {
+impl<BCx, BCy, BCz> FdtdLossyPipeline<BCx, BCy, BCz>
+where
+    BCx: BoundaryCondition<X>,
+    BCy: BoundaryCondition<Y>,
+    BCz: BoundaryCondition<Z>,
+{
+    pub fn new(
+        backend: &GpuBackend,
+        boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
+        num_steps_per_submission: usize
+    ) -> TaserResult<Self> {
         Ok(Self {
-            boundary_condition,
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
+            boundary_conditions,
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
@@ -420,11 +434,11 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     /// Create new pipeline and dispatch initialization shaders to the GPU at the same time (calls [`FdtdLossyPipeline::initialize`]).
     pub fn new_initialized(
         backend: &GpuBackend,
-        boundary_condition: BC,
+        boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
         num_steps_per_submission: usize,
         state: &mut FdtdLossyState
     ) -> TaserResult<Self> {
-        let pipeline = Self::new(backend, boundary_condition, num_steps_per_submission)?;
+        let pipeline = Self::new(backend, boundary_conditions, num_steps_per_submission)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
@@ -488,7 +502,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.grid_coeffs,
             )?;
 
-            self.boundary_condition.pre_update(
+            self.boundary_conditions.pre_update(
                 pass,
                 &state.grid_params,
                 &mut state.h,
@@ -508,7 +522,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.source_terms,
             )?;
 
-            self.boundary_condition.before_de_update(
+            self.boundary_conditions.before_de_update(
                 pass,
                 &state.grid_params,
                 &mut state.h,

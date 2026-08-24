@@ -27,7 +27,10 @@ async fn bench() -> anyhow::Result<()> {
     let mut state = sim.finalize(&backend, &stability)?;
     let startup_dur = start.elapsed();
 
-    let boundary_condition = PECBoundary::from_backend(&backend)?;
+    let boundary_condition = BoundaryConditions::new(
+        PECBoundaryX::from_backend(&backend)?,
+        PECBoundaryY::from_backend(&backend)?
+    );
     let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, 1)?;
     for _ in 0..WARM_UP {
         backend.synchronize()?;
