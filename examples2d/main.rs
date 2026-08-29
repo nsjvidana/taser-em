@@ -93,7 +93,7 @@ pub async fn single_rod() -> anyhow::Result<()> {
     testbed.window.set_ambient(0.5);
         
     // Render simulation
-    while testbed.render_frame(&readback.get_dn_field()).await {
+    while testbed.render_frame(readback.get_dn_field()).await {
         readback.read_back_dn(&backend)?;
 
         let mut encoder = backend.begin_encoding();

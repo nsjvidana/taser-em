@@ -212,6 +212,7 @@ impl_pec_boundary!(PECBoundaryY, Y, GpuPecBoundaryY);
 #[cfg(not(feature = "dim2"))]
 impl_pec_boundary!(PECBoundaryZ, Z, GpuPecBoundaryZ);
 
+#[cfg(not(feature = "dim3"))]
 macro_rules! unit_type_bc {
     ($axis:ident) => {
         impl BoundaryCondition<$axis> for () {

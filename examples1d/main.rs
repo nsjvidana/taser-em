@@ -75,7 +75,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
 
     // Render simulation
-    while testbed.render_frame(&readback.get_dn_field()).await {
+    while testbed.render_frame(readback.get_dn_field()).await {
         readback.read_back_dn(&backend)?;
 
         let mut encoder = backend.begin_encoding();
