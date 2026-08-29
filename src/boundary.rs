@@ -125,43 +125,43 @@ cfg_select! {
     }
 }
 
-#[derive(Shader)]
-pub struct PECBoundary {
-    kernel: GpuPecBoundary
+#[cfg(not(feature = "dim3"))]
+macro_rules! unit_type_boundary {
+    ($axis:ident) => {
+        impl BoundaryCondition<$axis> for () {
+            fn pre_update(
+                &mut self,
+                _: &mut GpuPass,
+                _: &GpuBuffer<GridParameters>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: [u32; 3],
+            ) -> TaserResult<()> {
+                Ok(())
+            }
+
+            fn before_de_update(
+                &mut self,
+                _: &mut GpuPass,
+                _: &GpuBuffer<GridParameters>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: &mut GpuBuffer<Vec4>,
+                _: [u32; 3],
+            ) -> TaserResult<()> {
+                Ok(())
+            }
+        }
+    };
 }
 
-impl BoundaryCondition<X> for PECBoundary {
-    fn pre_update(
-        &mut self,
-        pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3]
-    ) -> TaserResult<()>
-    {
-        self.kernel.call(
-            pass,
-            DispatchGrid::ThreadCount(thread_count),
-            grid,
-            h,
-            dn,
-            en
-        )?;
-        Ok(())
-    }
-
-    fn before_de_update(
-        &mut self,
-        _pass: &mut GpuPass,
-        _grid: &GpuBuffer<GridParameters>,
-        _h: &mut GpuBuffer<Vec4>,
-        _dn: &mut GpuBuffer<Vec4>,
-        _en: &mut GpuBuffer<Vec4>,
-        _thread_count: [u32; 3],
-    ) -> TaserResult<()> { Ok(()) }
-}
+#[cfg(feature = "dim1")]
+unit_type_boundary!(X);
+#[cfg(feature = "dim1")]
+unit_type_boundary!(Y);
+#[cfg(feature = "dim2")]
+unit_type_boundary!(Z);
 
 macro_rules! impl_pec_boundary {
     ($name:ident, $axis:ident, $shader:ident) => {
@@ -211,44 +211,6 @@ impl_pec_boundary!(PECBoundaryX, X, GpuPecBoundaryX);
 impl_pec_boundary!(PECBoundaryY, Y, GpuPecBoundaryY);
 #[cfg(not(feature = "dim2"))]
 impl_pec_boundary!(PECBoundaryZ, Z, GpuPecBoundaryZ);
-
-#[cfg(not(feature = "dim3"))]
-macro_rules! unit_type_bc {
-    ($axis:ident) => {
-        impl BoundaryCondition<$axis> for () {
-            fn pre_update(
-                &mut self,
-                _: &mut GpuPass,
-                _: &GpuBuffer<GridParameters>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: [u32; 3],
-            ) -> TaserResult<()> {
-                Ok(())
-            }
-
-            fn before_de_update(
-                &mut self,
-                _: &mut GpuPass,
-                _: &GpuBuffer<GridParameters>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: [u32; 3],
-            ) -> TaserResult<()> {
-                Ok(())
-            }
-        }
-    };
-}
-
-#[cfg(feature = "dim1")]
-unit_type_bc!(X);
-#[cfg(feature = "dim1")]
-unit_type_bc!(Y);
-#[cfg(feature = "dim2")]
-unit_type_bc!(Z);
 
 macro_rules! periodic_boundary {
     ($name:ident, $en_kernel:ident, $h_kernel:ident, $boundary_axis:ident) => {
