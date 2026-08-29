@@ -3,6 +3,7 @@
 
 pub mod math;
 pub mod fdtd;
+pub mod boundary;
 
 #[macro_export]
 #[doc(hidden)]

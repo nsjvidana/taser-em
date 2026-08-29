@@ -61,8 +61,13 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
+    let boundary_condition = BoundaryConditions::new(
+        // PECBoundaryZ::from_backend(&backend)?,
+        PeriodicBoundaryZ::from_backend(&backend)?,
+    );
+    simulation.pml_parameters.widths = simulation.pml_parameters.widths
+        .with_axis_widths(SpatialAxis::Z, LoHiWidths::splat(0));
     let mut state = simulation.finalize(&backend, &stability)?;
-    let boundary_condition = PECBoundary::from_backend(&backend)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
@@ -70,7 +75,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
 
     // Render simulation
-    while testbed.render_frame(&readback.get_dn_field()).await {
+    while testbed.render_frame(readback.get_dn_field()).await {
         readback.read_back_dn(&backend)?;
 
         let mut encoder = backend.begin_encoding();

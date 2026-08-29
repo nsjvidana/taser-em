@@ -7,8 +7,8 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Visua
 
 #[kiss3d::main]
 async fn main() {
-    // cube().await.unwrap()
-    bench3::benchmark().await.unwrap()
+    cube().await.unwrap()
+    // bench3::benchmark().await.unwrap()
 }
 
 pub async fn cube() -> anyhow::Result<()> {
@@ -38,7 +38,10 @@ pub async fn cube() -> anyhow::Result<()> {
         // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseElectric
     };
-    let pml_params = PmlParameters::new(dt);
+    let pml_params = PmlParameters {
+        widths: LayerWidths::splat_spatial(0),
+        ..PmlParameters::new(dt)
+    };
     let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);
 
     // Compute cube dimensions
@@ -57,13 +60,13 @@ pub async fn cube() -> anyhow::Result<()> {
     )?;
 
     // Compute source position and gaussian curve data points
-    let source = Source::TFSF {
-        spatial_axis: SpatialAxis::Z,
-        direction: WaveDirection::Positive,
+    let current_bb = simulation.compute_bounding_box();
+    let source = Source::Dipole {
+        dipole_type: DipoleType::Electric,
+        position: current_bb.mins - wavelen,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        polarization: Vec3::new(1., 1., 0.).normalize(),
-        tfsf_buffer_width: LayerWidths::splat_spatial(3),
+        moment: Vec3::X,
     };
     simulation.add_source(source);
 
@@ -72,7 +75,11 @@ pub async fn cube() -> anyhow::Result<()> {
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
     let mut state = simulation.finalize(&backend, &stability)?;
-    let boundary_condition = PECBoundary::from_backend(&backend)?;
+    let boundary_condition = BoundaryConditions::new(
+        PeriodicBoundaryX::from_backend(&backend)?,
+        PeriodicBoundaryY::from_backend(&backend)?,
+        PeriodicBoundaryZ::from_backend(&backend)?,
+    );
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
@@ -81,7 +88,7 @@ pub async fn cube() -> anyhow::Result<()> {
         .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.5,
+                v_max: 0.3,
                 color_min: TRANSPARENT,
                 color_max: RED
             }

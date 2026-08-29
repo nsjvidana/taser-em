@@ -3,7 +3,6 @@ pub use taser_em_shaders::fdtd::DipoleType;
 use crate::prelude::*;
 use crate::gpu_util::CreateGpuBuffer;
 use derivative::Derivative;
-use khal::Shader;
 use parry3d::bounding_volume::Aabb;
 use std::num::{NonZeroI32, NonZeroU32};
 use taser_em_shaders::fdtd::*;
@@ -11,6 +10,7 @@ use crate::*;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use crate::boundary::BoundaryCondition;
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
@@ -394,9 +394,14 @@ impl FdtdLossySimulation {
 }
 
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
-pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
+pub struct FdtdLossyPipeline<BCx, BCy, BCz>
+where
+    BCx: BoundaryCondition<X>,
+    BCy: BoundaryCondition<Y>,
+    BCz: BoundaryCondition<Z>,
+{
     init_tfsf_masks: InitTfsfMasks,
-    boundary_condition: BC,
+    boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
     aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
     h_update: GpuLossyHUpdate,
@@ -404,11 +409,20 @@ pub struct FdtdLossyPipeline<BC: BoundaryCondition> {
     pub num_steps_per_submission: usize,
 }
 
-impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
-    pub fn new(backend: &GpuBackend, boundary_condition: BC, num_steps_per_submission: usize) -> TaserResult<Self> {
+impl<BCx, BCy, BCz> FdtdLossyPipeline<BCx, BCy, BCz>
+where
+    BCx: BoundaryCondition<X>,
+    BCy: BoundaryCondition<Y>,
+    BCz: BoundaryCondition<Z>,
+{
+    pub fn new(
+        backend: &GpuBackend,
+        boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
+        num_steps_per_submission: usize
+    ) -> TaserResult<Self> {
         Ok(Self {
-            boundary_condition,
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
+            boundary_conditions,
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
@@ -420,11 +434,11 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
     /// Create new pipeline and dispatch initialization shaders to the GPU at the same time (calls [`FdtdLossyPipeline::initialize`]).
     pub fn new_initialized(
         backend: &GpuBackend,
-        boundary_condition: BC,
+        boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
         num_steps_per_submission: usize,
         state: &mut FdtdLossyState
     ) -> TaserResult<Self> {
-        let pipeline = Self::new(backend, boundary_condition, num_steps_per_submission)?;
+        let pipeline = Self::new(backend, boundary_conditions, num_steps_per_submission)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
@@ -488,7 +502,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.grid_coeffs,
             )?;
 
-            self.boundary_condition.pre_update(
+            self.boundary_conditions.pre_update(
                 pass,
                 &state.grid_params,
                 &mut state.h,
@@ -508,7 +522,7 @@ impl<BC: BoundaryCondition> FdtdLossyPipeline<BC> {
                 &state.source_terms,
             )?;
 
-            self.boundary_condition.before_de_update(
+            self.boundary_conditions.before_de_update(
                 pass,
                 &state.grid_params,
                 &mut state.h,
@@ -664,69 +678,6 @@ impl FdtdStability {
         let tau = core::f32::consts::FRAC_1_PI / f_max;
         tau / self.source_resolution as f32
     }
-}
-
-#[derive(Shader)]
-pub struct PECBoundary {
-    kernel: GpuPecBoundary
-}
-
-impl BoundaryCondition for PECBoundary {
-    fn pre_update(
-        &mut self,
-        pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3]
-    ) -> TaserResult<()>
-    {
-        self.kernel.call(
-            pass,
-            DispatchGrid::ThreadCount(thread_count),
-            grid,
-            h,
-            dn,
-            en
-        )?;
-        Ok(())
-    }
-
-    fn before_de_update(
-        &mut self,
-        _pass: &mut GpuPass,
-        _grid: &GpuBuffer<GridParameters>,
-        _h: &mut GpuBuffer<Vec4>,
-        _dn: &mut GpuBuffer<Vec4>,
-        _en: &mut GpuBuffer<Vec4>,
-        _thread_count: [u32; 3],
-    ) -> TaserResult<()> { Ok(()) }
-}
-
-// TODO: might need different parameters for anisotropy...
-pub trait BoundaryCondition {
-    /// Runs before updating H field in each step.
-    fn pre_update(
-        &mut self,
-        pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3],
-    ) -> TaserResult<()>;
-
-    /// Runs before update the Dn and En fields in each step (runs immediately after H field update).
-    fn before_de_update(
-        &mut self,
-        pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3],
-    ) -> TaserResult<()>;
 }
 
 #[derive(Copy, Clone, Debug)]
