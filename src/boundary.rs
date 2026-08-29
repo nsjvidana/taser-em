@@ -31,18 +31,21 @@ pub trait BoundaryCondition<Axis: BoundaryAxis> {
 
 pub trait BoundaryAxis {}
 
-pub struct X;
+macro_rules! boundary_axis {
+    ($name:ident) => {
+        pub struct $name;
+        impl BoundaryAxis for $name {}
+    };
+}
 
-impl BoundaryAxis for X {}
+#[cfg(not(feature = "dim1"))]
+boundary_axis!(X);
+#[cfg(not(feature = "dim1"))]
+boundary_axis!(Y);
+#[cfg(not(feature = "dim2"))]
+boundary_axis!(Z);
 
-pub struct Y;
-
-impl BoundaryAxis for Y {}
-
-pub struct Z;
-
-impl BoundaryAxis for Z {}
-
+/// A struct containing all boundary conditions for the simulation.
 pub struct BoundaryConditions<X, Y, Z>
 where
     X: BoundaryCondition<self::X>,
