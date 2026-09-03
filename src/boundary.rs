@@ -38,11 +38,8 @@ macro_rules! boundary_axis {
     };
 }
 
-#[cfg(not(feature = "dim1"))]
 boundary_axis!(X);
-#[cfg(not(feature = "dim1"))]
 boundary_axis!(Y);
-#[cfg(not(feature = "dim2"))]
 boundary_axis!(Z);
 
 /// A struct containing all boundary conditions for the simulation.
