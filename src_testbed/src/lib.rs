@@ -528,76 +528,84 @@ pub enum ColorMode {
     /// Automatically scale the maximum magnitude as the simulation progresses.
     AutoScale {
         color_min: Color,
+        color_mid: Color,
         color_max: Color,
         v_max: Real,
+        v_mid: Real,
+        v_min: Real,
     },
     /// Set a fixed range of magnitudes for interpolating between colors
     FixedRange {
         color_min: Color,
+        color_mid: Color,
         color_max: Color,
         /// The minimum magnitude
         v_min: Real,
+        /// The magnitude between min and max
+        v_mid: Real,
         /// The maximum magnitude
         v_max: Real,
     }
 }
 
 impl ColorMode {
-    pub const DEFAULT_ALPHA: f32 = 1.;
-
     /// Updates the state of `self` before computing the colors of `magnitudes`.
     ///
     /// Call this before calling `compute_color` on the elements of `magnitudes`.
     pub fn prepare(&mut self, magnitudes: &[Real]) {
         match self {
-            ColorMode::AutoScale { v_max, .. } => {
+            ColorMode::AutoScale { v_min, v_mid, v_max, .. } => {
                 let curr_max = par_iter!(magnitudes)
-                    .copied()
-                    .max_by(|a, b| a.total_cmp(b));
+                    .max_by(|a, b| a.total_cmp(b))
+                    .copied();
+                let curr_min = par_iter!(magnitudes)
+                    .min_by(|a, b| a.total_cmp(b))
+                    .copied();
                 if let Some(max_mag) = curr_max {
                     *v_max = v_max.max(max_mag);
                 }
+                if let Some(min_mag) = curr_min {
+                    *v_min = v_min.min(min_mag);
+                }
+                *v_mid = (*v_min + *v_max) / 2.;
             }
             ColorMode::FixedRange { .. } => {}
         }
     }
 
     pub fn compute_color(&self, val: Real) -> Color {
-        match self {
-            ColorMode::AutoScale { color_min, color_max, v_max } => {
-                lerp_colors((val / *v_max).clamp(0., 1.), *color_min, *color_max)
-            }
-            ColorMode::FixedRange { color_min, color_max, v_min, v_max } => {
-                lerp_colors(
-                    ((val - *v_min) / (*v_max - *v_min)).clamp(0., 1.),
-                    *color_min,
-                    *color_max
-                )
-            }
+        let (cmin, cmid, cmax, vmin, vmid, vmax) = match self.clone() {
+            ColorMode::AutoScale { color_min, color_mid, color_max, v_min, v_mid, v_max } =>
+                (color_min, color_mid, color_max, v_min, v_mid, v_max),
+            ColorMode::FixedRange { color_min, color_mid, color_max, v_min, v_mid, v_max } =>
+                (color_min, color_mid, color_max, v_min, v_mid, v_max),
+        };
+        if val < vmid {
+            lerp_colors(((val - vmin) / (vmid - vmin)).saturate(), cmin, cmid)
+        }
+        else {
+            lerp_colors(((val - vmid) / (vmax - vmid)).saturate(), cmid, cmax)
         }
     }
 }
 
 impl Default for ColorMode {
     fn default() -> Self {
-        #[cfg(not(feature = "dim3"))]
-        {
-            ColorMode::AutoScale {
-                color_min: cfg_select! {
-                    feature = "dim1" => RED,
-                    feature = "dim2" => BLUE,
-                },
-                color_max: RED,
-                v_max: Real::MIN,
-            }
-        }
-        #[cfg(feature = "dim3")]
-        {
-            ColorMode::AutoScale {
-                color_min: TRANSPARENT,
-                color_max: RED.with_alpha(Self::DEFAULT_ALPHA),
-                v_max: Real::MIN
-            }
+        ColorMode::AutoScale {
+            color_min: cfg_select! {
+                feature = "dim1" => RED,
+                feature = "dim2" => BLUE,
+                feature = "dim3" => BLUE.with_alpha(0.),
+            },
+            color_mid: cfg_select! {
+                feature = "dim1" => RED,
+                feature = "dim2" => CYAN,
+                feature = "dim3" => CYAN.with_alpha(0.5),
+            },
+            color_max: RED,
+            v_max: Real::MIN,
+            v_mid: 0.,
+            v_min: Real::MAX,
         }
     }
 }

@@ -75,9 +75,12 @@ pub async fn single_slab() -> anyhow::Result<()> {
     // Create viewer and set up camera
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorFieldVisual::H).await?;
     testbed.visualization_mode = testbed.visualization_mode.with_color_mode(ColorMode::AutoScale {
-        v_max: Real::MIN,
         color_min: BLUE,
-        color_max: BLUE
+        color_mid: BLUE,
+        color_max: BLUE,
+        v_min: Real::MAX,
+        v_mid: 0.0,
+        v_max: Real::MIN,
     });
 
     // Render simulation

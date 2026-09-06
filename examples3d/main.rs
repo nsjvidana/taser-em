@@ -90,8 +90,10 @@ pub async fn cube() -> anyhow::Result<()> {
         .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_max: 0.3,
-                color_min: TRANSPARENT,
+                v_mid: 0.5 / 2.,
+                v_max: 0.5,
+                color_min: BLUE.with_alpha(0.),
+                color_mid: CYAN.with_alpha(0.5),
                 color_max: RED
             }
         );
