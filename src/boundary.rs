@@ -4,6 +4,15 @@ use taser_em_shaders::boundary::*;
 use crate::prelude::*;
 
 pub trait BoundaryCondition<Axis: BoundaryAxis> {
+    /// Runs in the simulation pipeline initialize stage (before simulation is run)
+    fn initialize(
+        &mut self,
+        _pass: &mut GpuPass,
+        _state: &mut FdtdLossyState
+    ) -> TaserResult<()> {
+        Ok(())
+    }
+
     /// Runs before updating H field in each step.
     fn pre_update(
         &mut self,
@@ -50,6 +59,16 @@ where
     Y: BoundaryCondition<self::Y>,
     Z: BoundaryCondition<self::Z>,
 {
+    pub fn initialize(
+        &mut self,
+        pass: &mut GpuPass,
+        state: &mut FdtdLossyState
+    ) -> TaserResult<()> {
+        self.x_boundary.initialize(pass, state)?;
+        self.y_boundary.initialize(pass, state)?;
+        self.z_boundary.initialize(pass, state)
+    }
+
     pub fn pre_update(
         &mut self,
         pass: &mut GpuPass,

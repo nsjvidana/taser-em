@@ -440,7 +440,7 @@ where
         num_steps_per_submission: usize,
         state: &mut FdtdLossyState
     ) -> TaserResult<Self> {
-        let pipeline = Self::new(backend, boundary_conditions, num_steps_per_submission)?;
+        let mut pipeline = Self::new(backend, boundary_conditions, num_steps_per_submission)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
@@ -452,10 +452,12 @@ where
     }
 
     pub fn initialize(
-        &self,
+        &mut self,
         pass: &mut GpuPass,
         state: &mut FdtdLossyState
     ) -> TaserResult<()> {
+        self.boundary_conditions.initialize(pass, state)?;
+
         if let Some(tfsf_init_threads) = state.tfsf_dispatch_data.mask_init_thread_count {
             self.init_tfsf_masks.call(
                 pass,
