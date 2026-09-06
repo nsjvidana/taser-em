@@ -1,31 +1,21 @@
-use khal::backend::{DispatchGrid, GpuBuffer, GpuPass};
+use khal::backend::{DispatchGrid, GpuPass};
 use khal::Shader;
 use taser_em_shaders::boundary::*;
-use taser_em_shaders::fdtd::GridParameters;
 use crate::prelude::*;
 
-// TODO: might need different parameters for anisotropy...
 pub trait BoundaryCondition<Axis: BoundaryAxis> {
     /// Runs before updating H field in each step.
     fn pre_update(
         &mut self,
         pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3],
+        state: &mut FdtdLossyState
     ) -> TaserResult<()>;
 
     /// Runs before update the Dn and En fields in each step (runs immediately after H field update).
     fn before_de_update(
         &mut self,
         pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3],
+        state: &mut FdtdLossyState
     ) -> TaserResult<()>;
 }
 
@@ -63,29 +53,21 @@ where
     pub fn pre_update(
         &mut self,
         pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3],
+        state: &mut FdtdLossyState
     ) -> TaserResult<()> {
-        self.x_boundary.pre_update(pass, grid, h, dn, en, thread_count)?;
-        self.y_boundary.pre_update(pass, grid, h, dn, en, thread_count)?;
-        self.z_boundary.pre_update(pass, grid, h, dn, en, thread_count)
+        self.x_boundary.pre_update(pass, state)?;
+        self.y_boundary.pre_update(pass, state)?;
+        self.z_boundary.pre_update(pass, state)
     }
 
     pub fn before_de_update(
         &mut self,
         pass: &mut GpuPass,
-        grid: &GpuBuffer<GridParameters>,
-        h: &mut GpuBuffer<Vec4>,
-        dn: &mut GpuBuffer<Vec4>,
-        en: &mut GpuBuffer<Vec4>,
-        thread_count: [u32; 3],
+        state: &mut FdtdLossyState
     ) -> TaserResult<()> {
-        self.x_boundary.before_de_update(pass, grid, h, dn, en, thread_count)?;
-        self.y_boundary.before_de_update(pass, grid, h, dn, en, thread_count)?;
-        self.z_boundary.before_de_update(pass, grid, h, dn, en, thread_count)
+        self.x_boundary.before_de_update(pass, state)?;
+        self.y_boundary.before_de_update(pass, state)?;
+        self.z_boundary.before_de_update(pass, state)
     }
 }
 
@@ -132,11 +114,7 @@ macro_rules! unit_type_boundary {
             fn pre_update(
                 &mut self,
                 _: &mut GpuPass,
-                _: &GpuBuffer<GridParameters>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: [u32; 3],
+                _: &mut FdtdLossyState
             ) -> TaserResult<()> {
                 Ok(())
             }
@@ -144,11 +122,7 @@ macro_rules! unit_type_boundary {
             fn before_de_update(
                 &mut self,
                 _: &mut GpuPass,
-                _: &GpuBuffer<GridParameters>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: [u32; 3],
+                _: &mut FdtdLossyState
             ) -> TaserResult<()> {
                 Ok(())
             }
@@ -174,20 +148,16 @@ macro_rules! impl_pec_boundary {
             fn pre_update(
                 &mut self,
                 pass: &mut GpuPass,
-                grid: &GpuBuffer<GridParameters>,
-                h: &mut GpuBuffer<Vec4>,
-                dn: &mut GpuBuffer<Vec4>,
-                en: &mut GpuBuffer<Vec4>,
-                thread_count: [u32; 3]
+                state: &mut FdtdLossyState
             ) -> TaserResult<()>
             {
                 self.kernel.call(
                     pass,
-                    DispatchGrid::ThreadCount(thread_count),
-                    grid,
-                    h,
-                    dn,
-                    en
+                    DispatchGrid::ThreadCount(state.thread_count),
+                    &state.grid_params,
+                    &mut state.h,
+                    &mut state.dn,
+                    &mut state.en
                 )?;
                 Ok(())
             }
@@ -195,11 +165,7 @@ macro_rules! impl_pec_boundary {
             fn before_de_update(
                 &mut self,
                 _pass: &mut GpuPass,
-                _grid: &GpuBuffer<GridParameters>,
-                _h: &mut GpuBuffer<Vec4>,
-                _dn: &mut GpuBuffer<Vec4>,
-                _en: &mut GpuBuffer<Vec4>,
-                _thread_count: [u32; 3],
+                _state: &mut FdtdLossyState
             ) -> TaserResult<()> { Ok(()) }
         }
     };
@@ -224,34 +190,26 @@ macro_rules! periodic_boundary {
             fn pre_update(
                 &mut self,
                 pass: &mut GpuPass,
-                grid: &GpuBuffer<GridParameters>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                en: &mut GpuBuffer<Vec4>,
-                thread_count: [u32; 3],
+                state: &mut FdtdLossyState
             ) -> TaserResult<()> {
                 Ok(self.en_kernel.call(
                     pass,
-                    DispatchGrid::ThreadCount(thread_count),
-                    grid,
-                    en,
+                    DispatchGrid::ThreadCount(state.thread_count),
+                    &state.grid_params,
+                    &mut state.en,
                 )?)
             }
         
             fn before_de_update(
                 &mut self,
                 pass: &mut GpuPass,
-                grid: &GpuBuffer<GridParameters>,
-                h: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                _: &mut GpuBuffer<Vec4>,
-                thread_count: [u32; 3],
+                state: &mut FdtdLossyState
             ) -> TaserResult<()> {
                 Ok(self.h_kernel.call(
                     pass,
-                    DispatchGrid::ThreadCount(thread_count),
-                    grid,
-                    h,
+                    DispatchGrid::ThreadCount(state.thread_count),
+                    &state.grid_params,
+                    &mut state.h,
                 )?)
             }
         }

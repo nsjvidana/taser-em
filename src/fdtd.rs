@@ -502,14 +502,7 @@ where
                 &state.grid_coeffs,
             )?;
 
-            self.boundary_conditions.pre_update(
-                pass,
-                &state.grid_params,
-                &mut state.h,
-                &mut state.dn,
-                &mut state.en,
-                state.thread_count
-            )?;
+            self.boundary_conditions.pre_update(pass, state)?;
 
             self.h_update.call(
                 pass,
@@ -522,14 +515,7 @@ where
                 &state.source_terms,
             )?;
 
-            self.boundary_conditions.before_de_update(
-                pass,
-                &state.grid_params,
-                &mut state.h,
-                &mut state.dn,
-                &mut state.en,
-                state.thread_count
-            )?;
+            self.boundary_conditions.before_de_update(pass, state)?;
 
             self.dn_en_update.call(
                 pass,
