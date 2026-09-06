@@ -3,7 +3,7 @@ use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
-use khal_std::macros::{spirv, spirv_bindgen};
+use khal_std::macros::{gpu_only, spirv, spirv_bindgen};
 
 #[allow(unused_imports)]
 use khal_std::num_traits::Float;
@@ -28,7 +28,7 @@ pub fn init_pec(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = pml_coeffs.read(idx);
-    if m.dn_loss1.is_finite() { return; }
+    if !m.no_update() { return; }
     h.write(idx, Vec4::ZERO);
     dn.write(idx, Vec4::ZERO);
     en.write(idx, Vec4::ZERO);
@@ -413,6 +413,7 @@ pub fn gpu_lossy_h_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = grid_coeffs.read(idx);
+    if m.no_update() { return; }
     #[cfg(not(feature = "dim1"))]
     let mut ints = integrals.read(idx);
 
@@ -500,6 +501,8 @@ pub fn gpu_lossy_dn_en_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = grid_coeffs.read(idx);
+    if m.no_update() { return; }
+
     let mut ints = integrals.read(idx);
 
     let en_self = en.read(idx);
@@ -801,6 +804,35 @@ pub struct PmlCoefficients {
     pub dn4: Vec4,
 
     pub en1: Vec4,
+}
+
+impl PmlCoefficients {
+    /// Update coefficients representing a grid that shouldn't be updated.
+    pub const NO_UPDATE: Self = Self {
+        h1: Vec4::ZERO,
+        h2: Vec4::ZERO,
+        h3: Vec4::ZERO,
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
+        h4: Vec4::ZERO,
+        dn1: Vec4::ZERO,
+        dn2: Vec4::ZERO,
+        dn_loss1: Vec4::ZERO,
+        dn_loss2: Vec4::ZERO,
+        dn3: Vec4::ZERO,
+        #[cfg(any(feature = "dim2", feature = "dim3"))]
+        dn4: Vec4::ZERO,
+        en1: Vec4::ZERO,
+    };
+
+    /// A fast way of checking if a grid shouldn't be updated
+    ///
+    /// Used for skipping the update for PEC cells, as they remain with zeroed fields for the whole simulation.
+    #[inline]
+    pub fn no_update(&self) -> bool {
+        // h1 can't be zero, even with no PML conductivity (see PmlCoefficientsGrid::new()), therefore,
+        // this is a good way to check if a cell shouldn't be updated, since h1 == Vec4::ZERO is invalid.
+        self.h1 == Vec4::ZERO
+    }
 }
 
 /// Integration terms used in updating H and D fields
