@@ -110,7 +110,7 @@ impl MaterialRegions {
         material: ElectricMaterial
     ) -> &mut Self {
         let region_dims = end - start;
-        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element()));
+        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element())) * 0.5;
 
         let shape = Cuboid::new(half_extents);
         let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
