@@ -38,7 +38,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
         mu_r: Vec3::splat(1.),
-        sig: Vec3::splat(Real::INFINITY),
+        sig: Vec3::INFINITY,
         // sig: Vec3::splat(0.),
     };
     simulation.material_regions.load_trimesh_regions(

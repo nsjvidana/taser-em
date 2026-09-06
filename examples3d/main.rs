@@ -50,7 +50,7 @@ pub async fn cube() -> anyhow::Result<()> {
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(4.),
         mu_r: Vec3::splat(1.),
-        sig: Vec3::splat(Real::INFINITY),
+        sig: Vec3::INFINITY,
         // sig: Vec3::splat(0.),
     };
     let wavelen = C_0 / f_max;

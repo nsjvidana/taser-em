@@ -43,6 +43,8 @@ mod dim_types {
 
 /// A trait specifically for vector field vectors.
 pub trait VectExt: VectorValueExt {
+    const INFINITY: Self;
+    const NEG_INFINITY: Self;
     fn to_3d(self, mask: Vec3) -> Vec3;
     fn into_array(self) -> [Real; DIM];
     fn from_array(arr: [Real; DIM]) -> Vect;
@@ -176,6 +178,10 @@ macro_rules! impl_vector_value_ext {
 }
 
 impl VectExt for Vect {
+    const INFINITY: Self = dim1_or_else!(Real::INFINITY, Vect::INFINITY);
+    const NEG_INFINITY: Self = dim1_or_else!(Real::NEG_INFINITY, Vect::NEG_INFINITY);
+
+
     /// Converts a [`Vect`] to [`Vec3`]
     /// `mask` sets the components that `self` don't already have.
     ///

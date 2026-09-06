@@ -437,7 +437,7 @@ impl PmlCoefficientsGrid {
             .for_each(|(i, coeff)| {
                 let cell_idx = GridIndex::from_flat_idx(i as u32, n_cells);
 
-                // Mark this cell as a PEC cell
+                // Mark this cell as a PEC cell 
                 if !mats[i].sig.is_finite() {
                     *coeff = PmlCoefficients::PEC;
                     return;

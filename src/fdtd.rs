@@ -685,7 +685,9 @@ pub enum MaterialDiscretization {
     Smooth { resolution: NonZeroU32 }
 }
 
-/// Relative material properties
+/// Material properties
+///
+/// For Perfect Electric Conductors, set any component of the `sig` field to [`Real::INFINITY`].
 #[derive(Copy, Clone, Debug)]
 pub struct ElectricMaterial {
     /// Relative permittivity
@@ -693,6 +695,8 @@ pub struct ElectricMaterial {
     /// Relative permeability
     pub mu_r: Vec3,
     /// Conductivity of the material (S/m)
+    ///
+    /// Set any component of this vector to [`Real::INFINITY`] to make this a Perfect Electric Conductor
     pub sig: Vec3,
 }
 
