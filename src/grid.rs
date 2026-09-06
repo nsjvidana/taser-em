@@ -439,7 +439,7 @@ impl PmlCoefficientsGrid {
 
                 // Just skip update for PEC cells, to keep them with zeroed fields
                 if !mats[i].sig.is_finite() {
-                    *coeff = PmlCoefficients::NO_UPDATE;
+                    *coeff = PmlCoefficients::PEC;
                     return;
                 }
 

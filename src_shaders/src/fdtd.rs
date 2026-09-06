@@ -28,7 +28,7 @@ pub fn init_pec(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = pml_coeffs.read(idx);
-    if !m.no_update() { return; }
+    if !m.is_pec() { return; }
     h.write(idx, Vec4::ZERO);
     dn.write(idx, Vec4::ZERO);
     en.write(idx, Vec4::ZERO);
@@ -824,6 +824,13 @@ impl PmlCoefficients {
         en1: Vec4::ZERO,
     };
 
+    /// Update coefficients for a perfect electric conductor cell
+    pub const PEC: Self = Self {
+        dn_loss1: Vec4::splat(Real::MAX),
+        dn_loss2: Vec4::splat(Real::MAX),
+        ..Self::NO_UPDATE
+    };
+
     /// A fast way of checking if a grid shouldn't be updated
     ///
     /// Used for skipping the update for PEC cells, as they remain with zeroed fields for the whole simulation.
@@ -832,6 +839,12 @@ impl PmlCoefficients {
         // h1 can't be zero, even with no PML conductivity (see PmlCoefficientsGrid::new()), therefore,
         // this is a good way to check if a cell shouldn't be updated, since h1 == Vec4::ZERO is invalid.
         self.h1 == Vec4::ZERO
+    }
+
+    /// A fast way of checking if a grid cell is a perfect electric conductor cell
+    #[inline]
+    pub fn is_pec(&self) -> bool {
+        self.dn_loss1 == Vec4::splat(Real::MAX)
     }
 }
 
