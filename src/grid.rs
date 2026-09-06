@@ -437,6 +437,12 @@ impl PmlCoefficientsGrid {
             .for_each(|(i, coeff)| {
                 let cell_idx = GridIndex::from_flat_idx(i as u32, n_cells);
 
+                // Just skip update for PEC cells, to keep them with zeroed fields
+                if !mats[i].sig.is_finite() {
+                    *coeff = PmlCoefficients::NO_UPDATE;
+                    return;
+                }
+
                 // Stagger indexing the conductivities as per the Yee grid staggering
                 let idx_2x = (cell_idx * 2).cell_idx_to_3d().as_usizevec3();
                 let dn_sigs: [Vec3; MAX_DIM] = core::array::from_fn(|axis_i| {

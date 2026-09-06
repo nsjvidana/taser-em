@@ -3,7 +3,7 @@ use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
-use khal_std::macros::{gpu_only, spirv, spirv_bindgen};
+use khal_std::macros::{spirv, spirv_bindgen};
 
 #[allow(unused_imports)]
 use khal_std::num_traits::Float;

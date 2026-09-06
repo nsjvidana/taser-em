@@ -38,19 +38,15 @@ pub async fn cube() -> anyhow::Result<()> {
         // material_discretization: MaterialDiscretization::Rough,
         polarization_mode: PolarizationMode::TransverseElectric
     };
-    let pml_params = PmlParameters {
-        widths: LayerWidths::splat_spatial(0),
-        ..PmlParameters::new(dt)
-    };
-    let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);
+    let mut simulation = FdtdLossySimulation::new(fdtd_params, PmlParameters::new(dt));
 
     // Compute cube dimensions
     // construct the cube
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(4.),
         mu_r: Vec3::splat(1.),
-        // sig: Vec3::splat(0.3),
-        sig: Vec3::splat(0.),
+        sig: Vec3::splat(Real::INFINITY),
+        // sig: Vec3::splat(0.),
     };
     let wavelen = C_0 / f_max;
     simulation.material_regions.load_trimesh_regions(
@@ -61,12 +57,13 @@ pub async fn cube() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let current_bb = simulation.compute_bounding_box();
-    let source = Source::Dipole {
-        dipole_type: DipoleType::Electric,
-        position: current_bb.mins - wavelen,
+    let source = Source::TFSF {
+        spatial_axis: SpatialAxis::Z,
+        direction: WaveDirection::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
-        moment: Vec3::X,
+        polarization: Vec3::X,
+        tfsf_buffer_width: LayerWidths::splat_spatial(3),
     };
     simulation.add_source(source);
 
@@ -76,10 +73,11 @@ pub async fn cube() -> anyhow::Result<()> {
     println!("Running on backend: {backend_name}");
     let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = BoundaryConditions::new(
-        PeriodicBoundaryX::from_backend(&backend)?,
-        PeriodicBoundaryY::from_backend(&backend)?,
-        PeriodicBoundaryZ::from_backend(&backend)?,
+        PECBoundaryX::from_backend(&backend)?,
+        PECBoundaryY::from_backend(&backend)?,
+        PECBoundaryZ::from_backend(&backend)?,
     );
+    // simulation.pml_parameters.widths = LayerWidths::splat_spatial(0);
     let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
