@@ -27,10 +27,12 @@ pub struct FdtdTestbedViewer {
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
     pub material_region_alpha: f32,
-    pub n_cells: GridIndex,
-    pub cell_size: Vect,
+    n_cells: GridIndex,
+    cell_size: Vect,
     pub polarization_mode: PolarizationMode,
     pub visualization_mode: VisualizationMode,
+    /// Which field should be visualized
+    pub vector_field_visual: VectorFieldVisual,
     /// A light source locked at the camera's location (optional, but is a point source by default)
     pub cam_light: Option<SceneNode3d>,
 }
@@ -49,6 +51,7 @@ impl FdtdTestbedViewer {
         simulation: &FdtdLossySimulation,
         stability: &FdtdStability,
         mut visualization_mode: VisualizationMode,
+        vector_field_visual: VectorFieldVisual
     ) -> anyhow::Result<Self> {
         let title_dim = cfg_select! {
             feature = "dim1" => "1D",
@@ -78,6 +81,7 @@ impl FdtdTestbedViewer {
             cell_size,
             polarization_mode: simulation.fdtd_parameters.polarization_mode,
             visualization_mode,
+            vector_field_visual,
             cam_light,
         };
         let regions_offset = YeeGridMaterials::compute_simulation_offset(
@@ -181,16 +185,43 @@ impl FdtdTestbedViewer {
     /// Returns `false` if the viewer should stop rendering (e.g. when the window closes).
     pub async fn render_frame(
         &mut self,
-        v_field: &[Vec4],
-    ) -> bool {
+        backend: &GpuBackend,
+        state: &FdtdLossyState,
+        readback: &mut FdtdStateReadback,
+    ) -> TaserResult<bool> {
+        self.update_cam_light();
         let window_bool = self.window.render_3d(&mut self.scene, &mut self.camera).await;
-        self.visualization_mode.visualize(
-            v_field,
+
+        // Visualize the version of the field that's stored on CPU
+        // Don't read back here since that forces the read back & simulation to be in series with the visualization (slow)
+        let v_field_ref = match self.vector_field_visual {
+            VectorFieldVisual::H => VectorFieldRef::H(readback.get_h_field()),
+            VectorFieldVisual::Dn => VectorFieldRef::Dn(readback.get_dn_field()),
+            VectorFieldVisual::En => VectorFieldRef::En(readback.get_en_field()),
+        };
+        self.visualization_mode.visualize_field(
+            v_field_ref,
             &mut self.window,
             self.polarization_mode
         );
-        self.update_cam_light();
-        window_bool
+
+        // Read back new field and request copy of field for next iteration
+        match self.vector_field_visual {
+            VectorFieldVisual::H => {
+                readback.read_back_h(backend)?;
+                readback.request_copy_h(backend, state)?;
+            },
+            VectorFieldVisual::Dn => {
+                readback.read_back_dn(backend)?;
+                readback.request_copy_dn(backend, state)?;
+            },
+            VectorFieldVisual::En => {
+                readback.read_back_en(backend)?;
+                readback.request_copy_en(backend, state)?;
+            },
+        }
+
+        Ok(window_bool)
     }
 
     pub fn update_cam_light(&mut self) {
@@ -343,7 +374,21 @@ impl VisualizationMode {
     }
 
     #[allow(unused_variables)]
-    pub fn visualize(&mut self, v_field: &[Vec4], window: &mut Window, polarization_mode: PolarizationMode) {
+    pub fn visualize_field<'a>(&mut self, v_field_ref: VectorFieldRef<'a>, window: &mut Window, polarization_mode: PolarizationMode) {
+        let get_magnitudes = || {
+            match v_field_ref {
+                VectorFieldRef::H(v) => par_iter!(v)
+                    .map(|v| polarization_mode.get_h_magnitude(v))
+                    .collect::<Vec<_>>(),
+                VectorFieldRef::Dn(v) => par_iter!(v)
+                    .map(|v| polarization_mode.get_e_magnitude(v))
+                    .collect::<Vec<_>>(),
+                VectorFieldRef::En(v) => par_iter!(v)
+                    .map(|v| polarization_mode.get_e_magnitude(v))
+                    .collect::<Vec<_>>(),
+            }
+        };
+
         #[cfg(feature = "dim1")]
         {
             let Self::LineGraph {
@@ -353,9 +398,7 @@ impl VisualizationMode {
                 positions
             } = self;
 
-            let magnitudes = par_iter!(v_field)
-                .map(|v| polarization_mode.get_e_magnitude(v))
-                .collect::<Vec<_>>();
+            let magnitudes = get_magnitudes();
 
             color_mode.prepare(&magnitudes);
             #[allow(unreachable_patterns)]
@@ -371,11 +414,20 @@ impl VisualizationMode {
 
             *graph_max_magnitude = graph_max_magnitude.max(curr_max_mag);
 
+            let v_field = match v_field_ref {
+                VectorFieldRef::H(v) => v,
+                VectorFieldRef::Dn(v) => v,
+                VectorFieldRef::En(v) => v,
+            };
             let line_positions = par_iter!(positions)
                 .zip(par_iter!(v_field))
-                .map(|(cell_pos, vector)|
-                    cell_pos + (polarization_mode.extract_e_vector(vector) / *graph_max_magnitude) * *graph_max_val
-                )
+                .map(|(cell_pos, vector)| {
+                    let v = match v_field_ref {
+                        VectorFieldRef::H(..) => polarization_mode.extract_h_vector(vector),
+                        _ => polarization_mode.extract_e_vector(vector)
+                    };
+                    cell_pos + (v / *graph_max_magnitude) * *graph_max_val
+                })
                 .collect::<Vec<_>>();
             let mut prev_pos = positions[0];
             for (pos, magnitude) in line_positions.into_iter()
@@ -398,9 +450,7 @@ impl VisualizationMode {
                 color_mode: &mut ColorMode,
             | {
                 instanced_obj.apply_to_object_mut(&mut |o| {
-                    let magnitudes = par_iter!(v_field)
-                        .map(|v| polarization_mode.get_e_magnitude(v))
-                        .collect::<Vec<_>>();
+                    let magnitudes = get_magnitudes();
                     color_mode.prepare(&magnitudes);
                     let inst_count = o
                         .instances()
@@ -454,6 +504,21 @@ impl Default for VisualizationMode {
             }
         }
     }
+}
+
+/// Which vector field to visualize
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum VectorFieldVisual {
+    H,
+    Dn,
+    En
+}
+
+/// Reference to a vector field that will get visualized
+pub enum VectorFieldRef<'a> {
+    H(&'a Vec<Vec4>),
+    Dn(&'a Vec<Vec4>),
+    En(&'a Vec<Vec4>)
 }
 
 /// How vector field magnitudes are colored

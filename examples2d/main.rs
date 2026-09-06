@@ -1,6 +1,6 @@
 use kiss3d::glamx::Vec3;
 use taser_em2d::prelude::*;
-use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VisualizationMode};
+use taser_em_testbed2d::{re_exports::anyhow, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
@@ -64,9 +64,6 @@ pub async fn single_rod() -> anyhow::Result<()> {
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
-    // simulation.pml_parameters.widths = simulation.pml_parameters.widths
-    //     .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(0))
-    //     .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(0));
     let mut state = simulation.finalize(&backend, &stability)?;
     let mut pipeline = FdtdLossyPipeline::new_initialized(
         &backend,
@@ -78,19 +75,16 @@ pub async fn single_rod() -> anyhow::Result<()> {
     
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default();
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
     testbed.window.set_ambient(0.5);
         
     // Render simulation
-    while testbed.render_frame(readback.get_dn_field()).await {
-        readback.read_back_dn(&backend)?;
-
+    while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d fdtd example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
         backend.submit(encoder)?;
-        readback.request_copy_dn(&backend, &state)?;
     }
     
     readback.request_copy_t_idx(&backend, &state)?;

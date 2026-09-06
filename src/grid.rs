@@ -35,7 +35,51 @@ pub enum PolarizationMode {
 }
 
 impl PolarizationMode {
-    // TODO: make these into "get/extract source" functions
+    pub fn extract_h_vector(&self, h: &Vec4) -> Vec3 {
+        match self {
+            PolarizationMode::TransverseMagnetic => cfg_select! {
+                feature = "dim1" => h.with_yz(Vec2::ZERO).xyz(),
+                feature = "dim2" => h.with_z(0.).xyz(),
+                feature = "dim3" => h.xyz(),
+            },
+            PolarizationMode::TransverseElectric => cfg_select! {
+                feature = "dim1" => h.with_xz(Vec2::ZERO).xyz(),
+                feature = "dim2" => h.with_xy(Vec2::ZERO).xyz(),
+                feature = "dim3" => h.xyz(),
+            },
+        }
+    }
+
+    pub fn extract_e_vector(&self, e: &Vec4) -> Vec3 {
+        match self {
+            PolarizationMode::TransverseMagnetic => cfg_select! {
+                feature = "dim1" => e.with_xz(Vec2::ZERO).xyz(),
+                feature = "dim2" => e.with_xy(Vec2::ZERO).xyz(),
+                feature = "dim3" => e.xyz(),
+            },
+            PolarizationMode::TransverseElectric => cfg_select! {
+                feature = "dim1" => e.with_yz(Vec2::ZERO).xyz(),
+                feature = "dim2" => e.with_z(0.).xyz(),
+                feature = "dim3" => e.xyz(),
+            },
+        }
+    }
+    
+    pub fn get_h_magnitude(&self, h: &Vec4) -> Real {
+        match self {
+            PolarizationMode::TransverseMagnetic => cfg_select! {
+                feature = "dim1" => h.x.abs(),
+                feature = "dim2" => h.xy().length(),
+                feature = "dim3" => h.length(),
+            },
+            PolarizationMode::TransverseElectric => cfg_select! {
+                feature = "dim1" => h.y.abs(),
+                feature = "dim2" => h.z.abs(),
+                feature = "dim3" => h.length(),
+            },
+        }
+    }
+
     pub fn get_e_magnitude(&self, e: &Vec4) -> Real {
         match self {
             PolarizationMode::TransverseMagnetic => cfg_select! {
@@ -45,38 +89,8 @@ impl PolarizationMode {
             },
             PolarizationMode::TransverseElectric => cfg_select! {
                 feature = "dim1" => e.x.abs(),
-                any(feature = "dim2", feature = "dim3") => e.length(),
-            },
-        }
-    }
-
-    pub fn extract_e_vector(&self, e: &Vec4) -> Vec3 {
-        match self {
-            PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => Vec3::new(0., e.y, 0.),
-                feature = "dim2" => Vec3::Z * e.z,
-                feature = "dim3" => (*e).xyz(),
-            },
-            PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => Vec3::new(e.x, 0., 0.),
-                feature = "dim2" => Vec3::from(((*e).xy(), 0.)),
-                feature = "dim3" => (*e).xyz(),
-            },
-        }
-    }
-
-
-    pub fn e_magnitude(&self, e: &Vec4) -> Real {
-        match self {
-            PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => e.y,
-                feature = "dim2" => e.z,
-                feature = "dim3" => (*e).xyz().length(),
-            },
-            PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => e.x,
-                feature = "dim2" => (*e).xy().length(),
-                feature = "dim3" => (*e).xyz().length(),
+                feature = "dim2" => e.xy().length(),
+                feature = "dim3" => e.length(),
             },
         }
     }
@@ -437,7 +451,7 @@ impl PmlCoefficientsGrid {
             .for_each(|(i, coeff)| {
                 let cell_idx = GridIndex::from_flat_idx(i as u32, n_cells);
 
-                // Mark this cell as a PEC cell 
+                // Mark this cell as a PEC cell
                 if !mats[i].sig.is_finite() {
                     *coeff = PmlCoefficients::PEC;
                     return;

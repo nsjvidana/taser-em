@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
+use kiss3d::prelude::BLUE;
 use taser_em1d::prelude::*;
-use taser_em_testbed1d::{FdtdTestbedViewer, VisualizationMode};
+use taser_em_testbed1d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
 use taser_em_testbed1d::re_exports::anyhow;
 
 #[kiss3d::main]
@@ -72,18 +73,20 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
     // Create viewer and set up camera
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default()).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorFieldVisual::H).await?;
+    testbed.visualization_mode = testbed.visualization_mode.with_color_mode(ColorMode::AutoScale {
+        v_max: Real::MIN,
+        color_min: BLUE,
+        color_max: BLUE
+    });
 
     // Render simulation
-    while testbed.render_frame(readback.get_dn_field()).await {
-        readback.read_back_dn(&backend)?;
-
+    while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("1d fdtd example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
         backend.submit(encoder)?;
-        readback.request_copy_dn(&backend, &state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;

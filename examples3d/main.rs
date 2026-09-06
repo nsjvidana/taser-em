@@ -3,11 +3,11 @@ mod bench3;
 use kiss3d::prelude::*;
 use std::num::NonZeroU32;
 use taser_em3d::prelude::*;
-use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
+use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
-    const RUN_BENCH: bool = true;
+    const RUN_BENCH: bool = false;
     if RUN_BENCH {
         bench3::benchmark().await.unwrap()
     }
@@ -61,7 +61,6 @@ pub async fn cube() -> anyhow::Result<()> {
     )?;
 
     // Compute source position and gaussian curve data points
-    let current_bb = simulation.compute_bounding_box();
     let source = Source::TFSF {
         spatial_axis: SpatialAxis::Z,
         direction: WaveDirection::Positive,
@@ -99,20 +98,18 @@ pub async fn cube() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,
-        vis_mode
+        vis_mode,
+        VectorFieldVisual::H
     ).await?;
     testbed.window.set_ambient(0.5);
 
     // Render simulation
-    while testbed.render_frame(readback.get_dn_field()).await {
-        readback.read_back_dn(&backend)?;
-
+    while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("3d fdtd example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
         drop(pass);
         backend.submit(encoder)?;
-        readback.request_copy_dn(&backend, &state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;
