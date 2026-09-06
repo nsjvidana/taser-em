@@ -401,6 +401,7 @@ where
     BCz: BoundaryCondition<Z>,
 {
     init_tfsf_masks: InitTfsfMasks,
+    init_pec: InitPec,
     boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
     aux_grid_update: AuxGridUpdate,
     compute_source_terms: GpuComputeSourceTerms,
@@ -422,6 +423,7 @@ where
     ) -> TaserResult<Self> {
         Ok(Self {
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
+            init_pec: InitPec::from_dir(backend, &crate::SPIRV_DIR)?,
             boundary_conditions,
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
@@ -454,15 +456,24 @@ where
         pass: &mut GpuPass,
         state: &mut FdtdLossyState
     ) -> TaserResult<()> {
-        if let Some(thread_count) = state.tfsf_dispatch_data.mask_init_thread_count {
+        if let Some(tfsf_init_threads) = state.tfsf_dispatch_data.mask_init_thread_count {
             self.init_tfsf_masks.call(
                 pass,
-                DispatchGrid::ThreadCount(thread_count),
+                DispatchGrid::ThreadCount(tfsf_init_threads),
                 &state.grid_params,
                 &state.tfsf_dispatch_data.tfsf_sources,
                 &mut state.tfsf_dispatch_data.tfsf_masks,
             )?;
         }
+        self.init_pec.call(
+            pass,
+            DispatchGrid::ThreadCount(state.thread_count),
+            &state.grid_params,
+            &mut state.h,
+            &mut state.dn,
+            &mut state.en,
+            &state.grid_coeffs
+        )?;
         Ok(())
     }
 

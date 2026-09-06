@@ -8,6 +8,32 @@ use khal_std::macros::{spirv, spirv_bindgen};
 #[allow(unused_imports)]
 use khal_std::num_traits::Float;
 
+/// Initialize field vectors inside perfect electric conductors to be zero.
+#[spirv_bindgen]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn init_pec(
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] dn: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] pml_coeffs: &[PmlCoefficients],
+) {
+    if cell_idx3.cmpge(grid.n_cells3).any() { return; }
+
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+
+    let m = pml_coeffs.read(idx);
+    if m.dn_loss1.is_finite() { return; }
+    h.write(idx, Vec4::ZERO);
+    dn.write(idx, Vec4::ZERO);
+    en.write(idx, Vec4::ZERO);
+}
+
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
