@@ -7,8 +7,13 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Visua
 
 #[kiss3d::main]
 async fn main() {
-    cube().await.unwrap()
-    // bench3::benchmark().await.unwrap()
+    const RUN_BENCH: bool = true;
+    if RUN_BENCH {
+        bench3::benchmark().await.unwrap()
+    }
+    else {
+        cube().await.unwrap()
+    }
 }
 
 pub async fn cube() -> anyhow::Result<()> {

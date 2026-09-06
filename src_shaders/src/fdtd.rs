@@ -807,7 +807,7 @@ pub struct PmlCoefficients {
 }
 
 impl PmlCoefficients {
-    /// Update coefficients representing a grid that shouldn't be updated.
+    /// Update coefficients representing a grid that shouldn't be updated in the simulation.
     pub const NO_UPDATE: Self = Self {
         h1: Vec4::ZERO,
         h2: Vec4::ZERO,
@@ -824,7 +824,10 @@ impl PmlCoefficients {
         en1: Vec4::ZERO,
     };
 
-    /// Update coefficients for a perfect electric conductor cell
+    /// Update coefficients for a perfect electric conductor cell.
+    ///
+    /// PEC cells are considered no-update cells as their fields remain zero throughout the simulation,
+    /// so `PmlCoefficients::PEC.no_update()` always returns `true`.
     pub const PEC: Self = Self {
         dn_loss1: Vec4::splat(Real::MAX),
         dn_loss2: Vec4::splat(Real::MAX),

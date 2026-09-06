@@ -160,42 +160,33 @@ macro_rules! impl_pec_boundary {
     ($name:ident, $axis:ident, $shader:ident) => {
         #[derive(Shader)]
         pub struct $name {
-            kernel: $shader,
+            init_kernel: $shader,
         }
 
         impl BoundaryCondition<$axis> for $name {
-            fn pre_update(
-                &mut self,
-                pass: &mut GpuPass,
-                state: &mut FdtdLossyState
-            ) -> TaserResult<()>
-            {
-                self.kernel.call(
+            fn initialize(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+                self.init_kernel.call(
                     pass,
                     DispatchGrid::ThreadCount(state.thread_count),
                     &state.grid_params,
-                    &mut state.h,
-                    &mut state.dn,
-                    &mut state.en
+                    &mut state.grid_coeffs
                 )?;
                 Ok(())
             }
 
-            fn before_de_update(
-                &mut self,
-                _pass: &mut GpuPass,
-                _state: &mut FdtdLossyState
-            ) -> TaserResult<()> { Ok(()) }
+            fn pre_update(&mut self, _pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> { Ok(()) }
+
+            fn before_de_update(&mut self, _pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> { Ok(()) }
         }
     };
 }
 
 #[cfg(not(feature = "dim1"))]
-impl_pec_boundary!(PECBoundaryX, X, GpuPecBoundaryX);
+impl_pec_boundary!(PECBoundaryX, X, GpuPecBoundaryXInit);
 #[cfg(not(feature = "dim1"))]
-impl_pec_boundary!(PECBoundaryY, Y, GpuPecBoundaryY);
+impl_pec_boundary!(PECBoundaryY, Y, GpuPecBoundaryYInit);
 #[cfg(not(feature = "dim2"))]
-impl_pec_boundary!(PECBoundaryZ, Z, GpuPecBoundaryZ);
+impl_pec_boundary!(PECBoundaryZ, Z, GpuPecBoundaryZInit);
 
 macro_rules! periodic_boundary {
     ($name:ident, $en_kernel:ident, $h_kernel:ident, $boundary_axis:ident) => {
