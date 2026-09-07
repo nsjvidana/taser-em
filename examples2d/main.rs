@@ -113,9 +113,9 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 10.,
-        cells_per_wavelength: 35,
-        spacer_region_widths: LayerWidths::splat_spatial(30),
+        dt_safety_factor: 15.,
+        cells_per_wavelength: 40,
+        spacer_region_widths: LayerWidths::splat_spatial(40),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(freq);
@@ -132,8 +132,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Construct dipole antenna
     let antenna_len = C_0 / freq;
-    let elem_thickness = antenna_len * 0.25;
-    let feed_gap = antenna_len * 0.15;
+    let elem_thickness = antenna_len * 0.15;
+    let feed_gap = antenna_len * 0.15 * 0.5;
     let half_len = antenna_len / 2.0;
     let pec = ElectricMaterial::PEC;
     simulation
@@ -187,14 +187,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::FixedRange {
-            v_min: 0.,
-            v_mid: 0.5,
-            v_max: 1.,
-            color_min: BLUE,
-            color_mid: CYAN,
-            color_max: RED
-        });
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
     testbed.window.set_ambient(0.5);
 

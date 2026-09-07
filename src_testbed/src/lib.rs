@@ -587,6 +587,40 @@ impl ColorMode {
             lerp_colors(((val - vmid) / (vmax - vmid)).saturate(), cmid, cmax)
         }
     }
+
+    /// Converts `self` to [`Self::FixedRange`] while keeping colors the same.
+    pub fn to_fixed_range(self, range: std::ops::Range<Real>) -> Self {
+        let (color_min, color_mid, color_max) = match self {
+            ColorMode::AutoScale { color_min, color_mid, color_max, .. } =>
+                (color_min, color_mid, color_max),
+            ColorMode::FixedRange { color_min, color_mid, color_max, .. } =>
+                (color_min, color_mid, color_max),
+        };
+        Self::FixedRange {
+            color_min, color_mid, color_max,
+            v_min: range.start,
+            v_mid: (range.start + range.end) / 2.,
+            v_max: range.end,
+        }
+    }
+
+    /// Converts `self` to [`Self::AutoScale`] while keeping colors the same.
+    pub fn to_auto_scale(self) -> Self {
+        let (color_min, color_mid, color_max) = match self {
+            ColorMode::AutoScale { color_min, color_mid, color_max, .. } =>
+                (color_min, color_mid, color_max),
+            ColorMode::FixedRange { color_min, color_mid, color_max, .. } =>
+                (color_min, color_mid, color_max),
+        };
+        Self::AutoScale {
+            color_min,
+            color_mid,
+            color_max,
+            v_max: Real::MIN,
+            v_mid: 0.,
+            v_min: Real::MAX,
+        }
+    }
 }
 
 impl Default for ColorMode {
@@ -599,8 +633,8 @@ impl Default for ColorMode {
             },
             color_mid: cfg_select! {
                 feature = "dim1" => RED,
-                feature = "dim2" => CYAN,
-                feature = "dim3" => CYAN.with_alpha(0.5),
+                feature = "dim2" => GREEN,
+                feature = "dim3" => GREEN.with_alpha(0.5),
             },
             color_max: RED,
             v_max: Real::MIN,
