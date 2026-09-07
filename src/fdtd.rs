@@ -709,6 +709,11 @@ impl ElectricMaterial {
     pub const ZERO: Self = Self {
         eps_r: Vec3::ZERO, mu_r: Vec3::ZERO, sig: Vec3::ZERO,
     };
+    /// Perfect Electric Conductor
+    pub const PEC: Self = Self {
+        sig: Vec3::INFINITY,
+        ..Self::FREE_SPACE
+    };
 
     /// Compute refractive index on all axes
     #[allow(unused_variables)]
@@ -731,8 +736,8 @@ pub enum Source {
         t_start: f32,
         /// Signal data points.
         vals: Vec<f32>,
-        /// The axis on which the dipole moves. **Must** be a **unit vector** (unless
-        /// you want to scale `vals` by the magnitude of `moment`).
+        /// The axis on which the dipole moves. Must be a unit vector, unless
+        /// you want to scale `vals` by the components of `moment`.
         moment: Vec3,
     },
     /// Total-Field / Scattered-Field source
