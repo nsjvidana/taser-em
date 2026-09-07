@@ -765,7 +765,7 @@ impl Source {
     ///
     /// # Panics
     /// When `f_max <= 0.` or when `dt <= 0.`
-    pub fn gaussian_max_f(f_max: f32, amplitude: f32, dt: f32) -> Vec<f32> {
+    pub fn gaussian_max_f(f_max: Real, amplitude: Real, dt: Real) -> Vec<Real> {
         assert!(f_max > 0.0, "f_max must be > 0");
         let tau = core::f32::consts::FRAC_1_PI / f_max;
         let t_0 = 6. * tau;
@@ -775,11 +775,17 @@ impl Source {
         })
     }
 
+    /// Generates datapoints for one cycle of sine (amplitude of `1.`)
+    pub fn sin_cycle(f: Real, dt: Real) -> Vec<Real> {
+        let omega = (2. * core::f32::consts::PI) * f;
+        Self::function_data_points(dt, 1. / f, |t| Real::sin(omega * t))
+    }
+
     /// Samples data points from the function of time `f`
     ///
     /// # Panics
     /// When `dt <= 0.` or `duration <= 0.`
-    pub fn function_data_points(dt: f32, duration: f32, mut f: impl FnMut(f32) -> f32) -> Vec<f32> {
+    pub fn function_data_points(dt: Real, duration: Real, mut f: impl FnMut(Real) -> Real) -> Vec<Real> {
         assert!(dt > 0.0, "dt must be > 0");
         assert!(duration > 0.0, "source duration must be > 0");
         let num_vals = (duration / dt) as usize;
