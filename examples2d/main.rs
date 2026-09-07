@@ -109,7 +109,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let sim_speed = 2;
+    let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -132,7 +132,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Construct dipole antenna
     let antenna_len = C_0 / freq;
-    let elem_thickness = antenna_len * 0.15;
+    let elem_thickness = antenna_len * 0.10;
     let feed_gap = antenna_len * 0.15 * 0.5;
     let half_len = antenna_len / 2.0;
     let pec = ElectricMaterial::PEC;
@@ -189,7 +189,6 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
-    testbed.window.set_ambient(0.5);
 
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {

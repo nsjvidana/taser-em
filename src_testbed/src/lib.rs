@@ -58,7 +58,9 @@ impl FdtdTestbedViewer {
             feature = "dim2" => "2D",
             feature = "dim3" => "3D",
         };
-        let window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
+        let mut window = Window::new(&format!("{title_dim} FDTD Testbed Viewer")).await;
+        window.set_ambient_color(WHITE);
+        window.set_ambient(0.5);
         let camera = OrbitCamera3d::default();
         let mut scene = SceneNode3d::default();
 
@@ -67,10 +69,15 @@ impl FdtdTestbedViewer {
         let cell_size = simulation.fdtd_parameters.cell_size;
         visualization_mode.initialize(&mut scene, n_cells, cell_size);
 
-        // Default cam light
-        let cam_light = Some(
-            scene.add_point_light((n_cells.as_vect() * cell_size).length() * 2.)
-        );
+        // Default lighting
+        let cam_light = cfg_select! {
+            feature = "dim2" => {{
+                None
+            }}
+            _ => Some(
+                scene.add_point_light((n_cells.as_vect() * cell_size).length() * 2.)
+            )
+        };
 
         let mut selff = Self {
             window,

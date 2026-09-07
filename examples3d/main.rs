@@ -103,7 +103,6 @@ pub async fn cube() -> anyhow::Result<()> {
         vis_mode,
         VectorFieldVisual::H
     ).await?;
-    testbed.window.set_ambient(0.5);
 
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {
