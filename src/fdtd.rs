@@ -5,6 +5,7 @@ use crate::gpu_util::CreateGpuBuffer;
 use derivative::Derivative;
 use parry3d::bounding_volume::Aabb;
 use std::num::{NonZeroI32, NonZeroU32};
+use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::*;
 use crate::*;
 
@@ -40,6 +41,26 @@ impl FdtdLossySimulation {
 
     pub fn add_source(&mut self, source: Source) -> &mut Self {
         self.sources.push(source);
+        self
+    }
+
+    /// Fill a box-shaped region from `start` to `end` with `material`
+    pub fn fill_region(
+        &mut self,
+        start: Vect,
+        end: Vect,
+        material: ElectricMaterial
+    ) -> &mut Self {
+        let region_dims = end - start;
+
+        let vec3_mask = Vec3::splat(self.fdtd_parameters.cell_size.max_element() * 3.);
+        let half_extents = region_dims.to_3d(vec3_mask).abs() * 0.5;
+
+        let shape = Cuboid::new(half_extents);
+        let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
+        let pose = Pose3::from_translation(middle);
+
+        self.material_regions.regions.push(MaterialRegion::new(SharedShape::new(shape), pose, material));
         self
     }
 

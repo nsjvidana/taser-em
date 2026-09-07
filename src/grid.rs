@@ -2,7 +2,7 @@ use crate::par_iter_mut;
 use crate::prelude::*;
 use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
-use parry3d::shape::{Cuboid, SharedShape};
+use parry3d::shape::SharedShape;
 use std::num::NonZeroU32;
 use std::path::Path;
 use taser_em_shaders::math::*;
@@ -115,24 +115,6 @@ pub struct MaterialRegions {
 
 impl MaterialRegions {
     pub fn new() -> Self { Self::default() }
-
-    /// Fill a box-shaped region from `start` to `end`
-    pub fn fill_region(
-        &mut self,
-        start: Vect,
-        end: Vect,
-        material: ElectricMaterial
-    ) -> &mut Self {
-        let region_dims = end - start;
-        let half_extents = region_dims.to_3d(Vec3::splat(region_dims.max_element())) * 0.5;
-
-        let shape = Cuboid::new(half_extents);
-        let middle = ((start + end) / 2.).to_3d(Vec3::ZERO);
-        let pose = Pose3::from_translation(middle);
-
-        self.regions.push(MaterialRegion::new(SharedShape::new(shape), pose, material));
-        self
-    }
 
     /// Utility function that uses [`MaterialRegions::load_path_as_regions`] to load a mesh at `path`
     /// as a trimesh region using helpful [`TriMeshFlags`].

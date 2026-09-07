@@ -574,7 +574,7 @@ impl ColorMode {
     }
 
     pub fn compute_color(&self, val: Real) -> Color {
-        let (cmin, cmid, cmax, vmin, vmid, vmax) = match self.clone() {
+        let (cmin, cmid, cmax, vmin, vmid, vmax) = match *self {
             ColorMode::AutoScale { color_min, color_mid, color_max, v_min, v_mid, v_max } =>
                 (color_min, color_mid, color_max, v_min, v_mid, v_max),
             ColorMode::FixedRange { color_min, color_mid, color_max, v_min, v_mid, v_max } =>

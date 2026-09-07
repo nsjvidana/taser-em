@@ -43,7 +43,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
     let wavelen = C_0 / f_max;
     let box_min = Vect::splat(-20.);
     let box_max = box_min + Vect::splat(wavelen);
-    simulation.material_regions.fill_region(box_min, box_max, mat);
+    simulation.fill_region(box_min, box_max, mat);
 
     // Source
     let source = Source::TFSF {
