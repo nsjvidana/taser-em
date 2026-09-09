@@ -1,5 +1,4 @@
 use kiss3d::glamx::Vec3;
-use kiss3d::prelude::*;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
 
@@ -114,8 +113,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
         dt_safety_factor: 15.,
-        cells_per_wavelength: 40,
-        spacer_region_widths: LayerWidths::splat_spatial(40),
+        cells_per_wavelength: 30,
+        spacer_region_widths: LayerWidths::splat_spatial(30),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(freq);
@@ -131,41 +130,32 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct dipole antenna
-    let antenna_len = C_0 / freq;
-    let elem_thickness = antenna_len * 0.10;
-    let feed_gap = antenna_len * 0.15 * 0.5;
+    let antenna_len = C_0 / (freq * 2.);
+    let elem_thickness = cell_size.y;
+    let feed_gap = cell_size.y * 3.;
     let half_len = antenna_len / 2.0;
     let pec = ElectricMaterial::PEC;
     simulation
         .fill_region(
             Vect::ZERO,
-            Vect::new(elem_thickness, half_len),
+            Vect::new(elem_thickness, -half_len),
             pec
         )
         .fill_region(
-            Vect::new(0., -feed_gap),
-            Vect::new(0., -feed_gap) + Vect::new(elem_thickness, -half_len),
+            Vect::new(0., feed_gap),
+            Vect::new(0., feed_gap) + Vect::new(elem_thickness, half_len),
             pec
         );
 
     // Source injection in antenna feed gap
-    let elem1_y_min = -cell_size.y;
-    let elem2_y_min = -feed_gap + cell_size.y;
     let source_values = Source::sin_cycle(freq, dt).repeat(10);
     simulation
         .add_source(Source::Dipole {
             dipole_type: DipoleType::Electric,
-            position: Vect::new(elem_thickness / 2., elem1_y_min),
+            position: Vect::new(elem_thickness, feed_gap) / 2.,
             t_start: 0.0,
             vals: source_values.clone(),
             moment: Vec3::Z,
-        })
-        .add_source(Source::Dipole {
-            dipole_type: DipoleType::Electric,
-            position: Vect::new(elem_thickness / 2., elem2_y_min),
-            t_start: 0.0,
-            vals: source_values,
-            moment: Vec3::NEG_Z,
         });
 
     // Set up buffers and pipeline
