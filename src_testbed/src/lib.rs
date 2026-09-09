@@ -5,7 +5,7 @@ pub mod re_exports {
     pub use kiss3d;
 }
 
-use crate::util::lerp_colors;
+use crate::util::{draw_bb, lerp_colors};
 use glamx::*;
 use kiss3d::camera::Projection;
 use kiss3d::prelude::*;
@@ -35,6 +35,9 @@ pub struct FdtdTestbedViewer {
     pub vector_field_visual: VectorFieldVisual,
     /// A light source locked at the camera's location (optional, but is a point source by default)
     pub cam_light: Option<SceneNode3d>,
+    grid_bb_min: Vec3,
+    grid_bb_max: Vec3,
+    bb_color: Color
 }
 
 impl FdtdTestbedViewer {
@@ -79,6 +82,7 @@ impl FdtdTestbedViewer {
             )
         };
 
+        let grid_extents = (n_cells.as_vect() * cell_size).to_3d(Vec3::ZERO);
         let mut selff = Self {
             window,
             camera,
@@ -90,6 +94,9 @@ impl FdtdTestbedViewer {
             visualization_mode,
             vector_field_visual,
             cam_light,
+            grid_bb_min: Vec3::ZERO,
+            grid_bb_max: grid_extents,
+            bb_color: WHITE,
         };
         let regions_offset = YeeGridMaterials::compute_simulation_offset(
             &simulation.compute_bounding_box(),
@@ -197,6 +204,11 @@ impl FdtdTestbedViewer {
         readback: &mut FdtdStateReadback,
     ) -> TaserResult<bool> {
         self.update_cam_light();
+
+        if cfg!(feature = "dim3") {
+            draw_bb(&mut self.window, self.grid_bb_min, self.grid_bb_max, self.bb_color);
+        }
+
         let window_bool = self.window.render_3d(&mut self.scene, &mut self.camera).await;
 
         // Visualize the version of the field that's stored on CPU
