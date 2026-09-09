@@ -960,7 +960,7 @@ impl FdtdStateReadback {
                     FdtdSimulationMode::ExHy => self.h.iter().map(|v| v.y).collect(),
                     #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseMagneticZ => self.h.iter().map(|v| v.xy().length()).collect(),
-                    #[cfg(feature = "dim3")]
+                    #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseElectricZ => self.h.iter().map(|v| v.z).collect(),
                 },
         }
@@ -979,7 +979,7 @@ impl FdtdStateReadback {
                     FdtdSimulationMode::ExHy => self.dn.iter().map(|v| v.x).collect(),
                     #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseMagneticZ => self.dn.iter().map(|v| v.z).collect(),
-                    #[cfg(feature = "dim3")]
+                    #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseElectricZ => self.dn.iter().map(|v| v.xy().length()).collect(),
                 },
         }
@@ -998,7 +998,7 @@ impl FdtdStateReadback {
                     FdtdSimulationMode::ExHy => self.en.iter().map(|v| v.x).collect(),
                     #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseMagneticZ => self.en.iter().map(|v| v.z).collect(),
-                    #[cfg(feature = "dim3")]
+                    #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseElectricZ => self.en.iter().map(|v| v.xy().length()).collect(),
                 }
         }
@@ -1013,6 +1013,6 @@ pub enum FdtdSimulationMode {
     ExHy,
     #[cfg(feature = "dim2")]
     TransverseMagneticZ,
-    #[cfg(feature = "dim3")]
+    #[cfg(feature = "dim2")]
     TransverseElectricZ,
 }
