@@ -1,4 +1,4 @@
-use crate::par_iter_mut;
+use crate::{into_par_iter, par_iter_mut};
 use crate::prelude::*;
 use glamx::{Pose3, Vec3, Vec4};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
@@ -227,7 +227,7 @@ pub struct RegionMesh {
 pub struct YeeGridMaterials {
     pub n_cells: GridIndex,
     pub cell_size: Vect,
-    pub materials: Vec<ElectricMaterial>,
+    pub materials: Vec<YeeCellMaterials>,
     /// The material applied to cells that don't intersect with any material regions.
     pub default_mat: ElectricMaterial,
     /// The translation applied to all objects in a [`MaterialRegions`] to center them on this grid.
@@ -281,21 +281,19 @@ impl YeeGridMaterials {
                 .find_map(|(s, p, m)|
                     s.contains_point(p, pt).then_some(m)
                 )
-                .unwrap_or(&default_mat)
+                .copied()
+                .unwrap_or(default_mat)
         };
 
-        let mut mats = vec![ElectricMaterial::FREE_SPACE; cell_count];
+        let mut mats = vec![YeeCellMaterials::FREE_SPACE; cell_count];
         par_iter_mut!(mats)
             .enumerate()
             .for_each(|(i, mat)| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
                 let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
-                let dn_mat = dn_offsets.map(|off| mat_at_pt(pos + off));
-                let h_mat = h_offsets.map(|off| mat_at_pt(pos + off));
-                *mat = ElectricMaterial {
-                    eps_r: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].eps_r[i] })),
-                    sig: Vec3::from_array(std::array::from_fn(|i| { dn_mat[i].sig[i] })),
-                    mu_r: Vec3::from_array(std::array::from_fn(|i| { h_mat[i].mu_r[i] })),
+                *mat = YeeCellMaterials {
+                    dn: dn_offsets.map(|off| mat_at_pt(pos + off)),
+                    h: h_offsets.map(|off| mat_at_pt(pos + off)),
                 };
             });
 
@@ -318,35 +316,30 @@ impl YeeGridMaterials {
 
         let n_cells = self.n_cells.div_ceil(GridIndex::splat(downscale_factor));
         let cell_size = self.cell_size * downscale_factor as f32;
-        let cell_count = n_cells.element_product() as usize;
-        let mut materials = vec![ElectricMaterial::FREE_SPACE; cell_count];
 
         let kernel_cells = grid_cells_iter(GridIndex::from_index_array([downscale_factor; DIM]))
             .map(|t| GridIndex::from_index_array(t.into()))
             .collect::<Vec<_>>();
-        let old_n_cells3 = self.n_cells.n_cells_to_3d();
-        for (i, mat) in materials.iter_mut().enumerate() {
-            let idx = GridIndex::from_flat_idx(i as u32, n_cells) * downscale_factor;
-            let mut mat_sum = ElectricMaterial::ZERO;
-            let mut n_sums = 0;
-            for k in kernel_cells.iter() {
-                let k_idx = idx + k;
-                let k_idx3 = k_idx.cell_idx_to_3d();
-                if k_idx3.cmplt(old_n_cells3).all() {
-                    let k_i = k_idx.to_flat_idx(self.n_cells) as usize;
-                    mat_sum.mu_r += self.materials[k_i].mu_r;
-                    mat_sum.eps_r += self.materials[k_i].eps_r;
-                    mat_sum.sig += self.materials[k_i].sig;
-                    n_sums += 1;
+        let fine_n_cells = self.n_cells;
+        let fine_n_cells3 = fine_n_cells.n_cells_to_3d();
+        let cell_count = n_cells.element_product() as usize;
+        let materials = into_par_iter!(0..cell_count)
+            .map(|coarse_idx| {
+                let subcell_fine = GridIndex::from_flat_idx(coarse_idx as u32, n_cells) * downscale_factor;
+                let mut mat_sum = YeeCellMaterials::ZERO;
+                let mut n_sums = 0;
+                for k_cell_offset in kernel_cells.iter() {
+                    let fine_cell = subcell_fine + k_cell_offset;
+                    let fine_cell3 = fine_cell.cell_idx_to_3d();
+                    if fine_cell3.cmplt(fine_n_cells3).all() {
+                        let fine_idx = fine_cell.to_flat_idx(fine_n_cells) as usize;
+                        mat_sum = mat_sum + self.materials[fine_idx];
+                        n_sums += 1;
+                    }
                 }
-            }
-            let n_sums = n_sums as f32;
-            *mat = ElectricMaterial {
-                mu_r: mat_sum.mu_r / n_sums,
-                eps_r: mat_sum.eps_r / n_sums,
-                sig: mat_sum.sig / n_sums,
-            };
-        }
+                mat_sum / (n_sums as f32)
+            })
+            .collect::<Vec<_>>();
 
         YeeGridMaterials {
             n_cells,
@@ -365,6 +358,57 @@ impl YeeGridMaterials {
         let grid_center = n_cells.as_vect() * cell_size / 2.;
         let sim_center = Vect::from_vec3(simulation_bb.center());
         (grid_center - sim_center).to_3d(Vec3::ZERO)
+    }
+}
+
+/// The material present at each vector component
+#[derive(Copy, Clone, Debug)]
+pub struct YeeCellMaterials {
+    /// Material at Dn and En components
+    pub dn: [ElectricMaterial; MAX_DIM],
+    /// Material at H components
+    pub h: [ElectricMaterial; MAX_DIM],
+}
+
+impl YeeCellMaterials {
+    pub const FREE_SPACE: Self = Self {
+        dn: [ElectricMaterial::FREE_SPACE; MAX_DIM],
+        h: [ElectricMaterial::FREE_SPACE; MAX_DIM],
+    };
+
+    pub const ZERO: Self = Self {
+        dn: [ElectricMaterial::ZERO; MAX_DIM],
+        h: [ElectricMaterial::ZERO; MAX_DIM],
+    };
+}
+
+impl core::ops::Add for YeeCellMaterials {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            dn: core::array::from_fn(|i|
+                self.dn[i] + rhs.dn[i]
+            ),
+            h: core::array::from_fn(|i|
+                self.h[i] + rhs.h[i]
+            ),
+        }
+    }
+}
+
+impl core::ops::Div<Real> for YeeCellMaterials {
+    type Output = Self;
+
+    fn div(self, rhs: Real) -> Self::Output {
+        Self {
+            dn: core::array::from_fn(|i|
+                self.dn[i] / rhs
+            ),
+            h: core::array::from_fn(|i|
+                self.h[i] / rhs
+            ),
+        }
     }
 }
 
@@ -430,14 +474,10 @@ impl PmlCoefficientsGrid {
         let c0_dt = C_0 * dt;
         par_iter_mut!(coeffs)
             .enumerate()
-            .for_each(|(i, coeff)| {
-                let cell_idx = GridIndex::from_flat_idx(i as u32, n_cells);
-
-                // Mark this cell as a PEC cell
-                if !mats[i].sig.is_finite() {
-                    *coeff = PmlCoefficients::PEC;
-                    return;
-                }
+            .for_each(|(idx, coeff)| {
+                let cell_idx = GridIndex::from_flat_idx(idx as u32, n_cells);
+                
+                let cell_materials = mats[idx];
 
                 // Stagger indexing the conductivities as per the Yee grid staggering
                 let idx_2x = (cell_idx * 2).cell_idx_to_3d().as_usizevec3();
@@ -465,43 +505,70 @@ impl PmlCoefficientsGrid {
                     let axis1 = axis.permute();
                     let axis2 = axis1.permute();
 
-                    let h_sigs_axis = h_sigs[axis_i];
-                    let coeff_term0 = (
-                        inv_dt + ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) +
-                            ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                    ).recip();
-                    let inv_mu_r_axis = mats[i].mu_r[axis].recip();
-                    coeff.h1[axis] = coeff_term0 * (
-                        inv_dt - ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) -
-                            ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                    );
-                    coeff.h2[axis] = -coeff_term0 * C_0 * inv_mu_r_axis;
-                    coeff.h3[axis] = -coeff_term0 * c0_dt * h_sigs_axis[axis] / EPS_0 * inv_mu_r_axis;
-                    #[cfg(any(feature = "dim2", feature = "dim3"))]
-                    {
-                        coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
+                    // H update coefficients
+                    let h_mat = &cell_materials.h[axis_i];
+                    if h_mat.sig[axis].is_finite() {
+                        let h_sigs_axis = h_sigs[axis_i];
+                        let coeff_term0 = (
+                            inv_dt + ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) +
+                                ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                        ).recip();
+                        let inv_mu_r_axis = h_mat.mu_r[axis].recip();
+                        coeff.h1[axis] = coeff_term0 * (
+                            inv_dt - ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) -
+                                ((h_sigs_axis[axis1] * h_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                        );
+                        coeff.h2[axis] = -coeff_term0 * C_0 * inv_mu_r_axis;
+                        coeff.h3[axis] = -coeff_term0 * c0_dt * h_sigs_axis[axis] / EPS_0 * inv_mu_r_axis;
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
+                        }
+                    } else { // Zero-out components inside perfect electric conductors
+                        coeff.h1[axis] = 0.;
+                        coeff.h2[axis] = 0.;
+                        coeff.h3[axis] = 0.;
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.h4[axis] = 0.;
+                        }
                     }
 
-                    let dn_sigs_axis = dn_sigs[axis_i];
-                    let coeff_term0 = (
-                        inv_dt + ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) +
-                            ((dn_sigs_axis[axis1] * dn_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                    ).recip();
-                    let mat_sig_axis = mats[i].sig[axis];
-                    coeff.dn1[axis] = coeff_term0 * (
-                        inv_dt - ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) -
-                            ((dn_sigs_axis[axis1] * dn_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
-                    );
-                    coeff.dn2[axis] = coeff_term0 * C_0;
-                    coeff.dn_loss1[axis] = -coeff_term0 * mat_sig_axis / EPS_0;
-                    coeff.dn_loss2[axis] = -coeff_term0 * dn_sigs_axis[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
-                    coeff.dn3[axis] = coeff_term0 * c0_dt * dn_sigs_axis[axis] / EPS_0;
-                    #[cfg(any(feature = "dim2", feature = "dim3"))]
-                    {
-                        coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
+                    // Dn/En update coefficients
+                    let dn_mat = &cell_materials.dn[axis_i];
+                    if dn_mat.sig[axis].is_finite() {
+                        let dn_sigs_axis = dn_sigs[axis_i];
+                        let coeff_term0 = (
+                            inv_dt + ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) +
+                                ((dn_sigs_axis[axis1] * dn_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                        ).recip();
+                        let mat_sig_axis = dn_mat.sig[axis];
+                        coeff.dn1[axis] = coeff_term0 * (
+                            inv_dt - ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) -
+                                ((dn_sigs_axis[axis1] * dn_sigs_axis[axis2] * dt) / (4. * EPS_0 * EPS_0))
+                        );
+                        coeff.dn2[axis] = coeff_term0 * C_0;
+                        coeff.dn_loss1[axis] = -coeff_term0 * mat_sig_axis / EPS_0;
+                        coeff.dn_loss2[axis] = -coeff_term0 * dn_sigs_axis[axis] * mat_sig_axis * dt / (EPS_0 * EPS_0);
+                        coeff.dn3[axis] = coeff_term0 * c0_dt * dn_sigs_axis[axis] / EPS_0;
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
+                        }
+                        coeff.en1[axis] = dn_mat.eps_r[axis].recip();
+                    } else { // Zero-out components inside perfect electric conductors
+                        coeff.dn1[axis] = 0.;
+                        coeff.dn2[axis] = 0.;
+                        coeff.dn_loss1[axis] = 0.;
+                        coeff.dn_loss2[axis] = 0.;
+                        coeff.dn3[axis] = 0.;
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.dn4[axis] = 0.;
+                        }
+                        coeff.en1[axis] = 0.;
                     }
                 }
-                coeff.en1 = Vec4::from((mats[i].eps_r.recip(), 0.));
             });
 
         (*regions_offset, Self { n_cells, coeffs, })

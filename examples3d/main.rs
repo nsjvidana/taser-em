@@ -200,7 +200,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25))
-        .with_alpha(AlphaMode::Mask(0.2), 1.);
+        .with_alpha(AlphaMode::Mask(0.1), 1.);
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
 
     // Render simulation

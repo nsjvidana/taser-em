@@ -743,6 +743,32 @@ impl ElectricMaterial {
     }
 }
 
+impl core::ops::Add for ElectricMaterial {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            eps_r: self.eps_r + rhs.eps_r,
+            mu_r: self.mu_r + rhs.mu_r,
+            sig: self.sig + rhs.sig,
+        }
+    }
+
+}
+
+impl core::ops::Div<Real> for ElectricMaterial {
+    type Output = Self;
+
+    fn div(self, rhs: Real) -> Self::Output {
+        Self {
+            eps_r: self.eps_r / rhs,
+            mu_r: self.mu_r / rhs,
+            sig: self.sig / rhs,
+        }
+    }
+}
+
+
 /// Inject energy into the simulation in various ways.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
