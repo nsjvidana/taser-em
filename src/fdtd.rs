@@ -98,9 +98,9 @@ impl FdtdLossySimulation {
                     return None;
                 };
                 let pos = (regions_offset + position) / cell_size;
-                let cell_grid_idx = pos.as_grid_index();
+                let cell_grid_idx = pos.round().as_grid_index();
                 debug_assert!(!pos.min_element().is_sign_negative(), "negative source position!");
-                debug_assert!(!pos.as_grid_index().cmpge(n_cells).any(), "Out of bounds source!");
+                debug_assert!(!cell_grid_idx.cmpge(n_cells).any(), "Out of bounds source!");
                 let start = source_vals.len();
                 source_vals.extend_from_slice(vals);
                 Some(GpuDipole {
