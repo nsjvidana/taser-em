@@ -28,7 +28,6 @@ pub async fn benchmark() -> anyhow::Result<()> {
         material_discretization: MaterialDiscretization::Smooth {
             resolution: stability.material_resolution
         },
-        polarization_mode: PolarizationMode::TransverseElectric
     };
     let pml_params = PmlParameters::new(dt);
     let mut simulation = FdtdLossySimulation::new(fdtd_params, pml_params);

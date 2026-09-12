@@ -31,7 +31,6 @@ pub async fn single_slab() -> anyhow::Result<()> {
             resolution: NonZeroU32::new(3).unwrap()
         },
         // material_discretization: MaterialDiscretization::Rough,
-        polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 

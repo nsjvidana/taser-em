@@ -70,7 +70,7 @@ impl FdtdLossySimulation {
         stability: &FdtdStability,
     ) -> TaserResult<FdtdLossyState> {
         let FdtdParameters {
-            cell_size, dt, polarization_mode, ..
+            cell_size, dt, ..
         } = self.fdtd_parameters;
 
         let sim_bb = self.compute_bounding_box();
@@ -139,11 +139,11 @@ impl FdtdLossySimulation {
         let cell_size3 = cell_size.to_3d(Vec3::ZERO);
         let grid_params = GridParameters {
             flat_idx_incrs,
+            _padding0: 0,
             n_cells3: n_cells.n_cells_to_3d(),
             dt,
             d: cell_size3,
             inv_dt: dt.recip(),
-            polarization_mode_index: polarization_mode.into(),
             cell_count,
             inv_d: cell_size3.recip(),
             problem_space_min: problem_space_min.to_3d(UVec3::ONE),
@@ -572,7 +572,6 @@ where
 pub struct FdtdParameters {
     pub cell_size: Vect,
     pub dt: Real,
-    pub polarization_mode: PolarizationMode,
     pub material_discretization: MaterialDiscretization
 }
 
@@ -929,6 +928,9 @@ impl FdtdStateReadback {
         })
     }
 
+    #[cfg(not(feature = "dim3"))]
+    pub fn get_simulation_mode(&self) -> FdtdSimulationMode { self.mode }
+
     /// Submit a command for copying all vector field data from GPU to CPU
     pub fn request_copy_fields(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
         self.request_copy_h(backend, state)?;
@@ -981,13 +983,13 @@ impl FdtdStateReadback {
             _ =>
                 match self.mode {
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => self.h.iter().map(|v| v.x).collect(),
+                    FdtdSimulationMode::EyHx => par_iter!(self.h).map(|v| v.x.abs()).collect(),
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => self.h.iter().map(|v| v.y).collect(),
+                    FdtdSimulationMode::ExHy => par_iter!(self.h).map(|v| v.y.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => self.h.iter().map(|v| v.xy().length()).collect(),
+                    FdtdSimulationMode::TransverseMagneticZ => par_iter!(self.h).map(|v| v.xy().length()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => self.h.iter().map(|v| v.z).collect(),
+                    FdtdSimulationMode::TransverseElectricZ => par_iter!(self.h).map(|v| v.z.abs()).collect(),
                 },
         }
     }
@@ -1000,13 +1002,13 @@ impl FdtdStateReadback {
             _ =>
                 match self.mode {
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => self.dn.iter().map(|v| v.y).collect(),
+                    FdtdSimulationMode::EyHx => par_iter!(self.dn).map(|v| v.y.abs()).collect(),
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => self.dn.iter().map(|v| v.x).collect(),
+                    FdtdSimulationMode::ExHy => par_iter!(self.dn).map(|v| v.x.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => self.dn.iter().map(|v| v.z).collect(),
+                    FdtdSimulationMode::TransverseMagneticZ => par_iter!(self.dn).map(|v| v.z.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => self.dn.iter().map(|v| v.xy().length()).collect(),
+                    FdtdSimulationMode::TransverseElectricZ => par_iter!(self.dn).map(|v| v.xy().length()).collect(),
                 },
         }
     }
@@ -1019,19 +1021,20 @@ impl FdtdStateReadback {
             _ =>
                 match self.mode {
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => self.en.iter().map(|v| v.y).collect(),
+                    FdtdSimulationMode::EyHx => par_iter!(self.en).map(|v| v.y.abs()).collect(),
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => self.en.iter().map(|v| v.x).collect(),
+                    FdtdSimulationMode::ExHy => par_iter!(self.en).map(|v| v.x.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => self.en.iter().map(|v| v.z).collect(),
+                    FdtdSimulationMode::TransverseMagneticZ => par_iter!(self.en).map(|v| v.z.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => self.en.iter().map(|v| v.xy().length()).collect(),
+                    FdtdSimulationMode::TransverseElectricZ => par_iter!(self.en).map(|v| v.xy().length()).collect(),
                 }
         }
     }
 }
 
 #[cfg(not(feature = "dim3"))]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum FdtdSimulationMode {
     #[cfg(feature = "dim1")]
     EyHx,
@@ -1041,4 +1044,59 @@ pub enum FdtdSimulationMode {
     TransverseMagneticZ,
     #[cfg(feature = "dim2")]
     TransverseElectricZ,
+}
+
+#[cfg(not(feature = "dim3"))]
+impl FdtdSimulationMode {
+    pub fn extract_h_vector(&self, h: &Vec4) -> Vec3 {
+        match self {
+            #[cfg(feature = "dim1")]
+            Self::EyHx => Vec3::new(h.x, 0., 0.),
+            #[cfg(feature = "dim1")]
+            Self::ExHy => Vec3::new(0., h.y, 0.),
+            #[cfg(feature = "dim2")]
+            Self::TransverseMagneticZ => Vec3::new(h.x, h.y, 0.),
+            #[cfg(feature = "dim2")]
+            Self::TransverseElectricZ => Vec3::new(0., 0., h.z),
+        }
+    }
+
+    pub fn extract_e_vector(&self, e: &Vec4) -> Vec3 {
+        match self {
+            #[cfg(feature = "dim1")]
+            Self::EyHx => Vec3::new(0., e.y, 0.),
+            #[cfg(feature = "dim1")]
+            Self::ExHy => Vec3::new(e.x, 0., 0.),
+            #[cfg(feature = "dim2")]
+            Self::TransverseMagneticZ => Vec3::new(0., 0., e.z),
+            #[cfg(feature = "dim2")]
+            Self::TransverseElectricZ => Vec3::new(e.x, e.y, 0.),
+        }
+    }
+
+    pub fn get_h_magnitude(&self, h: &Vec4) -> Real {
+        match self {
+            #[cfg(feature = "dim1")]
+            Self::EyHx => h.x.abs(),
+            #[cfg(feature = "dim1")]
+            Self::ExHy => h.y.abs(),
+            #[cfg(feature = "dim2")]
+            Self::TransverseMagneticZ => h.xy().length(),
+            #[cfg(feature = "dim2")]
+            Self::TransverseElectricZ => h.z.abs(),
+        }
+    }
+
+    pub fn get_e_magnitude(&self, e: &Vec4) -> Real {
+        match self {
+            #[cfg(feature = "dim1")]
+            Self::EyHx => e.y.abs(),
+            #[cfg(feature = "dim1")]
+            Self::ExHy => e.x.abs(),
+            #[cfg(feature = "dim2")]
+            Self::TransverseMagneticZ => e.z.abs(),
+            #[cfg(feature = "dim2")]
+            Self::TransverseElectricZ => e.xy().length(),
+        }
+    }
 }

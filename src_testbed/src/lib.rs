@@ -29,7 +29,6 @@ pub struct FdtdTestbedViewer {
     pub material_region_alpha: f32,
     n_cells: GridIndex,
     cell_size: Vect,
-    pub polarization_mode: PolarizationMode,
     pub visualization_mode: VisualizationMode,
     /// Which field should be visualized
     pub vector_field_visual: VectorFieldVisual,
@@ -54,7 +53,7 @@ impl FdtdTestbedViewer {
         simulation: &FdtdLossySimulation,
         stability: &FdtdStability,
         mut visualization_mode: VisualizationMode,
-        vector_field_visual: VectorFieldVisual
+        vector_field_visual: VectorFieldVisual,
     ) -> anyhow::Result<Self> {
         let title_dim = cfg_select! {
             feature = "dim1" => "1D",
@@ -90,7 +89,6 @@ impl FdtdTestbedViewer {
             material_region_alpha: Self::DEFAULT_REGION_ALPHA,
             n_cells,
             cell_size,
-            polarization_mode: simulation.fdtd_parameters.polarization_mode,
             visualization_mode,
             vector_field_visual,
             cam_light,
@@ -213,15 +211,10 @@ impl FdtdTestbedViewer {
 
         // Visualize the version of the field that's stored on CPU
         // Don't read back here since that forces the read back & simulation to be in series with the visualization (slow)
-        let v_field_ref = match self.vector_field_visual {
-            VectorFieldVisual::H => VectorFieldRef::H(readback.get_h_field()),
-            VectorFieldVisual::Dn => VectorFieldRef::Dn(readback.get_dn_field()),
-            VectorFieldVisual::En => VectorFieldRef::En(readback.get_en_field()),
-        };
         self.visualization_mode.visualize_field(
-            v_field_ref,
+            readback,
+            self.vector_field_visual,
             &mut self.window,
-            self.polarization_mode
         );
 
         // Read back new field and request copy of field for next iteration
@@ -393,18 +386,17 @@ impl VisualizationMode {
     }
 
     #[allow(unused_variables)]
-    pub fn visualize_field<'a>(&mut self, v_field_ref: VectorFieldRef<'a>, window: &mut Window, polarization_mode: PolarizationMode) {
+    pub fn visualize_field(
+        &mut self,
+        readback: &FdtdStateReadback,
+        vector_field_visual: VectorFieldVisual,
+        window: &mut Window,
+    ) {
         let get_magnitudes = || {
-            match v_field_ref {
-                VectorFieldRef::H(v) => par_iter!(v)
-                    .map(|v| polarization_mode.get_h_magnitude(v))
-                    .collect::<Vec<_>>(),
-                VectorFieldRef::Dn(v) => par_iter!(v)
-                    .map(|v| polarization_mode.get_e_magnitude(v))
-                    .collect::<Vec<_>>(),
-                VectorFieldRef::En(v) => par_iter!(v)
-                    .map(|v| polarization_mode.get_e_magnitude(v))
-                    .collect::<Vec<_>>(),
+            match vector_field_visual {
+                VectorFieldVisual::H => readback.h_magnitudes(),
+                VectorFieldVisual::Dn => readback.dn_magnitudes(),
+                VectorFieldVisual::En => readback.en_magnitudes(),
             }
         };
 
@@ -416,6 +408,7 @@ impl VisualizationMode {
                 data_point_magnitude: graph_max_val,
                 positions
             } = self;
+            let sim_mode = readback.get_simulation_mode();
 
             let magnitudes = get_magnitudes();
 
@@ -433,17 +426,17 @@ impl VisualizationMode {
 
             *graph_max_magnitude = graph_max_magnitude.max(curr_max_mag);
 
-            let v_field = match v_field_ref {
-                VectorFieldRef::H(v) => v,
-                VectorFieldRef::Dn(v) => v,
-                VectorFieldRef::En(v) => v,
+            let v_field = match vector_field_visual {
+                VectorFieldVisual::H => readback.get_h_field(),
+                VectorFieldVisual::Dn => readback.get_dn_field(),
+                VectorFieldVisual::En => readback.get_en_field(),
             };
             let line_positions = par_iter!(positions)
                 .zip(par_iter!(v_field))
                 .map(|(cell_pos, vector)| {
-                    let v = match v_field_ref {
-                        VectorFieldRef::H(..) => polarization_mode.extract_h_vector(vector),
-                        _ => polarization_mode.extract_e_vector(vector)
+                    let v = match vector_field_visual {
+                        VectorFieldVisual::H => sim_mode.extract_h_vector(vector),
+                        _ => sim_mode.extract_e_vector(vector)
                     };
                     cell_pos + (v / *graph_max_magnitude) * *graph_max_val
                 })
@@ -531,13 +524,6 @@ pub enum VectorFieldVisual {
     H,
     Dn,
     En
-}
-
-/// Reference to a vector field that will get visualized
-pub enum VectorFieldRef<'a> {
-    H(&'a Vec<Vec4>),
-    Dn(&'a Vec<Vec4>),
-    En(&'a Vec<Vec4>)
 }
 
 /// How vector field magnitudes are colored

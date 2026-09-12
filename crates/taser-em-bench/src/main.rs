@@ -15,7 +15,6 @@ async fn bench() -> anyhow::Result<()> {
     let sim_params = FdtdParameters {
         cell_size: Vect::ONE,
         dt: 1.,
-        polarization_mode: PolarizationMode::TransverseElectric,
         material_discretization: MaterialDiscretization::Rough
     };
     let pml_params = PmlParameters::new(1.);

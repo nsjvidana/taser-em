@@ -1,6 +1,6 @@
 use crate::{into_par_iter, par_iter_mut};
 use crate::prelude::*;
-use glamx::{Pose3, Vec3, Vec4};
+use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::SharedShape;
 use std::num::NonZeroU32;
@@ -14,96 +14,7 @@ use crate::prelude::load_from_path;
 use crate::util::grid_cells_iter;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use taser_em_shaders::fdtd::{PmlCoefficients, PolarizationModeIndex};
-
-/// Polarization mode affects which field components are computed in the simulation, depending on how many spatial dimensions there are.
-/// In 3D, all axes are computed for all fields.
-/// See the docs of this enum's variants to know which axes are enabled for each mode.
-///
-/// A little pedantic note: The word "polarization" here actually refers to how a specific vector field has to be transverse to the
-/// simulation domain in 2D FDTD, so the word makes less sense in 1D and 3D contexts, but it's used here anyway for simplicity.
-#[derive(Copy, Clone, Debug)]
-pub enum PolarizationMode {
-    /// 1D: Ex, Hy
-    /// 2D: Ez, Hx, Hy
-    /// 3D: All axes
-    TransverseElectric,
-    /// 1D: Ey, Hx
-    /// 2D: Ex, Ey, Hz
-    /// 3D: All axes
-    TransverseMagnetic,
-}
-
-impl PolarizationMode {
-    pub fn extract_h_vector(&self, h: &Vec4) -> Vec3 {
-        match self {
-            PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => h.with_yz(Vec2::ZERO).xyz(),
-                feature = "dim2" => h.with_z(0.).xyz(),
-                feature = "dim3" => h.xyz(),
-            },
-            PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => h.with_xz(Vec2::ZERO).xyz(),
-                feature = "dim2" => h.with_xy(Vec2::ZERO).xyz(),
-                feature = "dim3" => h.xyz(),
-            },
-        }
-    }
-
-    pub fn extract_e_vector(&self, e: &Vec4) -> Vec3 {
-        match self {
-            PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => e.with_xz(Vec2::ZERO).xyz(),
-                feature = "dim2" => e.with_xy(Vec2::ZERO).xyz(),
-                feature = "dim3" => e.xyz(),
-            },
-            PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => e.with_yz(Vec2::ZERO).xyz(),
-                feature = "dim2" => e.with_z(0.).xyz(),
-                feature = "dim3" => e.xyz(),
-            },
-        }
-    }
-    
-    pub fn get_h_magnitude(&self, h: &Vec4) -> Real {
-        match self {
-            PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => h.x.abs(),
-                feature = "dim2" => h.xy().length(),
-                feature = "dim3" => h.length(),
-            },
-            PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => h.y.abs(),
-                feature = "dim2" => h.z.abs(),
-                feature = "dim3" => h.length(),
-            },
-        }
-    }
-
-    pub fn get_e_magnitude(&self, e: &Vec4) -> Real {
-        match self {
-            PolarizationMode::TransverseMagnetic => cfg_select! {
-                feature = "dim1" => e.y.abs(),
-                feature = "dim2" => e.z.abs(),
-                feature = "dim3" => e.length(),
-            },
-            PolarizationMode::TransverseElectric => cfg_select! {
-                feature = "dim1" => e.x.abs(),
-                feature = "dim2" => e.xy().length(),
-                feature = "dim3" => e.length(),
-            },
-        }
-    }
-}
-
-impl From<PolarizationMode> for PolarizationModeIndex {
-    fn from(value: PolarizationMode) -> Self {
-        match value {
-            PolarizationMode::TransverseMagnetic => PolarizationModeIndex::TM,
-            PolarizationMode::TransverseElectric => PolarizationModeIndex::TE,
-        }
-    }
-}
+use taser_em_shaders::fdtd::PmlCoefficients;
 
 #[derive(Clone, Debug, Default)]
 /// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.

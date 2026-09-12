@@ -37,7 +37,6 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
             resolution: stability.material_resolution
         },
         // material_discretization: MaterialDiscretization::Rough,
-        polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
@@ -125,14 +124,13 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         material_discretization: MaterialDiscretization::Smooth {
             resolution: stability.material_resolution
         },
-        polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct dipole antenna
     let antenna_len = C_0 / (freq * 2.);
     let elem_thickness = cell_size.y;
-    let feed_gap = cell_size.y * 3.;
+    let feed_gap = cell_size.y * 2.;
     let half_len = antenna_len / 2.0;
     let pec = ElectricMaterial::PEC;
     simulation
@@ -155,7 +153,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
             position: Vect::new(elem_thickness, feed_gap) / 2.,
             t_start: 0.0,
             vals: source_values.clone(),
-            moment: Vec3::Z,
+            moment: Vec3::Y,
         });
 
     // Set up buffers and pipeline
@@ -173,7 +171,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         sim_speed,
         &mut state
     )?;
-    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
+    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()

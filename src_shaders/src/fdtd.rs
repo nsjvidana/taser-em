@@ -732,7 +732,7 @@ pub struct GridParameters {
     /// Increments by 1 in i/j/k indices for flat indexing. Used for accessing
     /// data from neighboring cells.
     pub flat_idx_incrs: UVec3,
-    pub polarization_mode_index: PolarizationModeIndex,
+    pub _padding0: u32,
     pub n_cells3: UVec3,
     pub dt: Real,
     /// Spatial differentials (cell size)
@@ -745,44 +745,6 @@ pub struct GridParameters {
     pub _padding1: u32,
     pub problem_space_max: UVec3,
     pub _padding2: u32,
-}
-
-/// A newtype of an index representing the polarization mode.
-///
-/// Use a `into()`/`from()` conversion or its constants to safely construct this type.
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
-#[repr(transparent)]
-pub struct PolarizationModeIndex(u32);
-
-impl PolarizationModeIndex {
-    pub const TM: Self = Self(0);
-    pub const TE: Self = Self(1);
-
-    #[inline]
-    pub fn inject_h_source(self, v: &mut Vec4, src_term: Vec4) {
-        cfg_select! {
-            feature = "dim3" => *v += src_term * self.is_te() as u32 as f32,
-            _ => *v += src_term
-        }
-    }
-
-    #[inline]
-    pub fn inject_dn_source(self, v: &mut Vec4, src_term: Vec4) {
-        cfg_select! {
-            feature = "dim3" => *v += src_term * self.is_tm() as u32 as f32,
-            _ => *v += src_term
-        }
-    }
-
-    #[inline]
-    pub fn is_tm(self) -> bool {
-        self.0 == 0
-    }
-
-    #[inline]
-    pub fn is_te(self) -> bool {
-        self.0 == 1
-    }
 }
 
 /// Update coefficients for H, D, and E fields with a UPML

@@ -46,7 +46,6 @@ pub async fn cube() -> anyhow::Result<()> {
             resolution: stability.material_resolution
         },
         // material_discretization: MaterialDiscretization::Rough,
-        polarization_mode: PolarizationMode::TransverseElectric
     };
     let mut simulation = FdtdLossySimulation::new(fdtd_params, PmlParameters::new(dt));
 
@@ -146,7 +145,6 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         cell_size,
         dt,
         material_discretization: MaterialDiscretization::Rough,
-        polarization_mode: PolarizationMode::TransverseMagnetic
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
