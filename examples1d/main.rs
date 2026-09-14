@@ -50,7 +50,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     // Compute source position and gaussian curve data points
     simulation.add_source(Source::TFSF {
         spatial_axis: SpatialAxis::Z,
-        direction: WaveDirection::Negative,
+        direction: Direction::Negative,
         t_start: 0.,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::Y, // Ey/Hx mode

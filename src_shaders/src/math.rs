@@ -573,19 +573,20 @@ unsafe impl Zeroable for SpatialAxis {}
 // SAFETY: SpatialAxis has u32 representation, and u32 is also POD.
 unsafe impl Pod for SpatialAxis {}
 
+/// The direction along an axis (used by things like TF/SF sources for specifying plane wave direction, etc.).
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[repr(i32)]
-pub enum WaveDirection {
+pub enum Direction {
     #[default]
     Positive = 1,
     None = 0,
     Negative = -1,
 }
 
-// SAFETY: WaveDirection has a zero variant.
-unsafe impl Zeroable for WaveDirection {}
-// SAFETY: WaveDirection has i32 representation, and i32 is also POD.
-unsafe impl Pod for WaveDirection {}
+// SAFETY: Direction has a zero variant.
+unsafe impl Zeroable for Direction {}
+// SAFETY: Direction has i32 representation, and i32 is also POD.
+unsafe impl Pod for Direction {}
 
 macro_rules! impl_vector_indexing {
     ($v:ident, $elem_ty:ty, $axis_ty:ty, $dims: expr) => {

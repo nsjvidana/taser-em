@@ -47,7 +47,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
     // Source
     let source = Source::TFSF {
         spatial_axis: SpatialAxis::Z,
-        direction: WaveDirection::Positive,
+        direction: Direction::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::new(1., 1., 0.).normalize(),

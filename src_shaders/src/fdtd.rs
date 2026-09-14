@@ -235,8 +235,8 @@ pub fn init_tfsf_masks(
     // guaranteed to hit the object.
     #[cfg(feature = "dim1")]
     {
-        if (direction == WaveDirection::Positive && (at_max_sf_edge_a[0] || at_max_tf_edge_a[0])) ||
-            (direction == WaveDirection::Negative && (at_min_sf_edge_a[0] || at_min_tf_edge_a[0]))
+        if (direction == Direction::Positive && (at_max_sf_edge_a[0] || at_max_tf_edge_a[0])) ||
+            (direction == Direction::Negative && (at_min_sf_edge_a[0] || at_min_tf_edge_a[0]))
         {
             return;
         }
@@ -309,7 +309,7 @@ pub fn aux_grid_update(
     let idx_local = cell_idx3.z as usize;
     let idx_local_inv = last_idx_local - idx_local;
 
-    let is_positive_dir = direction == WaveDirection::Positive;
+    let is_positive_dir = direction == Direction::Positive;
     let idx_offset = grid_start as usize;
     let idx = idx_offset + idx_local;
     let m = auxgr_coeffs.read(idx);
@@ -874,7 +874,7 @@ pub struct GpuTfsf {
     pub a1: Axis,
     pub a2: Axis,
 
-    pub direction: WaveDirection,
+    pub direction: Direction,
     /// The smallest index component of a cell that is fully inside the TF/SF boundary.
     ///
     /// (component of cell idx is along `GpuTfsf.a` direction)

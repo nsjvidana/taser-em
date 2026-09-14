@@ -67,7 +67,7 @@ pub async fn cube() -> anyhow::Result<()> {
     // Compute source position and gaussian curve data points
     let source = Source::TFSF {
         spatial_axis: SpatialAxis::Z,
-        direction: WaveDirection::Positive,
+        direction: Direction::Positive,
         t_start: 0.0,
         vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::X,

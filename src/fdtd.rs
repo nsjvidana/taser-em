@@ -264,8 +264,8 @@ impl FdtdLossySimulation {
                         const ONE_CELL: Index = HALF_CELL*2;
                         let n_axis2x = n_cells * ONE_CELL;
                         let pml_end = match direction {
-                            WaveDirection::Positive => n_axis2x - HALF_CELL,
-                            WaveDirection::Negative => 0,
+                            Direction::Positive => n_axis2x - HALF_CELL,
+                            Direction::Negative => 0,
                             _ => panic!("Invalid wave direction")
                         };
                         let pml_width2x = (pml_width.get() * ONE_CELL) as Real;
@@ -791,7 +791,7 @@ pub enum Source {
         /// The spatial axis along which the plane wave will travel.
         spatial_axis: SpatialAxis,
         /// The direction along `spatial_axis` the wave will travel in.
-        direction: WaveDirection,
+        direction: Direction,
         /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
         t_start: f32,
         /// Signal data points.
