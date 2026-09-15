@@ -160,6 +160,7 @@ impl FdtdLossySimulation {
             grid_params: grid_params.create_gpu_uniform(backend)?,
             t_idx: 0.create_gpu_buffer(backend)?,
             // Vector fields
+            h_previous: zeroed_vector_field.create_gpu_buffer(backend)?,
             h: zeroed_vector_field.create_gpu_buffer(backend)?,
             dn: zeroed_vector_field.create_gpu_buffer(backend)?,
             en: zeroed_vector_field.create_gpu_buffer(backend)?,
@@ -542,6 +543,7 @@ where
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
                 &state.grid_params,
+                &mut state.h_previous,
                 &mut state.h,
                 &mut state.en,
                 &mut state.int_terms,
@@ -581,6 +583,7 @@ pub struct FdtdLossyState {
     pub grid_params: GpuBuffer<GridParameters>,
     pub t_idx: GpuBuffer<u32>,
     // Vector fields
+    pub h_previous: GpuBuffer<Vec4>,
     pub h: GpuBuffer<Vec4>,
     pub dn: GpuBuffer<Vec4>,
     pub en: GpuBuffer<Vec4>,

@@ -394,14 +394,15 @@ pub fn gpu_lossy_h_update(
     #[spirv(global_invocation_id)] cell_idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     // Vector fields
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h: &mut [Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_previous: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &mut [Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &mut [Vec4],
     // Field update terms
     #[cfg_attr(feature = "dim1", allow(unused_variables))]
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)]
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)]
         integrals: &mut [PmlIntegrals],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] grid_coeffs: &[PmlCoefficients],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] source_terms: &[SourceTerms],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_terms: &[SourceTerms],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
@@ -435,6 +436,7 @@ pub fn gpu_lossy_h_update(
         }
     ];
     let mut h_self = h.read(idx);
+    h_previous.write(idx, h_self); // Store previous H value for temporal approximations
     let en_curl = Vec4::new(
         cfg_select! {
             feature = "dim1" => -(en_neighbors[2].y - en_self.y) * grid.inv_d.z,
