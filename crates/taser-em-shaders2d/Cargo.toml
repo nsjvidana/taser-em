@@ -29,6 +29,7 @@ required-features = ["dim2"]
 [dependencies]
 khal-std.workspace = true
 bytemuck.workspace = true
+taser-em-macros.workspace = true
 
 [target.'cfg(target_arch = "spirv")'.dependencies]
 spirv-std.workspace = true
