@@ -1,10 +1,11 @@
 pub use taser_em_shaders::fdtd::DipoleType;
 
 use crate::prelude::*;
-use crate::gpu_util::CreateGpuBuffer;
+use crate::gpu_util::{CreateGpuBuffer, GpuResult};
 use derivative::Derivative;
 use parry3d::bounding_volume::Aabb;
 use std::num::{NonZeroI32, NonZeroU32};
+use khal::re_exports::bytemuck::{AnyBitPattern, NoUninit};
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::*;
 use crate::*;
@@ -182,12 +183,15 @@ impl FdtdLossySimulation {
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
-            #[cfg(not(feature = "dim1"))]
-            flux_monitors_x: self.create_flux_monitor_states(backend, regions_offset, n_cells, SpatialAxis::X)?,
-            #[cfg(not(feature = "dim1"))]
-            flux_monitors_y: self.create_flux_monitor_states(backend, regions_offset, n_cells, SpatialAxis::Y)?,
-            #[cfg(not(feature = "dim2"))]
-            flux_monitors_z: self.create_flux_monitor_states(backend, regions_offset, n_cells, SpatialAxis::Z)?,
+            flux_monitor_states: SpatialAxesArray(
+                SpatialAxis::ALL_SPATIAL
+                    .into_iter()
+                    .map(|s_axis| self.create_flux_monitor_states(backend, regions_offset, n_cells, s_axis))
+                    .collect::<TaserResult<Vec<_>>>()?
+                    .try_into()
+                    .map_err(|_| ())
+                    .expect("SpatialAxesArray has exact same length as SpatialAxis::ALL_SPATIAL")
+            ),
             thread_count: n_cells.n_cells_to_3d().to_array(),
             n_cells,
             tfsf_dispatch_data
@@ -209,14 +213,17 @@ impl FdtdLossySimulation {
         let axis1 = axis.permute();
         let axis2 = axis1.permute();
         let monitors = self.power_flux_monitors.iter()
-            .filter(|monitor| monitor.axis == s_axis)
-            .map(|monitor| {
+            .enumerate()
+            .filter(|(_, monitor)| monitor.axis == s_axis)
+            .map(|(i, monitor)| {
                 let cell_idx_a = ((regions_offset[s_axis] + monitor.position) / cell_size3_one[axis])
                     .round() as u32;
                 if cell_idx_a >= n_cells[s_axis] { return Err(Error::OutOfBoundsFluxMonitor(*monitor)) }
                 Ok(GpuPowerFluxMonitor {
                     da: cell_size3_one[axis1] * cell_size3_one[axis2],
                     cell_idx_a,
+                    cpu_idx: i as u32,
+                    _padding0: 0,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -660,12 +667,7 @@ impl PowerFluxPipeline {
             h_previous,
             h,
             en,
-            #[cfg(not(feature = "dim1"))]
-            flux_monitors_x,
-            #[cfg(not(feature = "dim1"))]
-            flux_monitors_y,
-            #[cfg(not(feature = "dim2"))]
-            flux_monitors_z,
+            flux_monitor_states: flux_monitors,
             ..
         } = state;
 
@@ -688,11 +690,11 @@ impl PowerFluxPipeline {
         }
 
         #[cfg(not(feature = "dim1"))]
-        update_monitor_states!(self.gpu_power_flux_x, flux_monitors_x);
+        update_monitor_states!(self.gpu_power_flux_x, &mut flux_monitors[SpatialAxis::X]);
         #[cfg(not(feature = "dim1"))]
-        update_monitor_states!(self.gpu_power_flux_y, flux_monitors_y);
+        update_monitor_states!(self.gpu_power_flux_y, &mut flux_monitors[SpatialAxis::Y]);
         #[cfg(not(feature = "dim2"))]
-        update_monitor_states!(self.gpu_power_flux_z, flux_monitors_z);
+        update_monitor_states!(self.gpu_power_flux_z, &mut flux_monitors[SpatialAxis::Z]);
         
         Ok(())
     }
@@ -724,12 +726,7 @@ pub struct FdtdLossyState {
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
     // Monitors
-    #[cfg(not(feature = "dim1"))]
-    pub flux_monitors_x: Option<FluxMonitorStates>,
-    #[cfg(not(feature = "dim1"))]
-    pub flux_monitors_y: Option<FluxMonitorStates>,
-    #[cfg(not(feature = "dim2"))]
-    pub flux_monitors_z: Option<FluxMonitorStates>,
+    pub flux_monitor_states: SpatialAxesArray<Option<FluxMonitorStates>>,
     // Misc data
     pub thread_count: [u32; 3],
     pub n_cells: GridIndex,
@@ -1003,24 +1000,27 @@ impl Source {
 /// 3. Get vector field data using the appropriate functions
 ///    (e.g. [`get_dn_field`](Self::get_dn_field), [`dn_magnitudes`](Self::dn_magnitudes), [`h_magnitudes`](Self::h_magnitudes))
 pub struct FdtdStateReadback {
-    h: Vec<Vec4>,
-    dn: Vec<Vec4>,
-    en: Vec<Vec4>,
-    t_idx: Vec<u32>,
-    h_read: GpuReadback<Vec4>,
-    dn_read: GpuReadback<Vec4>,
-    en_read: GpuReadback<Vec4>,
-    t_idx_read: GpuReadback<u32>,
     #[cfg(not(feature = "dim3"))]
-    mode: FdtdSimulationMode
+    mode: FdtdSimulationMode,
+    h: Vec<Vec4>,
+    h_read: GpuReadback<Vec4>,
+    dn: Vec<Vec4>,
+    dn_read: GpuReadback<Vec4>,
+    en: Vec<Vec4>,
+    en_read: GpuReadback<Vec4>,
+    t_idx: Vec<u32>,
+    t_idx_read: GpuReadback<u32>,
+    /// Flux monitor data vector that parallels `FdtdLossySimulation.power_flux_monitors`
+    flux_monitor_data: Vec<FluxMonitorData>,
+    flux_monitor_reads: FluxMonitorReadback,
 }
 
 macro_rules! request_copy_fn {
-    ($name:ident, $read:ident, $buf:ident) => {
+    ($name:ident, $($read_field:ident).+, $($state_field:ident).+) => {
         #[inline]
         pub fn $name(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
-            if self.$read.is_idle() {
-                self.$read.request_copy(backend, &state.$buf, 0)?
+            if self$(.$read_field)+.is_idle() {
+                self$(.$read_field)+.request_copy(backend, &state$(.$state_field)+, 0)?
             }
             Ok(())
         }
@@ -1062,17 +1062,24 @@ impl FdtdStateReadback {
     ) -> TaserResult<Self> {
         let zeroed_vector_field = vec![Vec4::ZERO; state.n_cells.element_product() as usize];
         let cell_count = zeroed_vector_field.len();
+        let flux_monitor_count = state.flux_monitor_states.iter()
+            .filter_map(|s| s.as_ref()
+                .map(|v| v.flux_monitors.len())
+            )
+            .sum::<usize>();
         Ok(Self {
-            h: zeroed_vector_field.clone(),
-            dn: zeroed_vector_field.clone(),
-            en: zeroed_vector_field,
-            t_idx: vec![0],
-            h_read: GpuReadback::new(backend, cell_count)?,
-            dn_read: GpuReadback::new(backend, cell_count)?,
-            en_read: GpuReadback::new(backend, cell_count)?,
-            t_idx_read: GpuReadback::new(backend, 1)?,
             #[cfg(not(feature = "dim3"))]
             mode,
+            h: zeroed_vector_field.clone(),
+            h_read: GpuReadback::new(backend, cell_count)?,
+            dn: zeroed_vector_field.clone(),
+            dn_read: GpuReadback::new(backend, cell_count)?,
+            en: zeroed_vector_field,
+            en_read: GpuReadback::new(backend, cell_count)?,
+            t_idx: vec![0],
+            t_idx_read: GpuReadback::new(backend, 1)?,
+            flux_monitor_data: vec![FluxMonitorData::default(); flux_monitor_count],
+            flux_monitor_reads: FluxMonitorReadback::new(backend, state)?,
         })
     }
 
@@ -1247,4 +1254,91 @@ impl FdtdSimulationMode {
             Self::TransverseElectricZ => e.xy().length(),
         }
     }
+}
+
+/// Per-axis flux monitor readback
+pub struct FluxMonitorReadback {
+    power: SpatialAxesArray<Option<ReadbackVec<Real>>>,
+}
+
+impl FluxMonitorReadback {
+    pub fn new(backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<Self> {
+        Ok(Self {
+            power: state.flux_monitor_states.iter()
+                .map(|opt|
+                    opt
+                        .as_ref()
+                        .map(|states| ReadbackVec::new_zeroed(backend, states.flux_monitors.len()))
+                        .transpose()
+                )
+                .collect::<TaserResult<Vec<_>>>()?
+                .try_into()
+                .map_err(|_| ())
+                .unwrap()
+        })
+    }
+
+    pub fn request_copy_power(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+        self.power
+            .iter_mut()
+            .zip(state.flux_monitor_states.iter())
+            .try_for_each(|v| {
+                if let (Some(power), Some(states)) = v &&
+                    power.readback.is_idle()
+                {
+                    power.request_copy(backend, &states.monitor_power)?;
+                }
+                Ok(())
+            })
+    }
+
+    pub fn read_back_power(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back_power(backend);
+        Ok(())
+    }
+
+    pub fn try_read_back_power(&mut self, backend: &GpuBackend) -> bool {
+        self.power
+            .iter_mut()
+            .map(|powers|
+                powers.as_mut().map(|v| v.try_read_back(backend))
+            )
+            .all(|v| v.is_none_or(|b| b))
+    }
+}
+
+pub struct ReadbackVec<T: DeviceValue + AnyBitPattern + NoUninit> {
+    pub vec: Vec<T>,
+    pub readback: GpuReadback<T>
+}
+
+impl<T: DeviceValue + AnyBitPattern + NoUninit> ReadbackVec<T> {
+    /// Initialize [`ReadbackVec`] with the [`Vec`] having zeroed values.
+    pub fn new_zeroed(backend: &GpuBackend, element_count: usize) -> TaserResult<Self> {
+        Ok(Self {
+            vec: vec![T::zeroed(); element_count],
+            readback: GpuReadback::new(backend, element_count)?,
+        })
+    }
+
+    pub fn request_copy(&mut self, backend: &GpuBackend, buf: &GpuBuffer<T>) -> TaserResult<()> {
+        Ok(self.readback.request_copy(backend, buf, 0)?)
+    }
+
+    pub fn read_back(&mut self, backend: &GpuBackend) -> GpuResult<()> {
+        backend.synchronize()?;
+        self.try_read_back(backend);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
+        self.readback.try_take(backend, &mut self.vec)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct FluxMonitorData {
+    pub power: Real,
 }

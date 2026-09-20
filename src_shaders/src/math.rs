@@ -378,12 +378,14 @@ impl GridIndexExt for GridIndex {
         #[cfg(feature = "dim2")]
         return self.y * n_cells.x + self.x;
         #[cfg(feature = "dim3")]
-        {
-            self.z * n_cells.x * n_cells.y +
-                self.y * n_cells.x +
-                self.x
-        }
+        grid_idx3_to_flat_idx(self, n_cells)
     }
+}
+
+pub fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells3: UVec3) -> Index {
+    grid_idx3.z * n_cells3.x * n_cells3.y +
+        grid_idx3.y * n_cells3.x +
+        grid_idx3.x
 }
 
 cfg_select! {
@@ -572,6 +574,66 @@ impl Default for SpatialAxis {
 unsafe impl Zeroable for SpatialAxis {}
 // SAFETY: SpatialAxis has u32 representation, and u32 is also POD.
 unsafe impl Pod for SpatialAxis {}
+
+/// A fixed-sized array with one element for each [`SpatialAxis`] in order.
+pub struct SpatialAxesArray<T> (pub [T; SpatialAxis::ALL_SPATIAL.len()]);
+
+impl<T> SpatialAxesArray<T> {
+    /// Create new [`SpatialAxesArray`] from a function that maps each spatial axis into values of
+    /// type [`T`].
+    pub fn new_from_map(f: impl FnMut(SpatialAxis) -> T) -> Self {
+        Self(SpatialAxis::ALL_SPATIAL.map(f))
+    }
+    
+    pub fn iter(&self) -> impl Iterator<Item=&T> {
+        self.0.iter()
+    }
+    
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut T> {
+        self.0.iter_mut()
+    }
+
+    pub fn iter_with_axes(&self) -> impl Iterator<Item=(SpatialAxis, &T)> {
+        SpatialAxis::ALL_SPATIAL.into_iter().zip(self.iter())
+    }
+
+    pub fn iter_mut_with_axes(&mut self) -> impl Iterator<Item=(SpatialAxis, &mut T)> {
+        SpatialAxis::ALL_SPATIAL.into_iter().zip(self.0.iter_mut())
+    }
+}
+
+impl<T> core::ops::Index<SpatialAxis> for SpatialAxesArray<T> {
+    type Output = T;
+
+    fn index(&self, index: SpatialAxis) -> &Self::Output {
+        &self.0[index as usize]
+    }
+}
+
+impl<T> core::ops::IndexMut<SpatialAxis> for SpatialAxesArray<T> {
+    fn index_mut(&mut self, index: SpatialAxis) -> &mut Self::Output {
+        &mut self.0[index as usize]
+    }
+}
+
+cfg_cpu! {
+    impl<T> TryFrom<Vec<T>> for SpatialAxesArray<T> {
+        type Error = Vec<T>;
+
+        fn try_from(value: Vec<T>) -> Result<Self, Self::Error> {
+            Ok(Self(value.try_into()?))
+        }
+    }
+}
+
+impl<T: Clone> Clone for SpatialAxesArray<T> {
+    fn clone(&self) -> Self { Self (self.0.clone()) }
+}
+impl<T: Copy> Copy for SpatialAxesArray<T> {}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for SpatialAxesArray<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+}
 
 /// The direction along an axis (used by things like TF/SF sources for specifying plane wave direction, etc.).
 #[derive(Copy, Clone, Debug, PartialEq, Default)]

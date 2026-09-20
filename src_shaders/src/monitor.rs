@@ -22,7 +22,7 @@ pub fn gpu_power_flux(
     #[spirv(global_invocation_id)] idx3: UVec3,
     #[allow(unused_variables)] #[spirv(local_invocation_id)] local_idx3: UVec3,
     #[spirv(workgroup_id)] workgroup_id: UVec3,
-    #[spirv(num_workgroups)] num_workgroups: UVec3,
+    #[spirv(num_workgroups)] n_workgroups: UVec3,
     #[spirv(workgroup)] local_power: &mut [
         Real; (FLUX_WORKGROUP_SIZE.x * FLUX_WORKGROUP_SIZE.y * FLUX_WORKGROUP_SIZE.x) as usize
     ],
@@ -32,7 +32,7 @@ pub fn gpu_power_flux(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &[Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_monitors: &[GpuPowerFluxMonitor],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] monitor_power: &mut [Real],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Real], // len() = num_workgroups element product
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Real], // an element for every workgroup
 ) {
     // Guarantee zeroed-out wg_power since early-exited threads might leave their
     // local_power element uninitialized (UB)
@@ -79,27 +79,23 @@ pub fn gpu_power_flux(
     let power_self = p.axis * monitor.da;
     local_power.write(local_pwr_idx, power_self);
 
-    // Sum up power using a concurrent merge algorithm
+    // Sum up power at each workgroup
     if local_pwr_idx != 0 { return; };
-    let wg_flat_idx = grid_idx3_to_flat_idx(workgroup_id, num_workgroups) as usize;
+    let wg_flat_idx = grid_idx3_to_flat_idx(workgroup_id, n_workgroups) as usize;
     let mut wg_power_sum = power_self;
     for i in 1..local_power.len() { // workgroup sums
         wg_power_sum += local_power.read(i);
     }
     wg_summations.write(wg_flat_idx, wg_power_sum);
-    if !(cell_idx3.axis1 == 0 && cell_idx3.axis2 == 0) { return; }
+
+    // Merge workgroup sums for each monitor
+    if !(cell_idx3.axis1 == 0 && cell_idx3.axis2 == 0) { return; } // 1st invocation for every monitor
     let mut power_integral = wg_power_sum;
-    for i in 1..wg_summations.len() { // merge workgroup sums into one sum.
-        power_integral += wg_summations.read(i);
+    for plane_wg_idx in (wg_flat_idx+1)..(wg_flat_idx + n_workgroups.xy().element_product() as usize)
+    {
+        power_integral += wg_summations.read(plane_wg_idx);
     }
     monitor_power.write(monitor_idx, power_integral);
-}
-
-// TODO: move this to math module & use it in to_flat_idx
-fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells: UVec3) -> Index {
-    grid_idx3.z * n_cells.x * n_cells.y +
-        grid_idx3.y * n_cells.x +
-        grid_idx3.x
 }
 
 /// Computes workgroup count for a flux monitor kernel (kernels are per-axis)
@@ -124,4 +120,7 @@ pub struct GpuPowerFluxMonitor {
     pub da: Real,
     /// Grid index component of measurement plane along the axis perpendicular to it
     pub cell_idx_a: u32,
+    /// Index of this flux monitor on the CPU-side array.
+    pub cpu_idx: u32,
+    pub _padding0: u32,
 }
