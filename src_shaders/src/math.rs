@@ -482,7 +482,7 @@ unsafe impl Pod for Axis {}
 
 /// The axes that are in the computational domain. EM waves only propagate in spaces that these axes
 /// form (Z axis in 1D; X-Y plane in 2D; X-Y-Z space in 3D).
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u32)]
 pub enum SpatialAxis {
     #[cfg(any(feature = "dim2", feature = "dim3"))]

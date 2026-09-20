@@ -27,11 +27,11 @@ pub fn gpu_power_flux(
         Real; (FLUX_WORKGROUP_SIZE.x * FLUX_WORKGROUP_SIZE.y * FLUX_WORKGROUP_SIZE.x) as usize
     ],
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] flux_monitors: &[GpuPowerFluxMonitor],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] monitor_power: &mut [Real],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] h_previous: &[Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] h: &[Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] en: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_previous: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_monitors: &[GpuPowerFluxMonitor],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] monitor_power: &mut [Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Real], // len() = num_workgroups element product
 ) {
     // Guarantee zeroed-out wg_power since early-exited threads might leave their
@@ -103,16 +103,16 @@ fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells: UVec3) -> Index {
 }
 
 /// Computes workgroup count for a flux monitor kernel (kernels are per-axis)
-pub fn flux_workgroups_axis(_n_cells: GridIndex, n_flux_monitors: u32) -> [u32; 3] {
+pub fn flux_workgroups_axis(_n_cells: GridIndex, n_flux_monitors_axis: u32) -> [u32; 3] {
     #[cfg(not(feature = "dim1"))]
     let max_n = _n_cells.max_element();
     cfg_select! {
-        feature = "dim1" => [1, 1, n_flux_monitors],
-        feature = "dim2" => [max_n.div_ceil(FLUX_WORKGROUP_SIZE.x), 1, n_flux_monitors],
+        feature = "dim1" => [1, 1, n_flux_monitors_axis],
+        feature = "dim2" => [max_n.div_ceil(FLUX_WORKGROUP_SIZE.x), 1, n_flux_monitors_axis],
         feature = "dim3" => [
             max_n.div_ceil(FLUX_WORKGROUP_SIZE.x),
             max_n.div_ceil(FLUX_WORKGROUP_SIZE.y),
-            n_flux_monitors
+            n_flux_monitors_axis
         ],
     }
 }
@@ -120,7 +120,7 @@ pub fn flux_workgroups_axis(_n_cells: GridIndex, n_flux_monitors: u32) -> [u32; 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct GpuPowerFluxMonitor {
-    /// Magnitude of `da` vector used in power flux integral.
+    /// Magnitude-direction of `da` vector used in power flux integral.
     pub da: Real,
     /// Grid index component of measurement plane along the axis perpendicular to it
     pub cell_idx_a: u32,

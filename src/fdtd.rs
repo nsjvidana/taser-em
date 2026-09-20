@@ -8,19 +8,22 @@ use std::num::{NonZeroI32, NonZeroU32};
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::*;
 use crate::*;
+use taser_em_shaders::monitor::*;
+use crate::boundary::BoundaryCondition;
+use crate::monitor::PowerFluxMonitor;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use crate::boundary::BoundaryCondition;
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
     pub material_regions: MaterialRegions,
     pub background_material: ElectricMaterial,
     pub sources: Vec<Source>,
+    pub power_flux_monitors: Vec<PowerFluxMonitor>,
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
-    pub tfsf_parameters: TfsfParameters
+    pub tfsf_parameters: TfsfParameters,
 }
 
 impl FdtdLossySimulation {
@@ -29,6 +32,7 @@ impl FdtdLossySimulation {
             material_regions: MaterialRegions::new(),
             background_material: ElectricMaterial::FREE_SPACE,
             sources: vec![],
+            power_flux_monitors: vec![],
             fdtd_parameters,
             pml_parameters,
             tfsf_parameters: TfsfParameters {
@@ -41,6 +45,12 @@ impl FdtdLossySimulation {
 
     pub fn add_source(&mut self, source: Source) -> &mut Self {
         self.sources.push(source);
+        self
+    }
+
+    /// Adds a power flux monitor to the simulation
+    pub fn add_flux_monitor(&mut self, monitor: PowerFluxMonitor) -> &mut Self {
+        self.power_flux_monitors.push(monitor);
         self
     }
 
@@ -78,7 +88,7 @@ impl FdtdLossySimulation {
         let n_cells3 = n_cells.n_cells_to_3d();
 
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
-        let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+        let (regions_offset3, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
 
         let cell_count = n_cells.element_product();
         let mut problem_space_min = GridIndex::ONE;
@@ -91,7 +101,7 @@ impl FdtdLossySimulation {
             .for_each(|(s_axis, w)| problem_space_max[s_axis] -= w.hi);
 
         let mut source_vals: Vec<Real> = vec![];
-        let regions_offset = Vect::from_vec3(regions_offset);
+        let regions_offset = Vect::from_vec3(regions_offset3);
         let mut dipoles = self.sources.iter()
             .filter_map(|source| {
                 let Source::Dipole { dipole_type, position, t_start, vals, moment } = source else {
@@ -172,12 +182,57 @@ impl FdtdLossySimulation {
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
+            #[cfg(not(feature = "dim1"))]
+            flux_monitors_x: self.create_flux_monitor_states(backend, regions_offset, n_cells, SpatialAxis::X)?,
+            #[cfg(not(feature = "dim1"))]
+            flux_monitors_y: self.create_flux_monitor_states(backend, regions_offset, n_cells, SpatialAxis::Y)?,
+            #[cfg(not(feature = "dim2"))]
+            flux_monitors_z: self.create_flux_monitor_states(backend, regions_offset, n_cells, SpatialAxis::Z)?,
             thread_count: n_cells.n_cells_to_3d().to_array(),
             n_cells,
             tfsf_dispatch_data
         };
 
         Ok(buffers)
+    }
+
+    /// Creates flux monitor states for flux monitors that measure along the `s_axis` axis.
+    pub fn create_flux_monitor_states(
+        &self,
+        backend: &GpuBackend,
+        regions_offset: Vect,
+        n_cells: GridIndex,
+        s_axis: SpatialAxis
+    ) -> TaserResult<Option<FluxMonitorStates>> {
+        let cell_size3_one = self.fdtd_parameters.cell_size.to_3d(Vec3::ONE);
+        let axis = Axis::from(s_axis);
+        let axis1 = axis.permute();
+        let axis2 = axis1.permute();
+        let monitors = self.power_flux_monitors.iter()
+            .filter(|monitor| monitor.axis == s_axis)
+            .map(|monitor| {
+                let cell_idx_a = ((regions_offset[s_axis] + monitor.position) / cell_size3_one[axis])
+                    .round() as u32;
+                if cell_idx_a >= n_cells[s_axis] { return Err(Error::OutOfBoundsFluxMonitor(*monitor)) }
+                Ok(GpuPowerFluxMonitor {
+                    da: cell_size3_one[axis1] * cell_size3_one[axis2],
+                    cell_idx_a,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let state =
+            if monitors.is_empty() { None }
+            else {
+                let num_workgroups = flux_workgroups_axis(n_cells, monitors.len() as u32);
+                let wg_count = num_workgroups.iter().product::<u32>() as usize;
+                Some(FluxMonitorStates {
+                    flux_monitors: monitors.create_gpu_buffer(backend)?,
+                    monitor_power: vec![0.; monitors.len()].create_gpu_buffer(backend)?,
+                    wg_summations: vec![0.; wg_count].create_gpu_buffer(backend)?,
+                    num_workgroups,
+                })
+            };
+        Ok(state)
     }
 
     pub fn create_material_grid(&self, simulation_bb: &Aabb, n_cells: GridIndex) -> YeeGridMaterials {
@@ -398,7 +453,7 @@ impl FdtdLossySimulation {
     pub fn compute_bounding_box(&self) -> Aabb {
         let mut regions_bb = self.material_regions.compute_bounding_box();
         let regions_center = regions_bb.center();
-        let source_pts = self.sources.iter()
+        let other_pts = self.sources.iter()
             .map(|src| {
                 match src {
                     Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
@@ -406,7 +461,7 @@ impl FdtdLossySimulation {
                 }
             })
             .collect::<Vec<_>>();
-        for pt in source_pts.iter() {
+        for pt in other_pts.iter() {
             regions_bb.mins = regions_bb.mins.min(*pt);
             regions_bb.maxs = regions_bb.maxs.max(*pt);
         }
@@ -429,6 +484,7 @@ where
     compute_source_terms: GpuComputeSourceTerms,
     h_update: GpuLossyHUpdate,
     dn_en_update: GpuLossyDnEnUpdate,
+    power_flux_pipeline: PowerFluxPipeline,
     pub num_steps_per_submission: usize,
 }
 
@@ -451,6 +507,7 @@ where
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             dn_en_update: GpuLossyDnEnUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            power_flux_pipeline: PowerFluxPipeline::new(backend)?,
             num_steps_per_submission,
         })
     }
@@ -565,7 +622,78 @@ where
                 &state.grid_coeffs,
                 &state.source_terms,
             )?;
+
+            self.power_flux_pipeline.dispatch_flux(pass, state)?;
         }
+        Ok(())
+    }
+}
+
+pub struct PowerFluxPipeline {
+    #[cfg(not(feature = "dim1"))]
+    gpu_power_flux_x: GpuPowerFluxX,
+    #[cfg(not(feature = "dim1"))]
+    gpu_power_flux_y: GpuPowerFluxY,
+    #[cfg(not(feature = "dim2"))]
+    gpu_power_flux_z: GpuPowerFluxZ,
+}
+
+impl PowerFluxPipeline {
+    pub fn new(backend: &GpuBackend) -> TaserResult<Self> {
+        Ok(Self {
+            #[cfg(not(feature = "dim1"))]
+            gpu_power_flux_x: GpuPowerFluxX::from_dir(backend, &crate::SPIRV_DIR)?,
+            #[cfg(not(feature = "dim1"))]
+            gpu_power_flux_y: GpuPowerFluxY::from_dir(backend, &crate::SPIRV_DIR)?,
+            #[cfg(not(feature = "dim2"))]
+            gpu_power_flux_z: GpuPowerFluxZ::from_dir(backend, &crate::SPIRV_DIR)?,
+        })
+    }
+    
+    pub fn dispatch_flux(
+        &self,
+        pass: &mut GpuPass,
+        state: &mut FdtdLossyState,
+    ) -> TaserResult<()> {
+        let FdtdLossyState {
+            grid_params,
+            h_previous,
+            h,
+            en,
+            #[cfg(not(feature = "dim1"))]
+            flux_monitors_x,
+            #[cfg(not(feature = "dim1"))]
+            flux_monitors_y,
+            #[cfg(not(feature = "dim2"))]
+            flux_monitors_z,
+            ..
+        } = state;
+
+        macro_rules! update_monitor_states {
+            ($kernel:expr, $monitor_states:expr) => {
+                if let Some(monitor_states) = $monitor_states {
+                    $kernel.call(
+                        pass,
+                        DispatchGrid::Grid(monitor_states.num_workgroups),
+                        grid_params,
+                        h_previous,
+                        h,
+                        en,
+                        &monitor_states.flux_monitors,
+                        &mut monitor_states.monitor_power,
+                        &mut monitor_states.wg_summations
+                    )?;
+                }
+            };
+        }
+
+        #[cfg(not(feature = "dim1"))]
+        update_monitor_states!(self.gpu_power_flux_x, flux_monitors_x);
+        #[cfg(not(feature = "dim1"))]
+        update_monitor_states!(self.gpu_power_flux_y, flux_monitors_y);
+        #[cfg(not(feature = "dim2"))]
+        update_monitor_states!(self.gpu_power_flux_z, flux_monitors_z);
+        
         Ok(())
     }
 }
@@ -595,6 +723,13 @@ pub struct FdtdLossyState {
     pub source_terms: GpuBuffer<SourceTerms>,
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
+    // Monitors
+    #[cfg(not(feature = "dim1"))]
+    pub flux_monitors_x: Option<FluxMonitorStates>,
+    #[cfg(not(feature = "dim1"))]
+    pub flux_monitors_y: Option<FluxMonitorStates>,
+    #[cfg(not(feature = "dim2"))]
+    pub flux_monitors_z: Option<FluxMonitorStates>,
     // Misc data
     pub thread_count: [u32; 3],
     pub n_cells: GridIndex,
@@ -620,6 +755,16 @@ pub struct TfsfDispatchData {
     /// Is [`None`] only when there are no TF/SF sources.
     pub aux_grid_thread_count: Option<[u32; 3]>,
     pub mask_init_thread_count: Option<[u32; 3]>,
+}
+
+pub struct FluxMonitorStates {
+    /// Flux monitor description structs
+    pub flux_monitors: GpuBuffer<GpuPowerFluxMonitor>,
+    /// Instantaeous powers of each flux monitor (parallel array w/ `flux_monitors`)
+    pub monitor_power: GpuBuffer<Real>,
+    /// Sub-integrals computed by each workgroup.
+    pub wg_summations: GpuBuffer<Real>,
+    pub num_workgroups: [u32; 3],
 }
 
 /// Parameters judging how the PML will be constructed in the simulation

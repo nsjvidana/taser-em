@@ -15,6 +15,7 @@ pub mod mesh_loading;
 pub mod util;
 pub mod gpu_util;
 pub mod error;
+pub mod monitor;
 
 pub mod re_exports {
     pub use glamx;
