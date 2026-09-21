@@ -447,6 +447,14 @@ impl Axis {
     pub const fn backwards_permute(&self) -> Self {
         Self::BACK_PERMUTATION[*self as usize]
     }
+
+    /// Creates a [`Vec3`] where only its component along axis `self` is set to `1.`—the rest are zero.
+    #[inline]
+    pub fn to_vec3(self) -> Vec3 {
+        let mut v = Vec3::ZERO;
+        v.dyn_insert(self, 1.);
+        v
+    }
 }
 
 impl TryFrom<u32> for Axis {

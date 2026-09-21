@@ -26,6 +26,7 @@ pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
+    pub flux_monitor_planes: Vec<SceneNode3d>,
     pub material_region_alpha: f32,
     n_cells: GridIndex,
     cell_size: Vect,
@@ -86,6 +87,7 @@ impl FdtdTestbedViewer {
             window,
             camera,
             scene,
+            flux_monitor_planes: vec![],
             material_region_alpha: Self::DEFAULT_REGION_ALPHA,
             n_cells,
             cell_size,
@@ -104,6 +106,7 @@ impl FdtdTestbedViewer {
         selff.default_cam_setup();
         selff.update_cam_light();
         selff.add_region_meshes(&simulation.material_regions, regions_offset);
+        selff.add_flux_planes(&simulation.power_flux_monitors, regions_offset);
 
         Ok(selff)
     }
@@ -190,6 +193,42 @@ impl FdtdTestbedViewer {
                 .set_casts_shadows(false)
                 .enable_backface_culling(false);
         }
+    }
+
+    pub fn add_flux_planes(&mut self, flux_monitors: &[PowerFluxMonitor], regions_offset: Vec3) {
+        let grid_dims = self.grid_bb_max - self.grid_bb_min;
+        let grid_center = self.grid_bb_min + grid_dims * 0.5;
+        self.flux_monitor_planes = flux_monitors.iter()
+            .map(|monitor| {
+                let axis = Axis::from(monitor.axis);
+                let axis1 = axis.permute();
+                let axis2 = axis1.permute();
+
+                let mut normal = axis.to_vec3();
+                let axis1_v = axis1.to_vec3();
+                let axis2_v = axis2.to_vec3();
+                let pose = Pose3 {
+                    rotation: Rot3::from_mat3(&Mat3::from_cols(axis1_v, axis2_v, normal)),
+                    translation: grid_center + normal * monitor.position,
+                    padding: 0,
+                };
+
+                let d_axis = self.cell_size[monitor.axis];
+                let widths = (self.n_cells.as_vect() * self.cell_size)
+                    .to_3d(Vec3::splat(d_axis));
+                self.scene
+                    .add_cube(widths[axis1], widths[axis2], d_axis)
+                    .set_pose(pose)
+                    .enable_backface_culling(false)
+                    .set_color(
+                        match monitor.direction {
+                            Direction::Positive => RED,
+                            Direction::None => WHITE,
+                            Direction::Negative => CYAN
+                        }
+                    )
+            })
+            .collect()
     }
 
     /// Renders one frame of the vector field `v_field`.

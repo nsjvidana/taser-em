@@ -156,6 +156,13 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
             moment: Vec3::Y,
         });
 
+    // Power-measuring plane
+    let monitor_idx = simulation.add_flux_monitor(PowerFluxMonitor {
+        axis: SpatialAxis::X,
+        position: -(stability.spacer_region_widths[SpatialAxis::Y].hi as Real / 2. * cell_size.y),
+        direction: Direction::Negative,
+    });
+
     // Set up buffers and pipeline
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
@@ -180,6 +187,12 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {
+        readback.flux_monitor_readback.read_back_power(&backend)?;
+        readback.flux_monitor_readback.request_copy_power(&backend, &state)?;
+
+        let monitor_data = readback.flux_monitor_readback.gather_flux_data(&state)?;
+        println!("Instantaneous Power: {}", monitor_data[monitor_idx].power);
+
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
