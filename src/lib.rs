@@ -1,6 +1,7 @@
 pub mod fdtd;
 pub mod grid;
 pub mod boundary;
+pub mod monitor;
 pub mod consts {
     /// Speed of EM wave in free space
     pub const C_0: f32 = 299792458.0;
@@ -15,7 +16,6 @@ pub mod mesh_loading;
 pub mod util;
 pub mod gpu_util;
 pub mod error;
-pub mod monitor;
 
 pub mod re_exports {
     pub use glamx;
@@ -35,6 +35,7 @@ pub mod prelude {
     pub use crate::fdtd::*;
     pub use crate::grid::*;
     pub use crate::boundary::*;
+    pub use crate::monitor::*;
     pub use crate::consts::*;
     pub use crate::mesh_loading::*;
     pub use crate::util::*;

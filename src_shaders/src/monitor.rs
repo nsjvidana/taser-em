@@ -120,7 +120,4 @@ pub struct GpuPowerFluxMonitor {
     pub da: Real,
     /// Grid index component of measurement plane along the axis perpendicular to it
     pub cell_idx_a: u32,
-    /// Index of this flux monitor on the CPU-side array.
-    pub cpu_idx: u32,
-    pub _padding0: u32,
 }
