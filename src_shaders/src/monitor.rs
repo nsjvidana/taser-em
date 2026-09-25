@@ -3,7 +3,7 @@ use crate::fdtd::GridParameters;
 use crate::math::*;
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
-use taser_em_macros::clone_replaced_axes;
+use taser_em_macros::replace_idents;
 
 pub const FLUX_WORKGROUP_SIZE: UVec3 = cfg_select! {
     feature = "dim1" => UVec3::new(1, 1, 1),
@@ -11,9 +11,18 @@ pub const FLUX_WORKGROUP_SIZE: UVec3 = cfg_select! {
     feature = "dim3" => UVec3::new(8, 8, 1),
 };
 
-#[cfg_attr(not(feature = "dim1"), clone_replaced_axes(axis = x, axis1 = y, axis2 = z))]
-#[cfg_attr(not(feature = "dim1"), clone_replaced_axes(axis = y, axis1 = z, axis2 = x))]
-#[cfg_attr(not(feature = "dim2"), clone_replaced_axes(axis = z, axis1 = x, axis2 = y))]
+#[cfg_attr(feature = "dim1", replace_idents(suffix = "z", axis = z, axis1 = x, axis2 = y))]
+#[cfg_attr(
+    feature = "dim2",
+    replace_idents(suffix = "x", axis = x, axis1 = y, axis2 = z),
+    replace_idents(suffix = "y", axis = y, axis1 = x, axis2 = z)
+)]
+#[cfg_attr(
+    feature = "dim3",
+    replace_idents(suffix = "x", axis = x, axis1 = y, axis2 = z),
+    replace_idents(suffix = "y", axis = y, axis1 = z, axis2 = x),
+    replace_idents(suffix = "z", axis = z, axis1 = x, axis2 = y)
+)]
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 1))))] // Only recording at "points" in 1D
 #[cfg_attr(feature = "dim2", spirv(compute(threads(64, 1, 1))))] // "lines" in 2D
@@ -24,7 +33,7 @@ pub fn gpu_power_flux(
     #[spirv(workgroup_id)] workgroup_id: UVec3,
     #[spirv(num_workgroups)] n_workgroups: UVec3,
     #[spirv(workgroup)] local_power: &mut [
-        Real; (FLUX_WORKGROUP_SIZE.x * FLUX_WORKGROUP_SIZE.y * FLUX_WORKGROUP_SIZE.x) as usize
+        Real; (FLUX_WORKGROUP_SIZE.x * FLUX_WORKGROUP_SIZE.y * FLUX_WORKGROUP_SIZE.z) as usize
     ],
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_previous: &[Vec4],
@@ -42,13 +51,22 @@ pub fn gpu_power_flux(
     let mut cell_idx3 = UVec3::ZERO;
     cell_idx3.axis1 = idx3.x;
     cell_idx3.axis2 = idx3.y;
-    if cell_idx3.axis1 >= grid.n_cells3.axis1 || cell_idx3.axis2 >= grid.n_cells3.axis2 { return; }
+    if cell_idx3.axis1 >= grid.n_cells3.axis1 || cell_idx3.axis2 >= grid.n_cells3.axis2 {
+        return;
+    }
 
-    let monitor_idx = idx3.z as usize;
+    let monitor_idx = idx3.z as usize; // thread indices z component is just monitor idx.
     let monitor = flux_monitors.read(monitor_idx);
     cell_idx3.axis = monitor.cell_idx_a;
-    let idx = GridIndex::from_uvec3(cell_idx3)
-        .to_flat_idx(GridIndex::from_uvec3(grid.n_cells3)) as usize;
+
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+
+    // Skip boundary cells
+    if cell_idx.cmpeq(GridIndex::ZERO).any() || cell_idx.cmpeq(n_cells - 1).any() {
+        return;
+    }
 
     let en_self = en.read(idx);
     let en_pa1a = en.read(idx + (grid.flat_idx_incrs.axis1 + grid.flat_idx_incrs.axis) as usize);
@@ -80,37 +98,49 @@ pub fn gpu_power_flux(
     local_power.write(local_pwr_idx, power_self);
 
     // Sum up power at each workgroup
-    if local_pwr_idx != 0 { return; };
+    // Restrict to local indices that touch workgroup low-boundary planes/lines/points
+    const LOCAL_1: UVec2 = UVec2::new(
+        if FLUX_WORKGROUP_SIZE.x > 1 { 1 } else { 0 },
+        if FLUX_WORKGROUP_SIZE.y > 1 { 1 } else { 0 },
+    );
+    if local_idx3.x != LOCAL_1.x || local_idx3.y != LOCAL_1.y { return; };
     let wg_flat_idx = grid_idx3_to_flat_idx(workgroup_id, n_workgroups) as usize;
-    let mut wg_power_sum = power_self;
-    for i in 1..local_power.len() { // workgroup sums
+    let mut wg_power_sum = 0.;
+    for i in 0..local_power.len() { // workgroup sums
         wg_power_sum += local_power.read(i);
     }
     wg_summations.write(wg_flat_idx, wg_power_sum);
 
     // Merge workgroup sums for each monitor
-    if !(cell_idx3.axis1 == 0 && cell_idx3.axis2 == 0) { return; } // 1st invocation for every monitor
+    // Restrict to one invocation per monitor
+    if cell_idx3.axis1 != LOCAL_1.x || cell_idx3.axis2 != LOCAL_1.y { return; }
     let mut power_integral = wg_power_sum;
-    for plane_wg_idx in (wg_flat_idx+1)..(wg_flat_idx + n_workgroups.xy().element_product() as usize)
-    {
+    for plane_wg_idx in (wg_flat_idx+1)..wg_summations.len() {
         power_integral += wg_summations.read(plane_wg_idx);
     }
     monitor_power.write(monitor_idx, power_integral);
 }
 
-/// Computes workgroup count for a flux monitor kernel (kernels are per-axis)
-pub fn flux_workgroups_axis(_n_cells: GridIndex, n_flux_monitors_axis: u32) -> [u32; 3] {
-    #[cfg(not(feature = "dim1"))]
-    let max_n = _n_cells.max_element();
-    cfg_select! {
-        feature = "dim1" => [1, 1, n_flux_monitors_axis],
-        feature = "dim2" => [max_n.div_ceil(FLUX_WORKGROUP_SIZE.x), 1, n_flux_monitors_axis],
-        feature = "dim3" => [
-            max_n.div_ceil(FLUX_WORKGROUP_SIZE.x),
-            max_n.div_ceil(FLUX_WORKGROUP_SIZE.y),
-            n_flux_monitors_axis
-        ],
-    }
+/// Computes workgroup count for a flux monitor kernel.
+#[cfg_attr(feature = "dim1", replace_idents(suffix = "z", axis = z, axis1 = x, axis2 = y))]
+#[cfg_attr(
+    feature = "dim2",
+    replace_idents(suffix = "x", axis = x, axis1 = y, axis2 = z),
+    replace_idents(suffix = "y", axis = y, axis1 = x, axis2 = z)
+)]
+#[cfg_attr(
+    feature = "dim3",
+    replace_idents(suffix = "x", axis = x, axis1 = y, axis2 = z),
+    replace_idents(suffix = "y", axis = y, axis1 = z, axis2 = x),
+    replace_idents(suffix = "z", axis = z, axis1 = x, axis2 = y)
+)]
+pub fn flux_num_workgroups(n_cells: GridIndex, n_flux_monitors_axis: u32) -> [u32; 3] {
+    let n_cells3 = n_cells.n_cells_to_3d();
+    [
+        n_cells3.axis1.div_ceil(FLUX_WORKGROUP_SIZE.x),
+        n_cells3.axis2.div_ceil(FLUX_WORKGROUP_SIZE.y),
+        n_flux_monitors_axis
+    ]
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]

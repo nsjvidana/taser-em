@@ -234,7 +234,14 @@ impl FdtdLossySimulation {
         let state =
             if monitors.is_empty() { None }
             else {
-                let num_workgroups = flux_workgroups_axis(n_cells, monitors.len() as u32);
+                let num_workgroups = match s_axis {
+                    #[cfg(not(feature = "dim1"))]
+                    SpatialAxis::X => flux_num_workgroups_x(n_cells, monitors.len() as u32),
+                    #[cfg(not(feature = "dim1"))]
+                    SpatialAxis::Y => flux_num_workgroups_y(n_cells, monitors.len() as u32),
+                    #[cfg(not(feature = "dim2"))]
+                    SpatialAxis::Z => flux_num_workgroups_z(n_cells, monitors.len() as u32),
+                };
                 let wg_count = num_workgroups.iter().product::<u32>() as usize;
                 Some(FluxMonitorStates {
                     flux_monitors: monitors.create_gpu_buffer(backend)?,

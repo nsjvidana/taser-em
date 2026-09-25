@@ -4,58 +4,67 @@ use quote::{quote, ToTokens};
 use syn::{parse_macro_input, Ident};
 use syn::spanned::Spanned;
 
-/// Clones a function with all instances of identifiers named `axis` `axis1` and `axis2` in its
-/// body replaced by the attribute values specified in this macro's invocation.
+/// Clones a function with specified identifiers replaced. Replace identifiers by specifying their
+/// name as an attribute equal to another identifier name.
 ///
-/// `axis` will also be placed as a suffix of the function clones.
+/// Must include a `suffix` attribute that's a string literal. `suffix` will be appended to the end
+/// of the new function clone name with an underscore (see example below).
+///
+/// This attribute can be stacked to create multiple clones.
 ///
 /// # Example
 /// The following function:
 /// ```
-/// #[clone_replaced_axes(axis = z, axis1 = x, axis2 = y)]
+/// #[replace_idents(suffix = "cool_suffix1", axis = z, axis1 = x, axis2 = y)]
+/// #[replace_idents(suffix = "cool_suffix2", axis = z, axis1 = y, axis2 = x)]
 /// fn axis_stuff(b: UVec3) -> f32 {
 ///     b.axis * (b.axis2 - b.axis1)
 /// }
 /// ```
-/// gets cloned as:
+/// turns into:
 ///
 /// ```
-/// fn axis_stuff_z(b: UVec3) -> f32 {
+/// #[replace_idents(suffix = "cool_suffix2", axis = z, axis1 = y, axis2 = x)]
+/// fn axis_stuff(b: UVec3) -> f32 {
+///     b.axis * (b.axis2 - b.axis1)
+/// }
+///
+/// fn axis_stuff_cool_suffix1(b: UVec3) -> f32 {
 ///     b.z * (b.y - b.x)
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn clone_replaced_axes(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn replace_idents(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = syn::parse_macro_input!(item as syn::ItemFn);
 
-    let mut fn_name_suffix = String::new();
-    let mut axis = None;
-    let mut axis1 = None;
-    let mut axis2 = None;
+    let mut fn_name_suffix = None;
+    let mut targets = vec![];
+    let mut replacements = vec![];
     let attr_parser = syn::meta::parser(|meta| {
-        if meta.path.is_ident("axis") {
-            let axis_ident: Ident = meta.value()?.parse()?;
-            fn_name_suffix = axis_ident.to_string();
-            axis = Some(axis_ident);
-            Ok(())
-        } else if meta.path.is_ident("axis1") {
-            let axis1_ident: Ident = meta.value()?.parse()?;
-            axis1 = Some(axis1_ident);
-            Ok(())
-        } else if meta.path.is_ident("axis2") {
-            let axis2_ident: Ident = meta.value()?.parse()?;
-            axis2 = Some(axis2_ident);
-            Ok(())
+        if meta.path.is_ident("suffix") {
+            let suffix: syn::LitStr = meta.value()?.parse()?;
+            fn_name_suffix = Some(suffix.value());
+        } else if let Some(ident) = meta.path.get_ident() {
+            targets.push(ident.to_string());
+            let replacement_ident: Ident = meta.value()?.parse()?;
+            replacements.push(replacement_ident.to_string());
         } else {
-            Err(meta.error(format!("Unsupported attribute: {}", meta.path.clone().into_token_stream().to_string())))
+            return Err(meta.error(
+                format!("Unsupported attribute path: {}", meta.path.clone().into_token_stream())
+            ));
         }
+        Ok(())
     });
     parse_macro_input!(attr with attr_parser);
 
-    if axis.is_none() || axis1.is_none() || axis2.is_none() {
-        return syn::Error::new(func.span(), "Expected axis, axis1, and axis2 attributes")
+    if fn_name_suffix.is_none() {
+        return syn::Error::new(func.span(), "A \"suffix\" attribute is required")
+            .to_compile_error().into();
+    } else if targets.is_empty() || replacements.is_empty() {
+        return syn::Error::new(func.span(), "Expected at least one identifier to replace")
             .to_compile_error().into();
     }
+    let fn_name_suffix = fn_name_suffix.unwrap();
 
     let og_name = func.sig.ident.to_string();
     let new_name = format!("{og_name}_{fn_name_suffix}");
@@ -63,28 +72,29 @@ pub fn clone_replaced_axes(attr: TokenStream, item: TokenStream) -> TokenStream 
     let mut func_clone = func.clone();
     func_clone.sig.ident = new_ident;
 
-    let a_replaced = replace_idents_in_stream(
+    let mut new_block = replace_idents_in_stream(
         func_clone.block.into_token_stream(),
-        "axis",
-        axis.unwrap().to_string().as_str(),
+        targets[0].as_str(),
+        replacements[0].as_str()
     );
-    let a1_replaced = replace_idents_in_stream(
-        a_replaced,
-        "axis1",
-        axis1.unwrap().to_string().as_str(),
-    );
-    let new_func_block = replace_idents_in_stream(
-        a1_replaced,
-        "axis2",
-        axis2.unwrap().to_string().as_str(),
-    );
-    func_clone.block = syn::parse2(new_func_block).unwrap();
+    for (target, replacement) in targets.iter()
+        .zip(replacements.iter())
+        .skip(1)
+    {
+        new_block = replace_idents_in_stream(
+            new_block,
+            target.as_str(),
+            replacement.as_str()
+        );
+    }
+    func_clone.block = syn::parse2(new_block).unwrap();
+
     func_clone.attrs.retain(|a| {
-        !a.path().is_ident("clone_replaced_axes")
+        !a.path().is_ident("replace_idents")
     });
 
     let n_self_attrs = func.attrs.iter()
-        .filter(|a| a.path().is_ident("clone_replaced_axes"))
+        .filter(|a| a.path().is_ident("replace_idents"))
         .count();
 
     if n_self_attrs != 0 {
