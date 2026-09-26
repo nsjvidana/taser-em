@@ -5,6 +5,7 @@ pub mod math;
 pub mod fdtd;
 pub mod boundary;
 pub mod monitor;
+pub mod dft;
 
 #[macro_export]
 #[doc(hidden)]
