@@ -3377,6 +3377,7 @@ dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "num-complex",
  "spirv-std",
  "taser-em-macros",
 ]
@@ -3388,6 +3389,7 @@ dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "num-complex",
  "spirv-std",
  "taser-em-macros",
 ]
@@ -3399,6 +3401,7 @@ dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "num-complex",
  "spirv-std",
  "taser-em-macros",
 ]

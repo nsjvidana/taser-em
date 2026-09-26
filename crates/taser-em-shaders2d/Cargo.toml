@@ -28,6 +28,7 @@ required-features = ["dim2"]
 
 [dependencies]
 khal-std.workspace = true
+num-complex.workspace = true
 bytemuck.workspace = true
 taser-em-macros.workspace = true
 
