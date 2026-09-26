@@ -1,5 +1,5 @@
 use crate::fdtd::*;
-use khal::backend::{GpuBackend, GpuBuffer};
+use khal::backend::{DispatchGrid, GpuBackend, GpuBuffer, GpuPass};
 use taser_em_shaders::math::*;
 use taser_em_shaders::monitor::*;
 use crate::gpu_util::CreateGpuBuffer;
@@ -19,8 +19,40 @@ pub struct PowerFluxMonitor {
     ///
     /// This matters when measuring transmittance / reflection.
     pub direction: Direction,
-    /// All the frequencies of a DFT that will be run on this monitor's recorded values
+    // TODO: /// All the frequencies of a DFT that will be run on this monitor's recorded values
     // TODO: pub dft_frequencies: Option<Vec<Real>>,
+}
+
+pub struct PowerFluxPipeline {
+    power_flux_kernel: GpuPowerFlux
+}
+
+impl PowerFluxPipeline {
+    pub fn new(backend: &GpuBackend) -> TaserResult<Self> {
+        Ok(Self {
+            power_flux_kernel: GpuPowerFlux::from_dir(backend, &crate::SPIRV_DIR)?,
+        })
+    }
+
+    pub fn dispatch_steps(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
+        let Some(flux_state) = &mut sim_state.power_flux_states else {
+            return Ok(());
+        };
+
+        self.power_flux_kernel.call(
+            pass,
+            DispatchGrid::Grid(flux_state.workgroups),
+            &sim_state.grid_params,
+            &sim_state.h_previous,
+            &sim_state.h,
+            &sim_state.en,
+            &flux_state.flux_monitors,
+            &mut flux_state.monitor_power,
+            &mut flux_state.wg_summations,
+        )?;
+
+        Ok(())
+    }
 }
 
 pub struct PowerFluxStates {
@@ -36,7 +68,11 @@ impl PowerFluxStates {
         sim: &FdtdLossySimulation,
         n_cells: GridIndex,
         regions_offset: &Vec3
-    ) -> TaserResult<Self> {
+    ) -> TaserResult<Option<Self>> {
+        if sim.power_flux_monitors.is_empty() {
+            return Ok(None);
+        }
+
         let workgroups = flux_workgroups(n_cells, sim.power_flux_monitors.len() as _);
 
         let cell_size3_one = sim.fdtd_parameters.cell_size
@@ -64,15 +100,15 @@ impl PowerFluxStates {
 
         let monitor_power = vec![0.; sim.power_flux_monitors.len()]
             .create_gpu_buffer(backend)?;
-        let wg_summations = vec![0.; workgroups.iter().product::<usize>()]
+        let wg_summations = vec![0.; workgroups.iter().product::<u32>() as usize]
             .create_gpu_buffer(backend)?;
 
-        Ok(Self {
+        Ok(Some(Self {
             flux_monitors,
             monitor_power,
             wg_summations,
             workgroups,
-        })
+        }))
     }
 }
 

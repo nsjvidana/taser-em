@@ -43,7 +43,7 @@ pub fn gpu_power_flux(
     let en_pyz = en.read(idx + (grid.flat_idx_incrs.y + grid.flat_idx_incrs.z) as usize);
     let en_pzx = en.read(idx + (grid.flat_idx_incrs.z + grid.flat_idx_incrs.x) as usize);
     let en_pxy = en.read(idx + (grid.flat_idx_incrs.x + grid.flat_idx_incrs.y) as usize);
-    let mut en_avg = Vec3 {
+    let en_avg = Vec3 {
         x: (en_self.x + en_pyz.x) * 0.5,
         y: (en_self.y + en_pzx.y) * 0.5,
         z: (en_self.z + en_pxy.z) * 0.5,

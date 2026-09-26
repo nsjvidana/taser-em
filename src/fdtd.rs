@@ -12,7 +12,7 @@ use crate::*;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use crate::boundary::BoundaryCondition;
-use crate::monitor::PowerFluxMonitor;
+use crate::monitor::{PowerFluxMonitor, PowerFluxPipeline, PowerFluxStates};
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
@@ -81,7 +81,7 @@ impl FdtdLossySimulation {
         let n_cells3 = n_cells.n_cells_to_3d();
 
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
-        let (regions_offset, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+        let (regions_offset3, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
 
         let cell_count = n_cells.element_product();
         let mut problem_space_min = GridIndex::ONE;
@@ -94,7 +94,7 @@ impl FdtdLossySimulation {
             .for_each(|(s_axis, w)| problem_space_max[s_axis] -= w.hi);
 
         let mut source_vals: Vec<Real> = vec![];
-        let regions_offset = Vect::from_vec3(regions_offset);
+        let regions_offset = Vect::from_vec3(regions_offset3);
         let mut dipoles = self.sources.iter()
             .filter_map(|source| {
                 let Source::Dipole { dipole_type, position, t_start, vals, moment } = source else {
@@ -175,6 +175,7 @@ impl FdtdLossySimulation {
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
+            power_flux_states: PowerFluxStates::new(backend, self, n_cells, &regions_offset3)?,
             thread_count: n_cells.n_cells_to_3d().to_array(),
             n_cells,
             tfsf_dispatch_data
@@ -432,6 +433,7 @@ where
     compute_source_terms: GpuComputeSourceTerms,
     h_update: GpuLossyHUpdate,
     dn_en_update: GpuLossyDnEnUpdate,
+    power_flux_pipeline: PowerFluxPipeline,
     pub num_steps_per_submission: usize,
 }
 
@@ -454,6 +456,7 @@ where
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             dn_en_update: GpuLossyDnEnUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            power_flux_pipeline: PowerFluxPipeline::new(backend)?,
             num_steps_per_submission,
         })
     }
@@ -568,6 +571,8 @@ where
                 &state.grid_coeffs,
                 &state.source_terms,
             )?;
+
+            self.power_flux_pipeline.dispatch_steps(pass, state)?;
         }
         Ok(())
     }
@@ -598,6 +603,8 @@ pub struct FdtdLossyState {
     pub source_terms: GpuBuffer<SourceTerms>,
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
+    // Monitors
+    pub power_flux_states: Option<PowerFluxStates>,
     // Misc data
     pub thread_count: [u32; 3],
     pub n_cells: GridIndex,
