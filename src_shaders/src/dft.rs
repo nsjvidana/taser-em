@@ -20,7 +20,7 @@ pub const DFT_WORKGROUP_SIZE: UVec3 = UVec3::new(64, 1, 1);
 /// - `dft_kernels` - the kernels of every DFT.
 #[spirv_bindgen]
 #[spirv(compute(threads(64, 1, 1)))]
-pub fn compute_dft_kernels(
+pub fn gpu_compute_dft_kernels(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dft_infos: &[DftInfo],
@@ -43,7 +43,7 @@ pub fn compute_dft_kernels(
 ///
 /// Don't confuse "kernels" with "shader kernels" here. Kernels in the case of DFTs refers to the constant
 /// complex number associated with each frequency.
-/// 
+///
 /// # Arguments
 /// - `time_step` - the index of current time step.
 /// - `functions` - each element is the instantaneous value (occurring at `time_step` time step) of
@@ -74,12 +74,15 @@ pub fn gpu_dft(
 /// Compute workgroup count for DFT kernel for multiple DFTs.
 ///
 /// # Arguments
-/// `max_n_kernels` is the maximum number of frequencies that a single DFT will resolve across all the DFTs.
-/// This is necessary to allow running multiple DFTs under one dispatch.
-///
-/// `n_dfts` is the number of DFTs to resolve in one dispatch.
-pub fn dft_workgroups(max_n_kernels: u32, n_dfts: u32) -> [u32; 3] {
-    [max_n_kernels.div_ceil(DFT_WORKGROUP_SIZE.x), 1, n_dfts]
+/// - `max_n_kernels` is the maximum number of frequencies that a single DFT will resolve across all the DFTs.
+///   This is necessary to allow running multiple DFTs under one dispatch.
+/// - `n_functions` is the number of functions that will have their DFTs resolved in one dispatch.
+pub fn dft_workgroups(max_n_kernels: u32, n_functions: u32) -> [u32; 3] {
+    [
+        max_n_kernels.div_ceil(DFT_WORKGROUP_SIZE.x),
+        1u32.div_ceil(DFT_WORKGROUP_SIZE.y),
+        n_functions.div_ceil(DFT_WORKGROUP_SIZE.z)
+    ]
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]

@@ -15,6 +15,7 @@ use crate::monitor::PowerFluxMonitor;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use crate::dft::{DftPipeline, DftStates};
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
@@ -180,12 +181,13 @@ impl FdtdLossySimulation {
             en: zeroed_vector_field.create_gpu_buffer(backend)?,
             // For computing source terms
             dipoles: dipoles.create_gpu_buffer(backend)?,
+            tfsf_dispatch_data,
             source_vals: source_vals.create_gpu_buffer(backend)?,
             // For update equation terms
             source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
-            // Misc data
+            // Monitors & DFTs
             flux_monitor_states: SpatialAxesArray(
                 SpatialAxis::ALL_SPATIAL
                     .into_iter()
@@ -195,9 +197,10 @@ impl FdtdLossySimulation {
                     .map_err(|_| ())
                     .expect("SpatialAxesArray has exact same length as SpatialAxis::ALL_SPATIAL")
             ),
+            dft_states: DftStates::new(backend, self)?,
+            // Misc data
             thread_count: n_cells.n_cells_to_3d().to_array(),
             n_cells,
-            tfsf_dispatch_data
         };
 
         Ok(buffers)
@@ -500,6 +503,7 @@ where
     BCy: BoundaryCondition<Y>,
     BCz: BoundaryCondition<Z>,
 {
+    dft_pipeline: DftPipeline,
     init_tfsf_masks: InitTfsfMasks,
     init_pec: InitPec,
     boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
@@ -523,6 +527,7 @@ where
         num_steps_per_submission: usize
     ) -> TaserResult<Self> {
         Ok(Self {
+            dft_pipeline: DftPipeline::new(backend)?,
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
             init_pec: InitPec::from_dir(backend, &crate::SPIRV_DIR)?,
             boundary_conditions,
@@ -569,6 +574,7 @@ where
                 &mut state.tfsf_dispatch_data.tfsf_masks,
             )?;
         }
+
         self.init_pec.call(
             pass,
             DispatchGrid::ThreadCount(state.thread_count),
@@ -578,6 +584,9 @@ where
             &mut state.en,
             &state.grid_coeffs
         )?;
+
+        self.dft_pipeline.initialize(pass, state)?;
+
         Ok(())
     }
 
@@ -647,6 +656,7 @@ where
             )?;
 
             self.power_flux_pipeline.dispatch_flux(pass, state)?;
+            self.dft_pipeline.dispatch_steps(pass, state)?;
         }
         Ok(())
     }
@@ -741,8 +751,9 @@ pub struct FdtdLossyState {
     pub source_terms: GpuBuffer<SourceTerms>,
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
-    // Monitors
+    // Monitors & DFTs
     pub flux_monitor_states: SpatialAxesArray<Option<FluxMonitorStates>>,
+    pub dft_states: Option<DftStates>,
     // Misc data
     pub thread_count: [u32; 3],
     pub n_cells: GridIndex,

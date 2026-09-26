@@ -1,5 +1,4 @@
 use crate::mesh_loading::{MeshConverterError, MeshLoaderError};
-use glamx::Vec3;
 use khal::backend::GpuBackendError;
 use taser_em_shaders::math::{Real, SpatialAxis};
 
@@ -16,4 +15,6 @@ pub enum Error {
         axis: SpatialAxis,
         position: Real,
     },
+    #[error("An empty list of frequencies was encountered.")]
+    EmptyFrequenciesList
 }

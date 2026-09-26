@@ -1,4 +1,5 @@
 use kiss3d::glamx::Vec3;
+use taser_em2d::dft::frequencies_from_range;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
 
@@ -161,6 +162,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         axis: SpatialAxis::X,
         position: -(stability.spacer_region_widths[SpatialAxis::Y].hi as Real / 2. * cell_size.y),
         direction: Direction::Negative,
+        dft_frequencies: Some(frequencies_from_range(100e6..=freq, 100)),
     });
 
     // Set up buffers and pipeline
