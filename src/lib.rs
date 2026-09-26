@@ -16,6 +16,7 @@ pub mod util;
 pub mod gpu_util;
 pub mod error;
 pub mod monitor;
+mod dft;
 
 pub mod re_exports {
     pub use glamx;

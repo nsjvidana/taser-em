@@ -1,4 +1,5 @@
 use khal::backend::GpuBackendError;
+use crate::dft::DftError;
 use crate::mesh_loading::{MeshConverterError, MeshLoaderError};
 
 #[derive(thiserror::Error, Debug)]
@@ -8,5 +9,7 @@ pub enum Error {
     #[error(transparent)]
     MeshConversion(#[from] MeshConverterError),
     #[error(transparent)]
-    GpuBackend(#[from] GpuBackendError)
+    GpuBackend(#[from] GpuBackendError),
+    #[error(transparent)]
+    DftError(#[from] DftError),
 }
