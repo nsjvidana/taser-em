@@ -221,7 +221,11 @@ impl FdtdLossySimulation {
             .map(|(i, monitor)| {
                 let cell_idx_a = ((regions_offset[s_axis] + monitor.position) / cell_size3_one[axis])
                     .round() as u32;
-                if cell_idx_a >= n_cells[s_axis] { return Err(Error::OutOfBoundsFluxMonitor(*monitor)) }
+                if cell_idx_a >= n_cells[s_axis] {
+                    return Err(
+                        Error::OutOfBoundsFluxMonitor { axis: monitor.axis, position: monitor.position }
+                    )
+                }
                 let gpu_monitor = GpuPowerFluxMonitor {
                     da: cell_size3_one[axis1] * cell_size3_one[axis2] * monitor.direction as i32 as Real,
                     cell_idx_a,
