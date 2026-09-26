@@ -4,7 +4,7 @@
 pub mod math;
 pub mod fdtd;
 pub mod boundary;
-// TODO: pub mod dft;
+pub mod dft;
 pub mod monitor;
 
 #[macro_export]
