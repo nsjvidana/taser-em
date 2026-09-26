@@ -160,8 +160,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let flux_monitor_idx = simulation.add_flux_monitor(
         PowerFluxMonitor {
             axis: SpatialAxis::X,
-            position: (stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.5,
-            direction: Default::default(),
+            position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
+            direction: Direction::Negative,
         }
     );
 

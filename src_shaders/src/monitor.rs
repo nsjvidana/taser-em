@@ -105,6 +105,17 @@ pub fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells3: UVec3) -> u32 {
         grid_idx3.x
 }
 
+// TODO: move this to math module
+impl Axis {
+    pub const fn to_vec3(&self) -> Vec3 {
+        match self {
+            Axis::X => Vec3::X,
+            Axis::Y => Vec3::Y,
+            Axis::Z => Vec3::Z,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct GpuPowerFluxMonitor {

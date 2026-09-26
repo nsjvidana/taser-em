@@ -119,8 +119,8 @@ impl PowerFluxStates {
                 let axis = Axis::from(monitor.axis);
                 let axis1 = axis.permute();
                 let axis2 = axis1.permute();
-                let mut da = Vec3::ZERO; // TODO: turn this into an Axis fn?
-                    da[axis] = 1. * monitor.direction as i32 as Real;
+
+                let mut da = axis.to_vec3() * monitor.direction as i32 as Real;
                 let position = ((regions_offset[axis] + monitor.position) / cell_size3_one[axis]) as u32;
                 GpuPowerFluxMonitor {
                     da,
