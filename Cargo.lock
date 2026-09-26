@@ -3368,6 +3368,7 @@ dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "num-complex",
  "spirv-std",
 ]
 
@@ -3378,6 +3379,7 @@ dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "num-complex",
  "spirv-std",
 ]
 
@@ -3388,6 +3390,7 @@ dependencies = [
  "bytemuck",
  "khal",
  "khal-std",
+ "num-complex",
  "spirv-std",
 ]
 

@@ -28,6 +28,7 @@ required-features = ["dim1"]
 
 [dependencies]
 khal-std.workspace = true
+num-complex.workspace = true
 bytemuck.workspace = true
 
 [target.'cfg(target_arch = "spirv")'.dependencies]
