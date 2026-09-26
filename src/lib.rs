@@ -39,6 +39,7 @@ pub mod prelude {
     pub use crate::mesh_loading::*;
     pub use crate::util::*;
     pub use crate::error::Error;
+    pub use crate::monitor::*;
     pub use taser_em_shaders::math::*;
     pub use khal::backend::*;
     pub use khal::shader::Shader;

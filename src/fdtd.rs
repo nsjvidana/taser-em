@@ -47,6 +47,12 @@ impl FdtdLossySimulation {
         self
     }
 
+    pub fn add_flux_monitor(&mut self, power_flux_monitor: PowerFluxMonitor) -> usize {
+        let idx = self.power_flux_monitors.len();
+        self.power_flux_monitors.push(power_flux_monitor);
+        idx
+    }
+
     /// Fill a box-shaped region from `start` to `end` with `material`
     pub fn fill_region(
         &mut self,

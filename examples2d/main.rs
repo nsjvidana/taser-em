@@ -156,6 +156,15 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
             moment: Vec3::Y,
         });
 
+    // Power flux monitor for reading back power flux
+    let flux_monitor_idx = simulation.add_flux_monitor(
+        PowerFluxMonitor {
+            axis: SpatialAxis::X,
+            position: (stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.5,
+            direction: Default::default(),
+        }
+    );
+
     // Set up buffers and pipeline
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
@@ -172,6 +181,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         &mut state
     )?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
+    let mut flux_readback = PowerFluxReadback::new(&backend, &state)?
+        .expect("we added a flux monitor to the simulation so readback must be possible");
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
@@ -179,7 +190,13 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
 
     // Render simulation
+    let mut instantaneous_flux;
     while testbed.render_frame(&backend, &state, &mut readback).await? {
+        flux_readback.read_back(&backend)?;
+        flux_readback.request_copy(&backend, &state)?;
+        instantaneous_flux = flux_readback.get_power(flux_monitor_idx);
+        println!("Instantaneous power flux: {instantaneous_flux}");
+
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;

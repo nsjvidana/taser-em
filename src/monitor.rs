@@ -1,5 +1,5 @@
 use crate::fdtd::*;
-use khal::backend::{DispatchGrid, GpuBackend, GpuBuffer, GpuPass};
+use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use taser_em_shaders::math::*;
 use taser_em_shaders::monitor::*;
 use crate::gpu_util::CreateGpuBuffer;
@@ -21,6 +21,42 @@ pub struct PowerFluxMonitor {
     pub direction: Direction,
     // TODO: /// All the frequencies of a DFT that will be run on this monitor's recorded values
     // TODO: pub dft_frequencies: Option<Vec<Real>>,
+}
+
+pub struct PowerFluxReadback {
+    monitor_power: Vec<Real>,
+    monitor_power_read: GpuReadback<Real>
+}
+
+impl PowerFluxReadback {
+    pub fn new(backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<Option<Self>> {
+        let Some(flux_state) = &state.power_flux_states else { return Ok(None); };
+        let n_powers = flux_state.monitor_power.len();
+        Ok(Some(Self {
+            monitor_power: vec![0.; n_powers],
+            monitor_power_read: GpuReadback::new(backend, n_powers)?,
+        }))
+    }
+
+    pub fn request_copy(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+        let Some(flux_state) = &state.power_flux_states else { return Ok(()); };
+        self.monitor_power_read.request_copy(backend, &flux_state.monitor_power, 0)?;
+        Ok(())
+    }
+
+    pub fn read_back(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back(backend);
+        Ok(())
+    }
+
+    pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
+        self.monitor_power_read.try_take(backend, &mut self.monitor_power)
+    }
+
+    pub fn get_power(&self, monitor_idx: usize) -> Real {
+        self.monitor_power[monitor_idx]
+    }
 }
 
 pub struct PowerFluxPipeline {
