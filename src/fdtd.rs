@@ -12,12 +12,14 @@ use crate::*;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use crate::boundary::BoundaryCondition;
+use crate::monitor::PowerFluxMonitor;
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
     pub material_regions: MaterialRegions,
     pub background_material: ElectricMaterial,
     pub sources: Vec<Source>,
+    pub power_flux_monitors: Vec<PowerFluxMonitor>,
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
     pub tfsf_parameters: TfsfParameters
@@ -29,6 +31,7 @@ impl FdtdLossySimulation {
             material_regions: MaterialRegions::new(),
             background_material: ElectricMaterial::FREE_SPACE,
             sources: vec![],
+            power_flux_monitors: vec![],
             fdtd_parameters,
             pml_parameters,
             tfsf_parameters: TfsfParameters {
