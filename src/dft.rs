@@ -1,9 +1,8 @@
-use std::ops::{Deref, Range};
+use std::ops::Range;
 use crate::gpu_util::*;
 use crate::prelude::TaserResult;
-use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuReadback};
-use std::sync::Arc;
-use khal::BufferUsages;
+use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
+use std::sync::{Arc, Mutex};
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
@@ -62,29 +61,6 @@ impl DftPipeline {
         Ok(())
     }
 
-    /// Updates `dft_states` buffers with proper function values and dispatches DFT step
-    pub fn encode_step_full<Func: DftFunction>(
-        &self,
-        encoder: &mut GpuEncoder,
-        time_step: &GpuBuffer<u32>,
-        dft_states: &mut DftStates<Func>,
-    ) -> TaserResult<()> {
-        Self::encode_copy_functions(encoder, dft_states)?;
-        let mut pass = encoder.begin_pass("", None);
-        self.dispatch_step(
-            &mut pass,
-            time_step,
-            dft_states
-        )
-    }
-
-    pub fn encode_copy_functions<Func: DftFunction>(encoder: &mut GpuEncoder, dft_states: &mut DftStates<Func>) -> TaserResult<()> {
-        for (off, dft) in dft_states.dfts.iter().enumerate() {
-            dft.get_function().copy_to_dft_buffer(encoder, &mut dft_states.function_values, off)?;
-        }
-        Ok(())
-    }
-
     /// Dispatch DFT step in time.
     ///
     /// # Arguments
@@ -102,7 +78,8 @@ impl DftPipeline {
             pass,
             DispatchGrid::Grid(dft_states.workgroups),
             time_step,
-            &dft_states.function_values,
+            &dft_states.function_value_positions,
+            &*dft_states.function_values.lock().unwrap(),
             &dft_states.func_dfts,
             &dft_states.dft_kernels,
             &mut dft_states.dft_outputs
@@ -117,7 +94,8 @@ pub struct DftStates<Func: DftFunction> {
     pub dfts: Vec<Dft<Func>>,
 
     // Buffers / GPU data
-    pub function_values: GpuBuffer<Real>,
+    pub function_value_positions: GpuBuffer<Index>,
+    pub function_values: Arc<Mutex<GpuBuffer<Real>>>,
     pub func_dfts: GpuBuffer<GpuFunctionDft>,
     pub dft_frequencies: GpuBuffer<Real>,
     pub dft_kernels: GpuBuffer<Complex32>,
@@ -129,17 +107,13 @@ impl<Func: DftFunction> DftStates<Func> {
     /// Creates new zeroed-out DFT buffers.
     ///
     /// Use [`DftPipeline::initialize_states`] to populate buffers with non-zero kernels.
-    pub fn new_zeroed(backend: &GpuBackend, dfts: Vec<Dft<Func>>) -> TaserResult<Self> {
+    pub fn new_zeroed(backend: &GpuBackend, dfts: Vec<Dft<Func>>, func_values_buf: Arc<Mutex<GpuBuffer<Real>>>) -> TaserResult<Self> {
         if dfts.is_empty() { return Err(DftError::NoDfts.into()) };
 
-        let dft_funcs = dfts.iter()
-            .map(|dft| dft.function.clone())
-            .collect::<Vec<_>>();
-
-        let function_values = backend.init_buffer(
-            vec![0.; dft_funcs.len()].as_slice(),
-            BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-        )?;
+        let function_value_positions = dfts.iter()
+            .map(|dft| dft.function.get_value_position() as Index)
+            .collect::<Vec<_>>()
+            .create_gpu_buffer(backend)?;
 
         let mut kernels_start = 0;
         let func_dfts = dfts.iter()
@@ -172,7 +146,8 @@ impl<Func: DftFunction> DftStates<Func> {
 
         Ok(Self {
             dfts,
-            function_values,
+            function_value_positions,
+            function_values: func_values_buf,
             func_dfts,
             dft_frequencies,
             dft_kernels: dft_kernels_zeroed,
@@ -186,23 +161,7 @@ pub trait DftFunction {
     /// Convert this [`DftFunction`] into a [`Dft`] with the specified `frequencies`.
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<Dft<Self>>;
 
-    /// Get the buffer where this function's instantaneous value is stored.
-    fn get_buffer(&self) -> impl Deref<Target=GpuBuffer<Real>>;
-
-    /// The index of this function's instantaneous value in [`Self::get_buffer`] buffer.
     fn get_value_position(&self) -> usize;
-
-    /// Used in copying the function's value into DFT shader buffer before running the DFT shader.
-    fn copy_to_dft_buffer(&self, encoder: &mut GpuEncoder, dft_buf: &mut GpuBuffer<Real>, dft_buf_offset: usize) -> TaserResult<()> {
-        encoder.copy_buffer_to_buffer(
-            &*self.get_buffer(),
-            self.get_value_position(),
-            dft_buf,
-            dft_buf_offset,
-            1
-        )?;
-        Ok(())
-    }
 }
 
 pub struct DftReadback<Func: DftFunction> {

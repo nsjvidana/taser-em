@@ -514,10 +514,24 @@ where
         Ok(())
     }
 
+    /// Dispatches `num_steps_per_submission` FDTD steps.
     pub fn dispatch_steps(
         &mut self,
         pass: &mut GpuPass,
         state: &mut FdtdLossyState,
+    ) -> TaserResult<()> {
+        self.dispatch_steps_aux(pass, state, |_, _| Ok(()))
+    }
+
+    /// Dispatches `num_steps_per_submission` FDTD steps.
+    ///
+    /// `aux_f` allows the user to do additional dispatching work that gets called immediately after
+    /// each FDTD step (so `aux_f` runs `num_steps_per_submission` times).
+    pub fn dispatch_steps_aux(
+        &mut self,
+        pass: &mut GpuPass,
+        state: &mut FdtdLossyState,
+        mut aux_f: impl FnMut(&mut GpuPass, &mut FdtdLossyState) -> TaserResult<()>
     ) -> TaserResult<()> {
         for _ in 0..self.num_steps_per_submission {
             if let Some(thread_count) = state.tfsf_dispatch_data.aux_grid_thread_count {
@@ -580,6 +594,8 @@ where
             )?;
 
             self.power_flux_pipeline.dispatch_steps(pass, state)?;
+
+            aux_f(pass, state)?;
         }
         Ok(())
     }

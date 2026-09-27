@@ -56,6 +56,7 @@ pub fn gpu_compute_dft_kernels(
 pub fn gpu_dft_shader(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] time_step: &u32,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] function_value_positions: &[Index],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] function_values: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] func_dfts: &[GpuFunctionDft],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dft_kernels: &[Complex32],
@@ -68,7 +69,8 @@ pub fn gpu_dft_shader(
 
     let global_kernel_idx = dft.global_kernel_idx(kernel_idx) as usize;
     let k = dft_kernels.read(global_kernel_idx).powu(*time_step);
-    *dft_outputs.at_mut(global_kernel_idx) += k * function_values.read(dft_idx);
+    let f_val_idx = function_value_positions.read(dft_idx) as usize;
+    *dft_outputs.at_mut(global_kernel_idx) += k * function_values.read(f_val_idx);
 }
 
 /// Compute workgroup count for DFT kernel for multiple DFTs.

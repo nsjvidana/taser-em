@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
@@ -56,8 +55,6 @@ impl DftFunction for PowerFluxFunction {
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<Dft<Self>> {
         Dft::new(frequencies, Arc::new(self))
     }
-
-    fn get_buffer(&self) -> impl Deref<Target=GpuBuffer<Real>> { self.buffer() }
 
     fn get_value_position(&self) -> usize { self.monitor_idx() }
 }
