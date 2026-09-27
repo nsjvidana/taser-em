@@ -204,7 +204,7 @@ impl FdtdTestbedViewer {
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
 
-            let mut normal = axis.to_vec3();
+            let normal = axis.to_vec3();
             let axis1_v = axis1.to_vec3();
             let axis2_v = axis2.to_vec3();
             let pose = Pose3 {

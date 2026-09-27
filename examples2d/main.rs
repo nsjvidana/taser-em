@@ -107,6 +107,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
+    let dft_resolution = 10;
     let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
@@ -157,7 +158,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         });
 
     // Power flux monitor for reading back power flux
-    let flux_monitor_idx = simulation.add_flux_monitor(
+    let flux_monitor = simulation.add_flux_monitor(
         PowerFluxMonitor {
             axis: SpatialAxis::X,
             position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
@@ -165,7 +166,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         }
     );
 
-    // Set up buffers and pipeline
+    // Create instance of backend we will run the simulation with
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
@@ -173,16 +174,40 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
+
+    // Create GPU simulation state
     let mut state = simulation.finalize(&backend, &stability)?;
-    let mut pipeline = FdtdLossyPipeline::new_initialized(
+
+    // Power flux DFT state
+    let frequencies = frequencies_from_range((freq * 0.5)..=(freq * 1.5), dft_resolution);
+    let dft = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
+        .to_dft(frequencies.clone())?;
+    let flux_func = dft.get_function().clone();
+    let mut flux_dft_states = DftStates::new_zeroed(
+        &backend,
+        vec![dft],
+        state.power_flux_states.as_ref().unwrap().monitor_power.clone()
+    )?;
+
+    // Create and initialize pipelines
+    let mut pipeline = FdtdLossyPipeline::new(
         &backend,
         boundary_conditions,
-        sim_speed,
-        &mut state
+        sim_speed
     )?;
+    let mut dft_pipeline = DftPipeline::new(&backend)?;
+    let mut encoder = backend.begin_encoding();
+    let mut pass = encoder.begin_pass("2D pipeline initialization", None);
+    pipeline.initialize(&mut pass, &mut state)?;
+    dft_pipeline.initialize_states(&mut pass, &state.grid_params, &mut flux_dft_states)?;
+    drop(pass);
+    backend.submit(encoder)?;
+
+    // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
-    let mut flux_readback = PowerFluxReadback::new(&backend, &state)?
+    let mut power_readback = PowerFluxReadback::new(&backend, &state)?
         .expect("we added a flux monitor to the simulation so readback must be possible");
+    let mut dft_readback = DftReadback::new(&backend, &flux_dft_states).await?;
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
@@ -190,16 +215,28 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
 
     // Render simulation
-    let mut instantaneous_flux;
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        flux_readback.read_back(&backend)?;
-        flux_readback.request_copy(&backend, &state)?;
-        instantaneous_flux = flux_readback.get_power(flux_monitor_idx);
+        power_readback.read_back(&backend)?;
+        power_readback.request_copy(&backend, &state)?;
+        let instantaneous_flux = power_readback.get_power(&flux_monitor).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
+
+        dft_readback.read_back(&backend)?;
+        dft_readback.request_copy(&backend, &flux_dft_states)?;
+        let dft_vals = dft_readback.get_dft(&flux_func).unwrap();
+        for (f, cmplx) in frequencies.iter().zip(dft_vals.into_iter()) {
+            println!("{f} Hz: {}", cmplx.norm());
+        }
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
+        pipeline.dispatch_steps_aux(&mut pass, &mut state, |pass, state|
+            dft_pipeline.dispatch_step(
+                pass,
+                &state.t_idx,
+                &mut flux_dft_states
+            )
+        )?;
         drop(pass);
         backend.submit(encoder)?;
     }

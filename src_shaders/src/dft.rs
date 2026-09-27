@@ -57,10 +57,10 @@ pub fn gpu_dft_shader(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] time_step: &u32,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] function_value_positions: &[Index],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] function_values: &[Real],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] func_dfts: &[GpuFunctionDft],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dft_kernels: &[Complex32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dft_outputs: &mut [Complex32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] function_values: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] func_dfts: &[GpuFunctionDft],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dft_kernels: &[Complex32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dft_outputs: &mut [Complex32],
 ) {
     let dft_idx = id.z as usize;
     let kernel_idx = id.x;
