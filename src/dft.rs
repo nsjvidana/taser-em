@@ -1,7 +1,7 @@
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use crate::gpu_util::*;
 use crate::prelude::TaserResult;
-use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass};
+use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuEncoder, GpuPass, GpuReadback};
 use std::sync::Arc;
 use khal::BufferUsages;
 use taser_em_shaders::dft::*;
@@ -62,14 +62,14 @@ impl DftPipeline {
         Ok(())
     }
 
-    /// Updates `dft_states` buffers with proper function values and
-    pub fn encode_steps_full<Func: DftFunction>(
+    /// Updates `dft_states` buffers with proper function values and dispatches DFT step
+    pub fn encode_step_full<Func: DftFunction>(
         &self,
         encoder: &mut GpuEncoder,
         time_step: &GpuBuffer<u32>,
         dft_states: &mut DftStates<Func>,
     ) -> TaserResult<()> {
-        Self::encode_copy(encoder, dft_states)?;
+        Self::encode_copy_functions(encoder, dft_states)?;
         let mut pass = encoder.begin_pass("", None);
         self.dispatch_step(
             &mut pass,
@@ -78,9 +78,9 @@ impl DftPipeline {
         )
     }
 
-    pub fn encode_copy<Func: DftFunction>(encoder: &mut GpuEncoder, dft_states: &mut DftStates<Func>) -> TaserResult<()> {
-        for (off, func) in dft_states.dft_funcs.iter().enumerate() {
-            func.copy_to_dft_buffer(encoder, &mut dft_states.function_values, off)?;
+    pub fn encode_copy_functions<Func: DftFunction>(encoder: &mut GpuEncoder, dft_states: &mut DftStates<Func>) -> TaserResult<()> {
+        for (off, dft) in dft_states.dfts.iter().enumerate() {
+            dft.get_function().copy_to_dft_buffer(encoder, &mut dft_states.function_values, off)?;
         }
         Ok(())
     }
@@ -113,8 +113,8 @@ impl DftPipeline {
 
 /// The states of multiple DFTs that will be evaluated in one shader dispatch
 pub struct DftStates<Func: DftFunction> {
-    /// The functions stored on CPU side.
-    pub dft_funcs: Vec<Arc<Func>>,
+    /// The DFTs stored on CPU side.
+    pub dfts: Vec<Dft<Func>>,
 
     // Buffers / GPU data
     pub function_values: GpuBuffer<Real>,
@@ -129,7 +129,7 @@ impl<Func: DftFunction> DftStates<Func> {
     /// Creates new zeroed-out DFT buffers.
     ///
     /// Use [`DftPipeline::initialize_states`] to populate buffers with non-zero kernels.
-    pub fn new_zeroed(backend: &GpuBackend, dfts: &[Dft<Func>]) -> TaserResult<Self> {
+    pub fn new_zeroed(backend: &GpuBackend, dfts: Vec<Dft<Func>>) -> TaserResult<Self> {
         if dfts.is_empty() { return Err(DftError::NoDfts.into()) };
 
         let dft_funcs = dfts.iter()
@@ -171,7 +171,7 @@ impl<Func: DftFunction> DftStates<Func> {
         let n_functions = func_dfts.len() as u32;
 
         Ok(Self {
-            dft_funcs,
+            dfts,
             function_values,
             func_dfts,
             dft_frequencies,
@@ -203,6 +203,79 @@ pub trait DftFunction {
         )?;
         Ok(())
     }
+}
+
+pub struct DftReadback<Func: DftFunction> {
+    func_ranges: Vec<(Arc<Func>, Range<usize>)>,
+    frequencies: Vec<Real>,
+    dft_outputs: Vec<Complex32>,
+    dft_outputs_read: GpuReadback<Complex32>
+}
+
+impl<Func: DftFunction> DftReadback<Func> {
+    pub async fn new(backend: &GpuBackend, dft_states: &DftStates<Func>) -> TaserResult<Self> {
+        let mut gpu_dfts = vec![GpuFunctionDft::default(); dft_states.func_dfts.len()];
+        backend.slow_read_buffer(&dft_states.func_dfts, &mut gpu_dfts).await?;
+        let func_ranges = gpu_dfts.into_iter()
+            .zip(dft_states.dfts.iter())
+            .map(|(gpu_dft, dft)| {
+                (dft.function.clone(), (gpu_dft.kernels_start as usize)..(gpu_dft.kernels_end as usize))
+            })
+            .collect::<Vec<_>>();
+
+        let mut frequencies = vec![0.; dft_states.dft_frequencies.len()];
+        backend.slow_read_buffer(&dft_states.dft_frequencies, &mut frequencies).await?;
+
+        Ok(Self {
+            func_ranges,
+            frequencies,
+            dft_outputs: vec![Complex32::ZERO; dft_states.dft_outputs.len()],
+            dft_outputs_read: GpuReadback::new(backend, dft_states.dft_outputs.len())?,
+        })
+    }
+
+    pub fn request_copy(&mut self, backend: &GpuBackend, state: &DftStates<Func>) -> TaserResult<()> {
+        if self.dft_outputs_read.is_idle() {
+        self.dft_outputs_read.request_copy(backend, &state.dft_outputs, 0)?;
+        }
+        Ok(())
+    }
+
+    pub fn read_back(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back(backend);
+        Ok(())
+    }
+
+    pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
+        self.dft_outputs_read.try_take(backend, &mut self.dft_outputs)
+    }
+
+    pub fn get_frequencies(&self, dft_function: &Arc<Func>) -> Option<Vec<Real>> {
+        self.func_ranges.iter()
+            .find_map(|(m, r)|
+                Arc::ptr_eq(m, dft_function)
+                    .then(||
+                        self.frequencies[r.clone()].to_vec()
+                    )
+            )
+    }
+
+    pub fn get_dft(&self, dft_function: &Arc<Func>) -> Option<Vec<Complex32>> {
+        self.func_ranges.iter()
+            .find_map(|(m, r)|
+                Arc::ptr_eq(m, dft_function)
+                    .then(||
+                        self.dft_outputs[r.clone()].to_vec()
+                    )
+            )
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DftDataPoint {
+    pub frequency: Real,
+    pub complex: Complex32,
 }
 
 /// Helper function for creating a list of frequencies for a DFT.

@@ -81,7 +81,9 @@ impl PowerFluxReadback {
 
     pub fn request_copy(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(()); };
+        if self.monitor_power_read.is_idle() {
         self.monitor_power_read.request_copy(backend, &*flux_state.monitor_power.lock().unwrap(), 0)?;
+        }
         Ok(())
     }
 
@@ -96,10 +98,10 @@ impl PowerFluxReadback {
     }
 
     pub fn get_power(&self, monitor: &Arc<PowerFluxMonitor>) -> Option<Real> {
-        self.monitor_power.iter()
-            .zip(self.monitors.iter())
-            .find(|(_, m)| Arc::ptr_eq(m, monitor))
-            .map(|(pwr, _)| *pwr)
+        self.monitors.iter()
+            .zip(self.monitor_power.iter())
+            .find(|(m, _)| Arc::ptr_eq(m, monitor))
+            .map(|(_, pwr)| *pwr)
     }
 }
 
