@@ -33,10 +33,14 @@ pub fn gpu_power_flux(
     cell_idx3.dyn_insert(monitor.axis, monitor.position);
     cell_idx3.dyn_insert(monitor.axis1, thread_id.x);
     cell_idx3.dyn_insert(monitor.axis2, thread_id.y);
-    if cell_idx3.cmpge(grid.n_cells3).any() { return; }
 
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
+
+    let is_hi_boundary_or_out_of_bounds =
+        cell_idx.cmpge(n_cells - 1).any() || cell_idx3.cmpge(grid.n_cells3).any();
+    if is_hi_boundary_or_out_of_bounds { return; }
+
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let en_self = en.read(idx);

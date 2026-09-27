@@ -104,7 +104,10 @@ impl FdtdTestbedViewer {
         selff.default_cam_setup();
         selff.update_cam_light();
         selff.add_region_meshes(&simulation.material_regions, regions_offset);
-        selff.add_flux_planes(&simulation.power_flux_monitors);
+
+        selff.add_flux_planes(
+            simulation.power_flux_monitors.iter().map(|rc| rc.as_ref())
+        );
 
         Ok(selff)
     }
@@ -193,10 +196,10 @@ impl FdtdTestbedViewer {
         }
     }
 
-    pub fn add_flux_planes(&mut self, flux_monitors: &[PowerFluxMonitor]) {
+    pub fn add_flux_planes<'a>(&mut self, flux_monitors: impl Iterator<Item=&'a PowerFluxMonitor>) {
         let grid_dims = self.grid_bb_max - self.grid_bb_min;
         let grid_center = self.grid_bb_min + grid_dims * 0.5;
-        for monitor in flux_monitors.iter() {
+        for monitor in flux_monitors {
             let axis = Axis::from(monitor.axis);
             let axis1 = axis.permute();
             let axis2 = axis1.permute();

@@ -16,7 +16,7 @@ pub mod util;
 pub mod gpu_util;
 pub mod error;
 pub mod monitor;
-mod dft;
+pub mod dft;
 
 pub mod re_exports {
     pub use glamx;
@@ -41,6 +41,7 @@ pub mod prelude {
     pub use crate::util::*;
     pub use crate::error::Error;
     pub use crate::monitor::*;
+    pub use crate::dft::*;
     pub use taser_em_shaders::math::*;
     pub use khal::backend::*;
     pub use khal::shader::Shader;

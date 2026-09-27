@@ -5,6 +5,7 @@ use crate::gpu_util::CreateGpuBuffer;
 use derivative::Derivative;
 use parry3d::bounding_volume::Aabb;
 use std::num::{NonZeroI32, NonZeroU32};
+use std::sync::Arc;
 use parry3d::shape::{Cuboid, SharedShape};
 use taser_em_shaders::fdtd::*;
 use crate::*;
@@ -19,7 +20,7 @@ pub struct FdtdLossySimulation {
     pub material_regions: MaterialRegions,
     pub background_material: ElectricMaterial,
     pub sources: Vec<Source>,
-    pub power_flux_monitors: Vec<PowerFluxMonitor>,
+    pub power_flux_monitors: Vec<Arc<PowerFluxMonitor>>,
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
     pub tfsf_parameters: TfsfParameters
@@ -47,10 +48,10 @@ impl FdtdLossySimulation {
         self
     }
 
-    pub fn add_flux_monitor(&mut self, power_flux_monitor: PowerFluxMonitor) -> usize {
-        let idx = self.power_flux_monitors.len();
-        self.power_flux_monitors.push(power_flux_monitor);
-        idx
+    pub fn add_flux_monitor(&mut self, power_flux_monitor: PowerFluxMonitor) -> Arc<PowerFluxMonitor> {
+        let ptr = Arc::new(power_flux_monitor);
+        self.power_flux_monitors.push(ptr.clone());
+        ptr
     }
 
     /// Fill a box-shaped region from `start` to `end` with `material`
@@ -609,7 +610,7 @@ pub struct FdtdLossyState {
     pub source_terms: GpuBuffer<SourceTerms>,
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
-    // Monitors
+    // Monitors & DFTs
     pub power_flux_states: Option<PowerFluxStates>,
     // Misc data
     pub thread_count: [u32; 3],

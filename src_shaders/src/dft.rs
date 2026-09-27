@@ -46,7 +46,7 @@ pub fn gpu_compute_dft_kernels(
 ///
 /// # Arguments
 /// - `time_step` - the index of current time step.
-/// - `functions` - the instantaneous value (occurring at `time_step` time step) of
+/// - `function_values` - the instantaneous value (occurring at `time_step` time step) of
 ///                 every function whose DFT is being computed (parallel w/ `func_dfts`).
 /// - `func_dfts` - Descriptors of each function DFT this shader will compute.
 /// - `dft_kernels` - the kernels of every frequency, of every DFT (parallel w/ `dfts`).
@@ -56,9 +56,9 @@ pub fn gpu_compute_dft_kernels(
 pub fn gpu_dft_shader(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] time_step: &u32,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] functions: &[Real], // parallel w/ dft_infos
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] function_values: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] func_dfts: &[GpuFunctionDft],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dft_kernels: &[Complex32], // parallel w/ dfts
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dft_kernels: &[Complex32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dft_outputs: &mut [Complex32],
 ) {
     let dft_idx = id.z as usize;
@@ -68,7 +68,7 @@ pub fn gpu_dft_shader(
 
     let global_kernel_idx = dft.global_kernel_idx(kernel_idx) as usize;
     let k = dft_kernels.read(global_kernel_idx).powu(*time_step);
-    *dft_outputs.at_mut(global_kernel_idx) += k * functions.read(dft_idx);
+    *dft_outputs.at_mut(global_kernel_idx) += k * function_values.read(dft_idx);
 }
 
 /// Compute workgroup count for DFT kernel for multiple DFTs.

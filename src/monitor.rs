@@ -1,7 +1,10 @@
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, MutexGuard};
 use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use taser_em_shaders::math::*;
 use taser_em_shaders::monitor::*;
+use crate::dft::{Dft, DftFunction};
 use crate::gpu_util::CreateGpuBuffer;
 use crate::prelude::TaserResult;
 
@@ -19,11 +22,48 @@ pub struct PowerFluxMonitor {
     ///
     /// This matters when measuring transmittance / reflection.
     pub direction: Direction,
-    // TODO: /// All the frequencies of a DFT that will be run on this monitor's recorded values
-    // TODO: pub dft_frequencies: Option<Vec<Real>>,
+}
+
+#[derive(Clone)]
+pub struct PowerFluxFunction {
+    obj: Arc<PowerFluxMonitor>,
+    flux_buf: Arc<Mutex<GpuBuffer<Real>>>,
+    monitor_idx: usize,
+}
+
+impl PowerFluxFunction {
+    pub fn new(monitor: &Arc<PowerFluxMonitor>, flux_state: &PowerFluxStates) -> TaserResult<Self> {
+        let (monitor_idx, _) = flux_state.monitors.iter()
+            .enumerate()
+            .find(|(_, m)| Arc::ptr_eq(m, monitor))
+            .ok_or_else(|| PowerFluxError::MissingMonitor(monitor.clone()))?;
+
+        Ok(Self {
+            obj: monitor.clone(),
+            flux_buf: flux_state.monitor_power.clone(),
+            monitor_idx,
+        })
+    }
+
+    pub fn get_monitor_ref(&self) -> &Arc<PowerFluxMonitor> { &self.obj }
+
+    pub fn buffer(&self) -> MutexGuard<'_, GpuBuffer<Real>> { self.flux_buf.lock().unwrap() }
+
+    pub fn monitor_idx(&self) -> usize { self.monitor_idx }
+}
+
+impl DftFunction for PowerFluxFunction {
+    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<Dft<Self>> {
+        Dft::new(frequencies, Arc::new(self))
+    }
+
+    fn get_buffer(&self) -> impl Deref<Target=GpuBuffer<Real>> { self.buffer() }
+
+    fn get_value_position(&self) -> usize { self.monitor_idx() }
 }
 
 pub struct PowerFluxReadback {
+    monitors: Vec<Arc<PowerFluxMonitor>>,
     monitor_power: Vec<Real>,
     monitor_power_read: GpuReadback<Real>
 }
@@ -31,8 +71,9 @@ pub struct PowerFluxReadback {
 impl PowerFluxReadback {
     pub fn new(backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<Option<Self>> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(None); };
-        let n_powers = flux_state.monitor_power.len();
+        let n_powers = flux_state.monitor_power.lock().unwrap().len();
         Ok(Some(Self {
+            monitors: flux_state.monitors.clone(),
             monitor_power: vec![0.; n_powers],
             monitor_power_read: GpuReadback::new(backend, n_powers)?,
         }))
@@ -40,7 +81,7 @@ impl PowerFluxReadback {
 
     pub fn request_copy(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(()); };
-        self.monitor_power_read.request_copy(backend, &flux_state.monitor_power, 0)?;
+        self.monitor_power_read.request_copy(backend, &*flux_state.monitor_power.lock().unwrap(), 0)?;
         Ok(())
     }
 
@@ -54,8 +95,11 @@ impl PowerFluxReadback {
         self.monitor_power_read.try_take(backend, &mut self.monitor_power)
     }
 
-    pub fn get_power(&self, monitor_idx: usize) -> Real {
-        self.monitor_power[monitor_idx]
+    pub fn get_power(&self, monitor: &Arc<PowerFluxMonitor>) -> Option<Real> {
+        self.monitor_power.iter()
+            .zip(self.monitors.iter())
+            .find(|(_, m)| Arc::ptr_eq(m, monitor))
+            .map(|(pwr, _)| *pwr)
     }
 }
 
@@ -83,7 +127,7 @@ impl PowerFluxPipeline {
             &sim_state.h,
             &sim_state.en,
             &flux_state.flux_monitors,
-            &mut flux_state.monitor_power,
+            &mut *flux_state.monitor_power.lock().unwrap(),
             &mut flux_state.wg_summations,
         )?;
 
@@ -92,8 +136,9 @@ impl PowerFluxPipeline {
 }
 
 pub struct PowerFluxStates {
+    pub monitors: Vec<Arc<PowerFluxMonitor>>,
     pub flux_monitors: GpuBuffer<GpuPowerFluxMonitor>,
-    pub monitor_power: GpuBuffer<Real>,
+    pub monitor_power: Arc<Mutex<GpuBuffer<Real>>>,
     pub wg_summations: GpuBuffer<Real>,
     pub workgroups: [u32; 3],
 }
@@ -134,12 +179,14 @@ impl PowerFluxStates {
             .collect::<Vec<_>>()
             .create_gpu_buffer(backend)?;
 
-        let monitor_power = vec![0.; sim.power_flux_monitors.len()]
-            .create_gpu_buffer(backend)?;
+        let monitor_power = Arc::new(Mutex::new(
+            vec![0.; sim.power_flux_monitors.len()].create_gpu_buffer(backend)?
+        ));
         let wg_summations = vec![0.; workgroups.iter().product::<u32>() as usize]
             .create_gpu_buffer(backend)?;
 
         Ok(Some(Self {
+            monitors: sim.power_flux_monitors.clone(),
             flux_monitors,
             monitor_power,
             wg_summations,
@@ -149,3 +196,9 @@ impl PowerFluxStates {
 }
 
 // TODO: probe monitor (measures at one point)
+
+#[derive(thiserror::Error, Debug)]
+pub enum PowerFluxError {
+    #[error("The following monitor couldn't be found in the simulation: {0:?}")]
+    MissingMonitor(Arc<PowerFluxMonitor>),
+}
