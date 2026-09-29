@@ -1,19 +1,18 @@
-pub use taser_em_shaders::fdtd::DipoleType;
-
-use crate::prelude::*;
-use crate::gpu_util::CreateGpuBuffer;
-use derivative::Derivative;
-use parry3d::bounding_volume::Aabb;
-use std::num::{NonZeroI32, NonZeroU32};
-use std::sync::Arc;
-use parry3d::shape::{Cuboid, SharedShape};
-use taser_em_shaders::fdtd::*;
-use crate::*;
-
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use crate::boundary::BoundaryCondition;
-use crate::monitor::{PowerFluxMonitor, PowerFluxPipeline, PowerFluxStates};
+
+use crate::gpu_util::*;
+use crate::prelude::*;
+use crate::*;
+use derivative::Derivative;
+use khal::backend::*;
+use parry3d::bounding_volume::Aabb;
+use parry3d::shape::{Cuboid, SharedShape};
+use std::num::{NonZeroI32, NonZeroU32};
+use std::sync::Arc;
+use taser_em_shaders::fdtd::*;
+use taser_em_shaders::math::*;
+use taser_em_shaders::source::*;
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
@@ -601,308 +600,6 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct FdtdParameters {
-    pub cell_size: Vect,
-    pub dt: Real,
-    pub material_discretization: MaterialDiscretization
-}
-
-/// Buffers and data needed for running the shader
-pub struct FdtdLossyState {
-    // Uniforms / thread-independent vars
-    pub grid_params: GpuBuffer<GridParameters>,
-    pub t_idx: GpuBuffer<u32>,
-    // Vector fields
-    pub h_previous: GpuBuffer<Vec4>,
-    pub h: GpuBuffer<Vec4>,
-    pub dn: GpuBuffer<Vec4>,
-    pub en: GpuBuffer<Vec4>,
-    // For computing source terms
-    pub dipoles: GpuBuffer<GpuDipole>,
-    pub tfsf_dispatch_data: TfsfDispatchData,
-    pub source_vals: GpuBuffer<f32>,
-    // For update equation terms
-    pub source_terms: GpuBuffer<SourceTerms>,
-    pub int_terms: GpuBuffer<PmlIntegrals>,
-    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
-    // Monitors & DFTs
-    pub power_flux_states: Option<PowerFluxStates>,
-    // Misc data
-    pub thread_count: [u32; 3],
-    pub n_cells: GridIndex,
-}
-
-#[derive(Clone, Debug)]
-pub struct TfsfParameters {
-    pub pml_width: NonZeroU32,
-    pub pml_sig_max: Real,
-    pub pml_grading_order: NonZeroI32
-}
-
-pub struct TfsfDispatchData {
-    pub tfsf_sources: GpuBuffer<GpuTfsf>,
-    pub tfsf_masks: GpuBuffer<TfsfMask>,
-    pub corrections: GpuBuffer<TfsfSourceValues>,
-    pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
-    pub h: GpuBuffer<AuxVect>,
-    pub dn: GpuBuffer<AuxVect>,
-    pub en: GpuBuffer<AuxVect>,
-    /// Thread count for simulating auxiliary grids for ALL plane waves.
-    ///
-    /// Is [`None`] only when there are no TF/SF sources.
-    pub aux_grid_thread_count: Option<[u32; 3]>,
-    pub mask_init_thread_count: Option<[u32; 3]>,
-}
-
-/// Parameters judging how the PML will be constructed in the simulation
-#[derive(Copy, Clone)]
-pub struct PmlParameters {
-    /// Widths of PML along each axis (widths for low and high end of each axis).
-    pub widths: LayerWidths,
-    /// Maximum conductivity of the PML
-    pub sig_max: Real,
-    /// The order of the monomial that ramps PML conductivity up to `sig_max`
-    pub grading_order: NonZeroI32
-}
-
-impl PmlParameters {
-    /// A convenient constructor for a [`PmlParameters`] with some generally stable values.
-    pub fn new(dt: Real) -> Self {
-        Self {
-            widths: LayerWidths::splat_spatial(12),
-            sig_max: FdtdStability::pml_sig_max(dt),
-            grading_order: NonZeroI32::new(3).unwrap(),
-        }
-    }
-}
-
-/// Helper struct containing parameters and functions for ensuring simulation stability.
-///
-/// The default of this struct contains hardcoded values that are generally stable.
-#[derive(Derivative, Clone)]
-#[derivative(Default)]
-pub struct FdtdStability {
-    #[derivative(Default(value = "10"))]
-    pub cells_per_wavelength: Index,
-    /// Divides CFL condition upper bound by `dt_safety_factor`.
-    ///
-    /// `dt_safety_factor > 1.` to improve stability.
-    #[derivative(Default(value = "2."))]
-    pub dt_safety_factor: Real,
-    #[derivative(Default(value = "10"))]
-    pub source_resolution: Index,
-    #[derivative(Default(value = "NonZeroU32::new(3).unwrap()"))]
-    pub material_resolution: NonZeroU32,
-    #[derivative(Default(value = "LayerWidths::splat_spatial(10)"))]
-    pub spacer_region_widths: LayerWidths,
-}
-
-impl FdtdStability {
-    pub fn cell_size_from_min_wavelength(&self, f_max: Real) -> Vect {
-        let min_wavelen = C_0 / f_max;
-        let cell_size = min_wavelen / self.cells_per_wavelength as Real;
-        Vect::from_array([cell_size; DIM])
-    }
-
-    pub fn cfl_condition(&self, cell_size: Vect) -> Real {
-        let cell_size_term = cell_size
-            .map(|v| {
-                v.powi(2).recip()
-            })
-            .element_sum()
-            .sqrt();
-        let safety_factor = self.dt_safety_factor.max(1.);
-        1. / (C_0 * cell_size_term * safety_factor)
-    }
-
-    pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> Vect {
-        let cells_per_crit_dim = (critical_dim / cell_size).ceil();
-        critical_dim / cells_per_crit_dim
-    }
-
-    /// Computes a stable maximum conductivity for a PML
-    #[inline]
-    pub fn pml_sig_max(dt: Real) -> Real {
-        EPS_0 / (2. * dt)
-    }
-
-    /// Compute a stable dt from a gaussian curve maximum frequency
-    #[inline]
-    pub fn dt_from_gaussian_freq(&self, f_max: Real) -> Real {
-        let tau = core::f32::consts::FRAC_1_PI / f_max;
-        tau / self.source_resolution as f32
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum MaterialDiscretization {
-    Rough,
-    Smooth { resolution: NonZeroU32 }
-}
-
-/// Material properties
-///
-/// For Perfect Electric Conductors, set any component of the `sig` field to [`Real::INFINITY`].
-#[derive(Copy, Clone, Debug)]
-pub struct ElectricMaterial {
-    /// Relative permittivity
-    pub eps_r: Vec3,
-    /// Relative permeability
-    pub mu_r: Vec3,
-    /// Conductivity of the material (S/m)
-    ///
-    /// Set any component of this vector to [`Real::INFINITY`] to make this a Perfect Electric Conductor
-    pub sig: Vec3,
-}
-
-impl ElectricMaterial {
-    /// A material representing free space
-    pub const FREE_SPACE: Self = Self {
-        eps_r: Vec3::ONE, mu_r: Vec3::ONE, sig: Vec3::ZERO,
-    };
-    /// An invalid electric material with all values set to zero
-    pub const ZERO: Self = Self {
-        eps_r: Vec3::ZERO, mu_r: Vec3::ZERO, sig: Vec3::ZERO,
-    };
-    /// Perfect Electric Conductor
-    pub const PEC: Self = Self {
-        sig: Vec3::INFINITY,
-        ..Self::FREE_SPACE
-    };
-
-    /// Compute refractive index on all axes
-    #[allow(unused_variables)]
-    pub fn refractive_index(&self) -> Vec3 {
-        (self.eps_r * self.mu_r).sqrt()
-    }
-}
-
-impl core::ops::Add for ElectricMaterial {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            eps_r: self.eps_r + rhs.eps_r,
-            mu_r: self.mu_r + rhs.mu_r,
-            sig: self.sig + rhs.sig,
-        }
-    }
-
-}
-
-impl core::ops::Div<Real> for ElectricMaterial {
-    type Output = Self;
-
-    fn div(self, rhs: Real) -> Self::Output {
-        Self {
-            eps_r: self.eps_r / rhs,
-            mu_r: self.mu_r / rhs,
-            sig: self.sig / rhs,
-        }
-    }
-}
-
-
-/// Inject energy into the simulation in various ways.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum Source {
-    /// Dipole (magnetic or electric).
-    Dipole {
-        /// Choose between an electric and magnetic dipole source.
-        dipole_type: DipoleType,
-        /// The position in space where the source should be injected.
-        position: Vect,
-        /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
-        t_start: f32,
-        /// Signal data points.
-        vals: Vec<f32>,
-        /// The axis on which the dipole moves. Must be a unit vector, unless
-        /// you want to scale `vals` by the components of `moment`.
-        moment: Vec3,
-    },
-    /// Total-Field / Scattered-Field source
-    TFSF {
-        /// The spatial axis along which the plane wave will travel.
-        spatial_axis: SpatialAxis,
-        /// The direction along `spatial_axis` the wave will travel in.
-        direction: Direction,
-        /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
-        t_start: f32,
-        /// Signal data points.
-        vals: Vec<f32>,
-        /// Polarization direction of the plane wave (unit vector)
-        polarization: Vec3,
-        /// The distances between the TF/SF boundary and the border/PML, in grid cells.
-        ///
-        /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
-        tfsf_buffer_width: LayerWidths,
-    }
-}
-
-impl Source {
-    /// Helper function that generates data points for a Gaussian curve with a maximum frequency of
-    /// `f_max` (Hz).
-    ///
-    /// # Panics
-    /// When `f_max <= 0.` or when `dt <= 0.`
-    pub fn gaussian_max_f(f_max: Real, amplitude: Real, dt: Real) -> Vec<Real> {
-        assert!(f_max > 0.0, "f_max must be > 0");
-        let tau = core::f32::consts::FRAC_1_PI / f_max;
-        let t_0 = 6. * tau;
-        let approx_dur = 12. * tau;
-        Self::function_data_points(dt, approx_dur, |t| {
-            amplitude * core::f32::consts::E.powf(-((t - t_0) / tau).powi(2))
-        })
-    }
-
-    /// Generates datapoints for one cycle of sine (amplitude of `1.`)
-    pub fn sin_cycle(f: Real, dt: Real) -> Vec<Real> {
-        let omega = (2. * core::f32::consts::PI) * f;
-        Self::function_data_points(dt, 1. / f, |t| Real::sin(omega * t))
-    }
-
-    /// Samples data points from the function of time `f`
-    ///
-    /// # Panics
-    /// When `dt <= 0.` or `duration <= 0.`
-    pub fn function_data_points(dt: Real, duration: Real, mut f: impl FnMut(Real) -> Real) -> Vec<Real> {
-        assert!(dt > 0.0, "dt must be > 0");
-        assert!(duration > 0.0, "source duration must be > 0");
-        let num_vals = (duration / dt) as usize;
-        let mut vals = vec![0.; num_vals];
-
-        let mut t = 0.;
-        for val in vals.iter_mut() {
-            *val = f(t);
-            t += dt;
-        }
-        vals
-    }
-}
-
-/// Utility struct for reading back vector field data to the host device (CPU):
-///
-/// Follow these steps to get data:
-/// 1. Use the request functions (e.g. [`request_copy_dn`](Self::request_copy_dn), [`request_copy_fields`](Self::request_copy_fields))
-///    to initiate readback.
-/// 2. Use the read-back functions to copy data to the CPU (e.g. [`read_back_dn`](Self::read_back_dn), [`read_back_fields`](Self::read_back_fields))
-/// 3. Get vector field data using the appropriate functions
-///    (e.g. [`get_dn_field`](Self::get_dn_field), [`dn_magnitudes`](Self::dn_magnitudes), [`h_magnitudes`](Self::h_magnitudes))
-pub struct FdtdStateReadback {
-    h: Vec<Vec4>,
-    dn: Vec<Vec4>,
-    en: Vec<Vec4>,
-    t_idx: Vec<u32>,
-    h_read: GpuReadback<Vec4>,
-    dn_read: GpuReadback<Vec4>,
-    en_read: GpuReadback<Vec4>,
-    t_idx_read: GpuReadback<u32>,
-    #[cfg(not(feature = "dim3"))]
-    mode: FdtdSimulationMode
-}
-
 macro_rules! request_copy_fn {
     ($name:ident, $read:ident, $buf:ident) => {
         #[inline]
@@ -940,6 +637,27 @@ macro_rules! get_vect_field_fn {
             &self.$field
         }
     };
+}
+
+/// Utility struct for reading back vector field data to the host device (CPU):
+///
+/// Follow these steps to get data:
+/// 1. Use the request functions (e.g. [`request_copy_dn`](Self::request_copy_dn), [`request_copy_fields`](Self::request_copy_fields))
+///    to initiate readback.
+/// 2. Use the read-back functions to copy data to the CPU (e.g. [`read_back_dn`](Self::read_back_dn), [`read_back_fields`](Self::read_back_fields))
+/// 3. Get vector field data using the appropriate functions
+///    (e.g. [`get_dn_field`](Self::get_dn_field), [`dn_magnitudes`](Self::dn_magnitudes), [`h_magnitudes`](Self::h_magnitudes))
+pub struct FdtdStateReadback {
+    h: Vec<Vec4>,
+    dn: Vec<Vec4>,
+    en: Vec<Vec4>,
+    t_idx: Vec<u32>,
+    h_read: GpuReadback<Vec4>,
+    dn_read: GpuReadback<Vec4>,
+    en_read: GpuReadback<Vec4>,
+    t_idx_read: GpuReadback<u32>,
+    #[cfg(not(feature = "dim3"))]
+    mode: FdtdSimulationMode
 }
 
 impl FdtdStateReadback {
@@ -1065,6 +783,186 @@ impl FdtdStateReadback {
                     #[cfg(feature = "dim2")]
                     FdtdSimulationMode::TransverseElectricZ => par_iter!(self.en).map(|v| v.xy().length()).collect(),
                 }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FdtdParameters {
+    pub cell_size: Vect,
+    pub dt: Real,
+    pub material_discretization: MaterialDiscretization
+}
+
+/// Helper struct containing parameters and functions for ensuring simulation stability.
+///
+/// The default of this struct contains hardcoded values that are generally stable.
+#[derive(Derivative, Clone)]
+#[derivative(Default)]
+pub struct FdtdStability {
+    #[derivative(Default(value = "10"))]
+    pub cells_per_wavelength: Index,
+    /// Divides CFL condition upper bound by `dt_safety_factor`.
+    ///
+    /// `dt_safety_factor > 1.` to improve stability.
+    #[derivative(Default(value = "2."))]
+    pub dt_safety_factor: Real,
+    #[derivative(Default(value = "10"))]
+    pub source_resolution: Index,
+    #[derivative(Default(value = "NonZeroU32::new(3).unwrap()"))]
+    pub material_resolution: NonZeroU32,
+    #[derivative(Default(value = "LayerWidths::splat_spatial(10)"))]
+    pub spacer_region_widths: LayerWidths,
+}
+
+impl FdtdStability {
+    pub fn cell_size_from_min_wavelength(&self, f_max: Real) -> Vect {
+        let min_wavelen = C_0 / f_max;
+        let cell_size = min_wavelen / self.cells_per_wavelength as Real;
+        Vect::from_array([cell_size; DIM])
+    }
+
+    pub fn cfl_condition(&self, cell_size: Vect) -> Real {
+        let cell_size_term = cell_size
+            .map(|v| {
+                v.powi(2).recip()
+            })
+            .element_sum()
+            .sqrt();
+        let safety_factor = self.dt_safety_factor.max(1.);
+        1. / (C_0 * cell_size_term * safety_factor)
+    }
+
+    pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> Vect {
+        let cells_per_crit_dim = (critical_dim / cell_size).ceil();
+        critical_dim / cells_per_crit_dim
+    }
+
+    /// Computes a stable maximum conductivity for a PML
+    #[inline]
+    pub fn pml_sig_max(dt: Real) -> Real {
+        EPS_0 / (2. * dt)
+    }
+
+    /// Compute a stable dt from a gaussian curve maximum frequency
+    #[inline]
+    pub fn dt_from_gaussian_freq(&self, f_max: Real) -> Real {
+        let tau = core::f32::consts::FRAC_1_PI / f_max;
+        tau / self.source_resolution as f32
+    }
+}
+
+/// Buffers and data needed for running the shader
+pub struct FdtdLossyState {
+    // Uniforms / thread-independent vars
+    pub grid_params: GpuBuffer<GridParameters>,
+    pub t_idx: GpuBuffer<u32>,
+    // Vector fields
+    pub h_previous: GpuBuffer<Vec4>,
+    pub h: GpuBuffer<Vec4>,
+    pub dn: GpuBuffer<Vec4>,
+    pub en: GpuBuffer<Vec4>,
+    // For computing source terms
+    pub dipoles: GpuBuffer<GpuDipole>,
+    pub tfsf_dispatch_data: TfsfDispatchData,
+    pub source_vals: GpuBuffer<f32>,
+    // For update equation terms
+    pub source_terms: GpuBuffer<SourceTerms>,
+    pub int_terms: GpuBuffer<PmlIntegrals>,
+    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
+    // Monitors & DFTs
+    pub power_flux_states: Option<PowerFluxStates>,
+    // Misc data
+    pub thread_count: [u32; 3],
+    pub n_cells: GridIndex,
+}
+
+/// Parameters judging how the PML will be constructed in the simulation
+#[derive(Copy, Clone)]
+pub struct PmlParameters {
+    /// Widths of PML along each axis (widths for low and high end of each axis).
+    pub widths: LayerWidths,
+    /// Maximum conductivity of the PML
+    pub sig_max: Real,
+    /// The order of the monomial that ramps PML conductivity up to `sig_max`
+    pub grading_order: NonZeroI32
+}
+
+impl PmlParameters {
+    /// A convenient constructor for a [`PmlParameters`] with some generally stable values.
+    pub fn new(dt: Real) -> Self {
+        Self {
+            widths: LayerWidths::splat_spatial(12),
+            sig_max: FdtdStability::pml_sig_max(dt),
+            grading_order: NonZeroI32::new(3).unwrap(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum MaterialDiscretization {
+    Rough,
+    Smooth { resolution: NonZeroU32 }
+}
+
+/// Material properties
+///
+/// For Perfect Electric Conductors, set any component of the `sig` field to [`Real::INFINITY`].
+#[derive(Copy, Clone, Debug)]
+pub struct ElectricMaterial {
+    /// Relative permittivity
+    pub eps_r: Vec3,
+    /// Relative permeability
+    pub mu_r: Vec3,
+    /// Conductivity of the material (S/m)
+    ///
+    /// Set any component of this vector to [`Real::INFINITY`] to make this a Perfect Electric Conductor
+    pub sig: Vec3,
+}
+
+impl ElectricMaterial {
+    /// A material representing free space
+    pub const FREE_SPACE: Self = Self {
+        eps_r: Vec3::ONE, mu_r: Vec3::ONE, sig: Vec3::ZERO,
+    };
+    /// An invalid electric material with all values set to zero
+    pub const ZERO: Self = Self {
+        eps_r: Vec3::ZERO, mu_r: Vec3::ZERO, sig: Vec3::ZERO,
+    };
+    /// Perfect Electric Conductor
+    pub const PEC: Self = Self {
+        sig: Vec3::INFINITY,
+        ..Self::FREE_SPACE
+    };
+
+    /// Compute refractive index on all axes
+    #[allow(unused_variables)]
+    pub fn refractive_index(&self) -> Vec3 {
+        (self.eps_r * self.mu_r).sqrt()
+    }
+}
+
+impl core::ops::Add for ElectricMaterial {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            eps_r: self.eps_r + rhs.eps_r,
+            mu_r: self.mu_r + rhs.mu_r,
+            sig: self.sig + rhs.sig,
+        }
+    }
+
+}
+
+impl core::ops::Div<Real> for ElectricMaterial {
+    type Output = Self;
+
+    fn div(self, rhs: Real) -> Self::Output {
+        Self {
+            eps_r: self.eps_r / rhs,
+            mu_r: self.mu_r / rhs,
+            sig: self.sig / rhs,
         }
     }
 }

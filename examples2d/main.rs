@@ -235,7 +235,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
         dft_readback.read_back(&backend)?;
         dft_readback.request_copy(&backend, &flux_dft_states)?;
-        plot_window.show(&mut testbed, &mut plot_lines, &mut dft_readback)?;
+        plot_window.show(&mut testbed, &mut plot_lines, &dft_readback)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);

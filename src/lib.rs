@@ -1,5 +1,6 @@
 pub mod fdtd;
 pub mod grid;
+pub mod source;
 pub mod boundary;
 pub mod consts {
     /// Speed of EM wave in free space
@@ -35,6 +36,7 @@ pub static SPIRV_DIR: Dir<'static> = include_dir!("$OUT_DIR/shaders-spirv");
 pub mod prelude {
     pub use crate::fdtd::*;
     pub use crate::grid::*;
+    pub use crate::source::*;
     pub use crate::boundary::*;
     pub use crate::consts::*;
     pub use crate::mesh_loading::*;
@@ -43,6 +45,7 @@ pub mod prelude {
     pub use crate::monitor::*;
     pub use crate::dft::*;
     pub use taser_em_shaders::math::*;
+    pub use taser_em_shaders::source::DipoleType;
     pub use khal::backend::*;
     pub use khal::shader::Shader;
 
