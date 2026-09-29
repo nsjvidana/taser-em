@@ -1,6 +1,7 @@
 use kiss3d::glamx::Vec3;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
+use taser_em_testbed2d::plot::{DftPlotLine, PlotLine, PlotWindow};
 
 #[kiss3d::main]
 async fn main() {
@@ -107,12 +108,11 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let dft_resolution = 10;
-    let sim_speed = 3;
+    let dft_resolution = 100;
+    let sim_speed = 2;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 15.,
         cells_per_wavelength: 30,
         spacer_region_widths: LayerWidths::splat_spatial(30),
         ..Default::default()
@@ -179,7 +179,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut state = simulation.finalize(&backend, &stability)?;
 
     // Power flux DFT state
-    let frequencies = frequencies_from_range((freq * 0.5)..=(freq * 1.5), dft_resolution);
+    let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
     let (dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
     let mut flux_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
@@ -209,6 +209,21 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
 
+    // Set up DFT plot
+    let mut plot_window = PlotWindow::new(
+        "Power Flux DFT",
+        Some("Frequency (GHz)"),
+        None,
+    );
+    let mut plot_lines = vec![
+        DftPlotLine::new(
+            "Dipole Antenna",
+            &flux_func,
+            &dft_readback,
+            Some(1e-9) // Frequency is in GHz, so divide by 1E-9 for a cleaner X axis
+        )?
+    ];
+
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         power_readback.read_back(&backend)?;
@@ -218,10 +233,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
         dft_readback.read_back(&backend)?;
         dft_readback.request_copy(&backend, &flux_dft_states)?;
-        let dft_vals = dft_readback.get_dft(&flux_func).unwrap();
-        for (f, cmplx) in frequencies.iter().zip(dft_vals) {
-            println!("{f} Hz: {}", cmplx.norm());
-        }
+        plot_window.show(&mut testbed, &mut plot_lines, &mut dft_readback)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);

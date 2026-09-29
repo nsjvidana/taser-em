@@ -260,5 +260,7 @@ pub enum DftError {
     #[error("Expected at least one frequency in DFT but none were provided")]
     NoFrequencies,
     #[error("Expected at least one DFT")]
-    NoDfts
+    NoDfts,
+    #[error("Couldn't find DFT function")]
+    CannotFindFunction,
 }
