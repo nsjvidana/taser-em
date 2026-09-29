@@ -24,6 +24,8 @@ required-features = ["dim1"]
 
 [dependencies]
 kiss3d.workspace = true
+egui_plot.workspace = true
+egui.workspace = true
 khal.workspace = true
 rayon = { workspace = true, optional = true }
 glamx.workspace = true

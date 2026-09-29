@@ -35,7 +35,9 @@ khal = { version = "0.2.1", features = ["derive"] }
 khal-builder = "0.2.1"
 khal-std = "0.2.1"
 spirv-std = { version = "0.10.0-alpha.1", features = ["default"] }
-kiss3d = "0.44.0"
+kiss3d = { version = "0.44.0", features = ["egui"] }
+egui_plot = "0.35"
+egui = "0.34"
 glamx = { version = "0.3", features = ["bytemuck"] }
 num-complex = { version = "0.4.6", default-features = false, features = ["bytemuck", "libm"] }
 mesh-loader = { version = "0.1.13", features = ["stl", "collada", "obj"] }
