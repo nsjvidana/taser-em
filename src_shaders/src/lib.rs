@@ -4,6 +4,8 @@
 pub mod math;
 pub mod fdtd;
 pub mod boundary;
+pub mod dft;
+pub mod monitor;
 
 #[macro_export]
 #[doc(hidden)]
