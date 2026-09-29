@@ -2,7 +2,7 @@ use std::ops::Range;
 use crate::gpu_util::*;
 use crate::prelude::TaserResult;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
@@ -72,6 +72,7 @@ impl DftPipeline {
         &self,
         pass: &mut GpuPass,
         time_step: &GpuBuffer<u32>,
+        function_state: &Func::GpuStateType,
         dft_states: &mut DftStates<Func>
     ) -> TaserResult<()> {
         self.dft_shader.call(
@@ -79,7 +80,7 @@ impl DftPipeline {
             DispatchGrid::Grid(dft_states.workgroups),
             time_step,
             &dft_states.function_value_positions,
-            &*dft_states.function_values.lock().unwrap(),
+            Func::get_value_buffer(function_state),
             &dft_states.func_dfts,
             &dft_states.dft_kernels,
             &mut dft_states.dft_outputs
@@ -95,7 +96,6 @@ pub struct DftStates<Func: DftFunction> {
 
     // Buffers / GPU data
     pub function_value_positions: GpuBuffer<Index>,
-    pub function_values: Arc<Mutex<GpuBuffer<Real>>>,
     pub func_dfts: GpuBuffer<GpuFunctionDft>,
     pub dft_frequencies: GpuBuffer<Real>,
     pub dft_kernels: GpuBuffer<Complex32>,
@@ -107,7 +107,7 @@ impl<Func: DftFunction> DftStates<Func> {
     /// Creates new zeroed-out DFT buffers.
     ///
     /// Use [`DftPipeline::initialize_states`] to populate buffers with non-zero kernels.
-    pub fn new_zeroed(backend: &GpuBackend, dfts: Vec<Dft<Func>>, func_values_buf: Arc<Mutex<GpuBuffer<Real>>>) -> TaserResult<Self> {
+    pub fn new_zeroed(backend: &GpuBackend, dfts: Vec<Dft<Func>>) -> TaserResult<Self> {
         if dfts.is_empty() { return Err(DftError::NoDfts.into()) };
 
         let function_value_positions = dfts.iter()
@@ -147,7 +147,6 @@ impl<Func: DftFunction> DftStates<Func> {
         Ok(Self {
             dfts,
             function_value_positions,
-            function_values: func_values_buf,
             func_dfts,
             dft_frequencies,
             dft_kernels: dft_kernels_zeroed,
@@ -158,10 +157,14 @@ impl<Func: DftFunction> DftStates<Func> {
 }
 
 pub trait DftFunction {
+    type GpuStateType;
+
     /// Convert this [`DftFunction`] into a [`Dft`] with the specified `frequencies`.
-    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<Dft<Self>>;
+    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)>;
 
     fn get_value_position(&self) -> usize;
+
+    fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real>;
 }
 
 pub struct DftReadback<Func: DftFunction> {

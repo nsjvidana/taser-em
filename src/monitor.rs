@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use taser_em_shaders::math::*;
@@ -26,7 +26,6 @@ pub struct PowerFluxMonitor {
 #[derive(Clone)]
 pub struct PowerFluxFunction {
     obj: Arc<PowerFluxMonitor>,
-    flux_buf: Arc<Mutex<GpuBuffer<Real>>>,
     monitor_idx: usize,
 }
 
@@ -39,24 +38,28 @@ impl PowerFluxFunction {
 
         Ok(Self {
             obj: monitor.clone(),
-            flux_buf: flux_state.monitor_power.clone(),
             monitor_idx,
         })
     }
 
     pub fn get_monitor_ref(&self) -> &Arc<PowerFluxMonitor> { &self.obj }
 
-    pub fn buffer(&self) -> MutexGuard<'_, GpuBuffer<Real>> { self.flux_buf.lock().unwrap() }
-
     pub fn monitor_idx(&self) -> usize { self.monitor_idx }
 }
 
 impl DftFunction for PowerFluxFunction {
-    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<Dft<Self>> {
-        Dft::new(frequencies, Arc::new(self))
+    type GpuStateType = PowerFluxStates;
+
+    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {
+        let ptr = Arc::new(self);
+        Ok((Dft::new(frequencies, ptr.clone())?, ptr))
     }
 
     fn get_value_position(&self) -> usize { self.monitor_idx() }
+
+    fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real> {
+        &state.monitor_power
+    }
 }
 
 pub struct PowerFluxReadback {
@@ -68,7 +71,7 @@ pub struct PowerFluxReadback {
 impl PowerFluxReadback {
     pub fn new(backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<Option<Self>> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(None); };
-        let n_powers = flux_state.monitor_power.lock().unwrap().len();
+        let n_powers = flux_state.monitor_power.len();
         Ok(Some(Self {
             monitors: flux_state.monitors.clone(),
             monitor_power: vec![0.; n_powers],
@@ -79,7 +82,7 @@ impl PowerFluxReadback {
     pub fn request_copy(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(()); };
         if self.monitor_power_read.is_idle() {
-        self.monitor_power_read.request_copy(backend, &*flux_state.monitor_power.lock().unwrap(), 0)?;
+        self.monitor_power_read.request_copy(backend, &flux_state.monitor_power, 0)?;
         }
         Ok(())
     }
@@ -126,7 +129,7 @@ impl PowerFluxPipeline {
             &sim_state.h,
             &sim_state.en,
             &flux_state.flux_monitors,
-            &mut *flux_state.monitor_power.lock().unwrap(),
+            &mut flux_state.monitor_power,
             &mut flux_state.wg_summations,
         )?;
 
@@ -137,7 +140,7 @@ impl PowerFluxPipeline {
 pub struct PowerFluxStates {
     pub monitors: Vec<Arc<PowerFluxMonitor>>,
     pub flux_monitors: GpuBuffer<GpuPowerFluxMonitor>,
-    pub monitor_power: Arc<Mutex<GpuBuffer<Real>>>,
+    pub monitor_power: GpuBuffer<Real>,
     pub wg_summations: GpuBuffer<Real>,
     pub workgroups: [u32; 3],
 }
@@ -178,9 +181,7 @@ impl PowerFluxStates {
             .collect::<Vec<_>>()
             .create_gpu_buffer(backend)?;
 
-        let monitor_power = Arc::new(Mutex::new(
-            vec![0.; sim.power_flux_monitors.len()].create_gpu_buffer(backend)?
-        ));
+        let monitor_power = vec![0.; sim.power_flux_monitors.len()].create_gpu_buffer(backend)?;
         let wg_summations = vec![0.; workgroups.iter().product::<u32>() as usize]
             .create_gpu_buffer(backend)?;
 

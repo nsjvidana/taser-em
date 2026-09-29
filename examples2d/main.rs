@@ -180,14 +180,9 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Power flux DFT state
     let frequencies = frequencies_from_range((freq * 0.5)..=(freq * 1.5), dft_resolution);
-    let dft = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
+    let (dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
-    let flux_func = dft.get_function().clone();
-    let mut flux_dft_states = DftStates::new_zeroed(
-        &backend,
-        vec![dft],
-        state.power_flux_states.as_ref().unwrap().monitor_power.clone()
-    )?;
+    let mut flux_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
 
     // Create and initialize pipelines
     let mut pipeline = FdtdLossyPipeline::new(
@@ -195,7 +190,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         boundary_conditions,
         sim_speed
     )?;
-    let mut dft_pipeline = DftPipeline::new(&backend)?;
+    let dft_pipeline = DftPipeline::new(&backend)?;
     let mut encoder = backend.begin_encoding();
     let mut pass = encoder.begin_pass("2D pipeline initialization", None);
     pipeline.initialize(&mut pass, &mut state)?;
@@ -224,7 +219,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         dft_readback.read_back(&backend)?;
         dft_readback.request_copy(&backend, &flux_dft_states)?;
         let dft_vals = dft_readback.get_dft(&flux_func).unwrap();
-        for (f, cmplx) in frequencies.iter().zip(dft_vals.into_iter()) {
+        for (f, cmplx) in frequencies.iter().zip(dft_vals) {
             println!("{f} Hz: {}", cmplx.norm());
         }
 
@@ -234,7 +229,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
             dft_pipeline.dispatch_step(
                 pass,
                 &state.t_idx,
-                &mut flux_dft_states
+                state.power_flux_states.as_ref().unwrap(),
+                &mut flux_dft_states,
             )
         )?;
         drop(pass);
