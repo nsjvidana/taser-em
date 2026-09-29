@@ -110,7 +110,7 @@ impl<L: PlotLine> PlotLine for Vec<L> {
     }
 }
 
-pub struct DftPlotLine<Func: DftFunction> {
+pub struct DftPlotLine<Func: ToDft> {
     pub name: String,
     pub mode: DftPlotMode,
     func: Arc<Func>,
@@ -118,7 +118,7 @@ pub struct DftPlotLine<Func: DftFunction> {
     pts: Vec<PlotPoint>,
 }
 
-impl<Func: DftFunction> DftPlotLine<Func> {
+impl<Func: ToDft> DftPlotLine<Func> {
     pub fn new(
         name: &str,
         func: &Arc<Func>,
@@ -146,7 +146,7 @@ impl<Func: DftFunction> DftPlotLine<Func> {
     }
 }
 
-impl<Func: DftFunction> PlotLine for DftPlotLine<Func> {
+impl<Func: ToDft> PlotLine for DftPlotLine<Func> {
     type Readback = DftReadback<Func>;
 
     fn aux_ui(&mut self, ui: &mut Ui) {

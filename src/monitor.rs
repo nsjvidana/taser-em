@@ -3,7 +3,7 @@ use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use taser_em_shaders::math::*;
 use taser_em_shaders::monitor::*;
-use crate::dft::{Dft, DftFunction};
+use crate::dft::{Dft, ToDft};
 use crate::gpu_util::CreateGpuBuffer;
 use crate::prelude::TaserResult;
 
@@ -47,7 +47,7 @@ impl PowerFluxFunction {
     pub fn monitor_idx(&self) -> usize { self.monitor_idx }
 }
 
-impl DftFunction for PowerFluxFunction {
+impl ToDft for PowerFluxFunction {
     type GpuStateType = PowerFluxStates;
 
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {

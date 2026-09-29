@@ -11,13 +11,13 @@ use taser_em_shaders::math::*;
 ///
 /// Includes all frequencies to be resolved in DFT
 #[derive(Clone)]
-pub struct Dft<Func: DftFunction + ?Sized> {
+pub struct Dft<Func: ToDft + ?Sized> {
     /// The frequencies of the DFT in Hz
     frequencies: Vec<Real>,
     function: Arc<Func>,
 }
 
-impl<Func: DftFunction> Dft<Func> {
+impl<Func: ToDft> Dft<Func> {
     pub fn new(frequencies: Vec<Real>, function: Arc<Func>) -> TaserResult<Self> {
         if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) };
         Ok(Self {
@@ -44,7 +44,7 @@ impl DftPipeline {
         })
     }
 
-    pub fn initialize_states<Func: DftFunction>(
+    pub fn initialize_states<Func: ToDft>(
         &self,
         pass: &mut GpuPass,
         grid: &GpuBuffer<GridParameters>,
@@ -68,7 +68,7 @@ impl DftPipeline {
     /// - `functions` - buffer of the instantaneous values (occurring at `time_step` time step) of
     ///   every function whose DFT is being computed (parallel w/ `func_dfts`).
     /// - `dft_states` - states of function DFTs.
-    pub fn dispatch_step<Func: DftFunction>(
+    pub fn dispatch_step<Func: ToDft>(
         &self,
         pass: &mut GpuPass,
         time_step: &GpuBuffer<u32>,
@@ -90,7 +90,7 @@ impl DftPipeline {
 }
 
 /// The states of multiple DFTs that will be evaluated in one shader dispatch
-pub struct DftStates<Func: DftFunction> {
+pub struct DftStates<Func: ToDft> {
     /// The DFTs stored on CPU side.
     pub dfts: Vec<Dft<Func>>,
 
@@ -103,7 +103,7 @@ pub struct DftStates<Func: DftFunction> {
     pub workgroups: [u32; 3]
 }
 
-impl<Func: DftFunction> DftStates<Func> {
+impl<Func: ToDft> DftStates<Func> {
     /// Creates new zeroed-out DFT buffers.
     ///
     /// Use [`DftPipeline::initialize_states`] to populate buffers with non-zero kernels.
@@ -156,10 +156,10 @@ impl<Func: DftFunction> DftStates<Func> {
     }
 }
 
-pub trait DftFunction {
+pub trait ToDft {
     type GpuStateType;
 
-    /// Convert this [`DftFunction`] into a [`Dft`] with the specified `frequencies`.
+    /// Convert this [`ToDft`] into a [`Dft`] with the specified `frequencies`.
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)>;
 
     fn get_value_position(&self) -> usize;
@@ -167,14 +167,14 @@ pub trait DftFunction {
     fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real>;
 }
 
-pub struct DftReadback<Func: DftFunction> {
+pub struct DftReadback<Func: ToDft> {
     func_ranges: Vec<(Arc<Func>, Range<usize>)>,
     frequencies: Vec<Real>,
     dft_outputs: Vec<Complex32>,
     dft_outputs_read: GpuReadback<Complex32>
 }
 
-impl<Func: DftFunction> DftReadback<Func> {
+impl<Func: ToDft> DftReadback<Func> {
     pub async fn new(backend: &GpuBackend, dft_states: &DftStates<Func>) -> TaserResult<Self> {
         let mut gpu_dfts = vec![GpuFunctionDft::default(); dft_states.func_dfts.len()];
         backend.slow_read_buffer(&dft_states.func_dfts, &mut gpu_dfts).await?;
