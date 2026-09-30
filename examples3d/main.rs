@@ -65,7 +65,7 @@ pub async fn cube() -> anyhow::Result<()> {
     )?;
 
     // Compute source position and gaussian curve data points
-    let source = Source::TFSF {
+    let source = Source::Tfsf {
         spatial_axis: SpatialAxis::Z,
         direction: Direction::Positive,
         t_start: 0.0,

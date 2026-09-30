@@ -45,7 +45,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
     simulation.fill_region(box_min, box_max, mat);
 
     // Source
-    let source = Source::TFSF {
+    let source = Source::Tfsf {
         spatial_axis: SpatialAxis::Z,
         direction: Direction::Positive,
         t_start: 0.0,

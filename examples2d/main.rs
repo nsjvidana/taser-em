@@ -315,7 +315,7 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
             vals: source_values.clone(),
             moment: Vec3::Y,
         })
-        .add_source(Source::TFSF {
+        .add_source(Source::Tfsf {
             spatial_axis: SpatialAxis::Y,
             direction: Direction::Negative,
             t_start: 0.0,

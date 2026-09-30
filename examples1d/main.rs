@@ -48,7 +48,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     )?;
 
     // Compute source position and gaussian curve data points
-    simulation.add_source(Source::TFSF {
+    simulation.add_source(Source::Tfsf {
         spatial_axis: SpatialAxis::Z,
         direction: Direction::Negative,
         t_start: 0.,

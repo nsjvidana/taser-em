@@ -22,7 +22,7 @@ pub struct FdtdLossySimulation {
     pub power_flux_monitors: Vec<Arc<PowerFluxMonitor>>,
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
-    pub tfsf_parameters: TfsfParameters
+    pub tfsf_parameters: AuxGridParameters
 }
 
 impl FdtdLossySimulation {
@@ -34,7 +34,7 @@ impl FdtdLossySimulation {
             power_flux_monitors: vec![],
             fdtd_parameters,
             pml_parameters,
-            tfsf_parameters: TfsfParameters {
+            tfsf_parameters: AuxGridParameters {
                 pml_width: NonZeroU32::new(12).unwrap(),
                 pml_sig_max: pml_parameters.sig_max,
                 pml_grading_order: pml_parameters.grading_order,
@@ -223,7 +223,7 @@ impl FdtdLossySimulation {
         problem_space_min: UVec3,
         problem_space_max: UVec3,
     ) -> TaserResult<TfsfDispatchData> {
-        let TfsfParameters {
+        let AuxGridParameters {
             pml_width, pml_sig_max, pml_grading_order
         } = &self.tfsf_parameters;
         let FdtdParameters {
@@ -239,7 +239,7 @@ impl FdtdLossySimulation {
         let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
         let mut tfsf_srcs = self.sources.iter()
             .filter_map(|source_val| {
-                let Source::TFSF {
+                let Source::Tfsf {
                     spatial_axis, direction, t_start, vals,
                     polarization, tfsf_buffer_width
                 } = source_val else { return None };
@@ -412,7 +412,7 @@ impl FdtdLossySimulation {
             .map(|src| {
                 match src {
                     Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
-                    Source::TFSF { .. } => { regions_center }
+                    Source::Tfsf { .. } => { regions_center }
                 }
             })
             .collect::<Vec<_>>();

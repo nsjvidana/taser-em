@@ -24,7 +24,7 @@ pub enum Source {
         moment: Vec3,
     },
     /// Total-Field / Scattered-Field source
-    TFSF {
+    Tfsf {
         /// The spatial axis along which the plane wave will travel.
         spatial_axis: SpatialAxis,
         /// The direction along `spatial_axis` the wave will travel in.
@@ -83,8 +83,9 @@ impl Source {
     }
 }
 
+/// Parameters for an auxiliary grid (used for TF/SF sources)
 #[derive(Clone, Debug)]
-pub struct TfsfParameters {
+pub struct AuxGridParameters {
     pub pml_width: NonZeroU32,
     pub pml_sig_max: Real,
     pub pml_grading_order: NonZeroI32
