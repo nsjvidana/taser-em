@@ -157,6 +157,12 @@ unsafe impl Zeroable for DipoleType {}
 // SAFETY: DipoleType has u32 representation, and u32 is also POD.
 unsafe impl Pod for DipoleType {}
 
+pub const INIT_TFSF_WORKGROUP_SIZE: UVec3 = cfg_select! {
+    feature = "dim1" => UVec3::new(1, 1, 64),
+    feature = "dim2" => UVec3::new(8, 8, 1),
+    feature = "dim3" => UVec3::new(4, 4, 4),
+};
+
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
@@ -265,6 +271,17 @@ pub fn init_tfsf_masks(
     });
 }
 
+pub fn init_tfsf_masks_workgroups(n_tfsf_sources: u32, n_cells3: UVec3) -> [u32; 3] {
+    let threads = cfg_select! {
+        feature = "dim1" => n_cells3.with_x(n_tfsf_sources).to_array(),
+        feature = "dim2" => n_cells3.with_z(n_tfsf_sources).to_array(),
+        feature = "dim3" => n_cells3.with_z(n_tfsf_sources * n_cells3.z).to_array(),
+    };
+    core::array::from_fn(|i| threads[i].div_ceil(INIT_TFSF_WORKGROUP_SIZE[i]))
+}
+
+pub const AUX_GRID_WORKGROUP_SIZE: UVec3 = UVec3::new(1, 1, 64);
+
 #[spirv_bindgen]
 #[spirv(compute(threads(1, 1, 64)))]
 pub fn aux_grid_update(
@@ -348,6 +365,11 @@ pub fn aux_grid_update(
         h_a1: h_self_corr.x,
         h_a2: h_self_corr.y,
     });
+}
+
+pub fn aux_grid_update_workgroups(n_tfsf_sources: u32, aux_grid_n_cells_max: u32) -> [u32; 3] {
+    let threads = [n_tfsf_sources, 1, aux_grid_n_cells_max];
+    core::array::from_fn(|i| threads[i].div_ceil(AUX_GRID_WORKGROUP_SIZE[i]))
 }
 
 /// A plane wave source (TF/SF)
