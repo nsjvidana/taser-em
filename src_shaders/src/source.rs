@@ -3,6 +3,7 @@ use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
+use khal_std::sync::atomic_add_f32;
 
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
@@ -121,6 +122,197 @@ pub fn gpu_compute_source_terms(
     });
 }
 
+#[spirv_bindgen(spirv_passthrough)] // atomic_add_f32 doesn't work with naga validation, so enable spirv passthrough.
+#[spirv(compute(threads(1, 1, 1)))]
+pub fn gpu_compute_dipole_terms(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] src_h: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_dn: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] t_idx: &u32,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
+) {
+    let dipole_idx = id.x as usize; // id.x is dipole idx
+    let GpuDipole {
+        cell_idx, vals_start, vals_end, t_start, moment, dipole_type, ..
+    } = dipoles.read(dipole_idx);
+    let curr_t_idx = *t_idx;
+    let src_t_idx = curr_t_idx.gpu_saturating_sub(t_start);
+    let vals_i = vals_start + src_t_idx;
+
+    let source_is_on = (curr_t_idx >= t_start) && (vals_i <= vals_end);
+    if !source_is_on { return; }
+
+    let idx = cell_idx as usize;
+    let src_val = source_vals.read(vals_i.min(vals_end) as usize);
+    let next_src_val = source_vals.read((vals_i + 1).min(vals_end) as usize);
+
+    let mut dn_source = Vec4::ZERO;
+    let mut h_source = Vec4::ZERO;
+    match dipole_type {
+        DipoleType::Electric => {
+            dn_source = src_val * moment;
+        }
+        DipoleType::Magnetic => {
+            // add half-dt advance for magnetic dipoles
+            h_source = Real::lerp(src_val, next_src_val, 0.5) * moment;
+        }
+    };
+
+    let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
+    atomic_add_f32(src_h.at_mut(x_idx), h_source.x);
+    atomic_add_f32(src_h.at_mut(y_idx), h_source.y);
+    atomic_add_f32(src_h.at_mut(z_idx), h_source.z);
+    atomic_add_f32(src_dn.at_mut(x_idx), dn_source.x);
+    atomic_add_f32(src_dn.at_mut(y_idx), dn_source.y);
+    atomic_add_f32(src_dn.at_mut(z_idx), dn_source.z);
+}
+
+pub fn dipole_terms_workgroups(n_dipoles: u32) -> [u32; 3] {
+    [n_dipoles, 1, 1]
+}
+
+/// Takes workgroup count of entire simulation grid.
+#[spirv_bindgen(spirv_passthrough)]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn gpu_compute_tfsf_terms(
+    #[spirv(global_invocation_id)] cell_idx3: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_h: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] src_dn: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] tfsf_sources: &[GpuTfsf],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] tfsf_corrections: &[TfsfSourceValues],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_masks: &[TfsfMask],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
+) {
+    let n_cells = GridIndex::from_uvec3(grid.n_cells3);
+    let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let outside_problem_space = {
+        let min = GridIndex::from_uvec3(grid.problem_space_min);
+        let max = GridIndex::from_uvec3(grid.problem_space_max);
+        cell_idx.cmplt(min).any() || cell_idx.cmpgt(max).any() || cell_idx3.cmpge(grid.n_cells3).any()
+    };
+    if outside_problem_space { return; }
+
+    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+
+    let mut h_source = Vec4::ZERO;
+    let mut dn_source = Vec4::ZERO;
+
+    let coeffs = pml_coeffs.read(idx);
+    for i in 0..tfsf_sources.len() {
+        let GpuTfsf {
+            a, a1, a2,
+            tf_min_a, vals_start, vals_end,
+            corrections_start, num_correction_cells,
+            inv_d_a, inv_d_a1, inv_d_a2,
+            ..
+        } = tfsf_sources.read(i);
+        if vals_start == vals_end { continue; } // skip invalid/inactive tfsf sources
+
+        let cell_idx_a = cell_idx3.dyn_idx(a);
+        let corrections_end = (corrections_start + num_correction_cells - 1) as usize;
+        let correction_idx = ((corrections_start + cell_idx_a.gpu_saturating_sub(tf_min_a.gpu_saturating_sub(1))) as usize)
+            .min(corrections_end);
+        // plane wave vals at wavefront in this cell
+        let src = tfsf_corrections.read(correction_idx);
+        // src vals of wavefront just before this cell
+        let src_ma = tfsf_corrections.read(correction_idx.gpu_saturating_sub(1).max(corrections_start as _));
+        // src vals of wavefront just after this cell
+        let src_pa = tfsf_corrections.read((correction_idx + 1).min(corrections_end));
+
+        let mask_idx = i * grid.cell_count as usize + idx;
+        let mask = tfsf_masks.read(mask_idx);
+        let en_src_a2_pa1 = mask.en_src_a2_pa1 * src.en_a2;
+        let en_src_a1_pa2 = mask.en_src_a1_pa2 * src.en_a1;
+        let en_src_a2_pa = mask.en_src_a2_pa * src_pa.en_a2;
+        let en_src_a1_pa = mask.en_src_a1_pa * src_pa.en_a1;
+        let h_src_a2_ma1 = mask.h_src_a2_ma1 * src.h_a2;
+        let h_src_a1_ma2 = mask.h_src_a1_ma2 * src.h_a1;
+        let h_src_a2_ma = mask.h_src_a2_ma * src_ma.h_a2;
+        let h_src_a1_ma = mask.h_src_a1_ma * src_ma.h_a1;
+
+        h_source.dyn_insert(a, h_source.dyn_idx(a) + coeffs.h2.dyn_idx(a) *
+            (-inv_d_a1 * en_src_a2_pa1 + inv_d_a2 * en_src_a1_pa2)
+        );
+        h_source.dyn_insert(a1, h_source.dyn_idx(a1) + coeffs.h2.dyn_idx(a1) *
+            (inv_d_a * en_src_a2_pa)
+        );
+        h_source.dyn_insert(a2, h_source.dyn_idx(a2) + coeffs.h2.dyn_idx(a2) *
+            (-inv_d_a * en_src_a1_pa)
+        );
+        dn_source.dyn_insert(a, dn_source.dyn_idx(a) + coeffs.dn2.dyn_idx(a) *
+            (inv_d_a1 * h_src_a2_ma1 - inv_d_a2 * h_src_a1_ma2)
+        );
+        dn_source.dyn_insert(a1, dn_source.dyn_idx(a1) + coeffs.dn2.dyn_idx(a1) *
+            (-inv_d_a * h_src_a2_ma)
+        );
+        dn_source.dyn_insert(a2, dn_source.dyn_idx(a2) + coeffs.dn2.dyn_idx(a2) *
+            (inv_d_a * h_src_a1_ma)
+        );
+    }
+
+    let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
+    atomic_add_f32(src_h.at_mut(x_idx), h_source.x);
+    atomic_add_f32(src_h.at_mut(y_idx), h_source.y);
+    atomic_add_f32(src_h.at_mut(z_idx), h_source.z);
+    atomic_add_f32(src_dn.at_mut(x_idx), dn_source.x);
+    atomic_add_f32(src_dn.at_mut(y_idx), dn_source.y);
+    atomic_add_f32(src_dn.at_mut(z_idx), dn_source.z);
+}
+
+#[spirv_bindgen]
+#[spirv(compute(threads(64, 1, 1)))]
+pub fn update_source_terms(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] src_h: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_dn: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
+) {
+    if id.x >= source_terms.len() as u32 { return; }
+    let idx = id.x as usize;
+
+    let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
+    let h = Vec4::new(
+        Real::from_bits(src_h.read(x_idx)),
+        Real::from_bits(src_h.read(y_idx)),
+        Real::from_bits(src_h.read(z_idx)),
+        0.,
+    );
+    let dn = Vec4::new(
+        Real::from_bits(src_dn.read(x_idx)),
+        Real::from_bits(src_dn.read(y_idx)),
+        Real::from_bits(src_dn.read(z_idx)),
+        0.,
+    );
+    src_h.write(x_idx, Real::to_bits(0.));
+    src_h.write(y_idx, Real::to_bits(0.));
+    src_h.write(z_idx, Real::to_bits(0.));
+    src_dn.write(x_idx, Real::to_bits(0.));
+    src_dn.write(y_idx, Real::to_bits(0.));
+    src_dn.write(z_idx, Real::to_bits(0.));
+    source_terms.write(idx, SourceTerms { h, dn });
+}
+
+pub fn update_source_terms_workgroups(n_cells: GridIndex) -> [u32; 3] {
+    [n_cells.element_product().div_ceil(64), 1, 1]
+}
+
+/// Convert a flat idx to a whole 3D vector into three flat indices, one for each component
+/// within an array of individual vector components. `idx` -> `(x_idx, y_idx, z_idx)`
+#[inline]
+fn dim3_components_flat_idx(idx: usize) -> (usize, usize, usize) {
+    let x_idx = idx * 3;
+    let y_idx = x_idx + 1;
+    let z_idx = y_idx + 1;
+    (x_idx, y_idx, z_idx)
+}
+
+/// Stores source terms for the current timestep.
+///
+/// Stored as `u32`s for atomic load/store during the time when source terms are computed.
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct SourceTerms {

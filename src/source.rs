@@ -118,6 +118,8 @@ impl ToDft for SourceFunction {
 pub struct SourcePipeline {
     tfsf_pipeline: TfsfPipeline,
     compute_source_terms: GpuComputeSourceTerms,
+    update_source_terms: UpdateSourceTerms,
+    gpu_compute_dipole_terms: GpuComputeDipoleTerms,
 }
 
 impl SourcePipeline {
@@ -125,6 +127,8 @@ impl SourcePipeline {
         Ok(Self {
             tfsf_pipeline: TfsfPipeline::new(backend)?,
             compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+            update_source_terms: UpdateSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+            gpu_compute_dipole_terms: GpuComputeDipoleTerms::from_dir(backend, &crate::SPIRV_DIR)?,
         })
     }
 
@@ -137,22 +141,43 @@ impl SourcePipeline {
     }
 
     pub fn dispatch_step(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
+
+        // self.compute_source_terms.call(
+        //     pass,
+        //     DispatchGrid::ThreadCount(sim_state.thread_count),
+        //     &sim_state.grid_params,
+        //     &sim_state.t_idx,
+        //     &mut sim_state.source_terms,
+        //     &source_states.source_vals,
+        //     &source_states.dipoles,
+        //     &source_states.tfsf_states.tfsf_sources,
+        //     &source_states.tfsf_states.corrections,
+        //     &source_states.tfsf_states.tfsf_masks,
+        //     &sim_state.grid_coeffs,
+        // )?;
+
+        {
+            let source_states = &mut sim_state.source_states;
+            self.gpu_compute_dipole_terms.call(
+                pass,
+                DispatchGrid::Grid(source_states.dipole_terms_workgroups),
+                &mut source_states.src_h,
+                &mut source_states.src_dn,
+                &sim_state.t_idx,
+                &source_states.source_vals,
+                &source_states.dipoles,
+            )?;
+        }
+
+        self.tfsf_pipeline.dispatch_step(pass, sim_state)?;
+
         let source_states = &mut sim_state.source_states;
-
-        self.tfsf_pipeline.dispatch_step(pass, &sim_state.t_idx, source_states, )?;
-
-        self.compute_source_terms.call(
+        self.update_source_terms.call(
             pass,
-            DispatchGrid::ThreadCount(sim_state.thread_count),
-            &sim_state.grid_params,
-            &sim_state.t_idx,
-            &mut sim_state.source_terms,
-            &source_states.source_vals,
-            &source_states.dipoles,
-            &source_states.tfsf_states.tfsf_sources,
-            &source_states.tfsf_states.corrections,
-            &source_states.tfsf_states.tfsf_masks,
-            &sim_state.grid_coeffs,
+            DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
+            &mut source_states.src_h,
+            &mut source_states.src_dn,
+            &mut sim_state.source_terms
         )?;
         
         Ok(())
@@ -161,9 +186,12 @@ impl SourcePipeline {
 
 /// Buffers describing the states of different kinds of sources.
 pub struct SourceStates {
+    pub src_h: GpuBuffer<u32>,
+    pub src_dn: GpuBuffer<u32>,
     pub dipoles: GpuBuffer<GpuDipole>,
     pub tfsf_states: Option<TfsfStates>,
     pub source_vals: GpuBuffer<f32>,
+    pub dipole_terms_workgroups: [u32; 3]
 }
 
 impl SourceStates {
@@ -220,12 +248,19 @@ impl SourceStates {
 
         if source_vals.is_empty() { source_vals.push(0.0); }
 
+        let cell_count = n_cells3.element_product();
+        let src_components_zero = vec![Real::to_bits(0.); cell_count as usize * 3];
+
         debug_assert!(!dipoles.is_empty());
         debug_assert!(!source_vals.is_empty());
+        // TODO: make optional DipoleStates
         Ok(Self {
+            src_h: src_components_zero.create_gpu_buffer(backend)?,
+            src_dn: src_components_zero.create_gpu_buffer(backend)?,
             dipoles: dipoles.create_gpu_buffer(backend)?,
             tfsf_states: tfsf_dispatch_data,
             source_vals: source_vals.create_gpu_buffer(backend)?,
+            dipole_terms_workgroups: dipole_terms_workgroups(dipoles.len() as u32),
         })
     }
 }
@@ -233,6 +268,7 @@ impl SourceStates {
 pub struct TfsfPipeline {
     aux_grid_update: AuxGridUpdate,
     init_tfsf_masks: InitTfsfMasks,
+    gpu_compute_tfsf_terms: GpuComputeTfsfTerms,
 }
 
 impl TfsfPipeline {
@@ -240,6 +276,7 @@ impl TfsfPipeline {
         Ok(Self {
             aux_grid_update: AuxGridUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             init_tfsf_masks: InitTfsfMasks::from_dir(backend, &crate::SPIRV_DIR)?,
+            gpu_compute_tfsf_terms: GpuComputeTfsfTerms::from_dir(backend, &crate::SPIRV_DIR)?,
         })
     }
 
@@ -264,23 +301,38 @@ impl TfsfPipeline {
     pub fn dispatch_step(
         &self,
         pass: &mut GpuPass,
-        t_idx: &GpuBuffer<u32>,
-        source_states: &mut SourceStates,
+        sim_state: &mut FdtdLossyState,
     ) -> TaserResult<()> {
-        if let Some(tfsf_states) = &mut source_states.tfsf_states {
-            self.aux_grid_update.call(
-                pass,
-                DispatchGrid::Grid(tfsf_states.aux_grid_workgroups),
-                &tfsf_states.tfsf_sources,
-                t_idx,
-                &mut tfsf_states.corrections,
-                &source_states.source_vals,
-                &tfsf_states.auxgr_coeffs,
-                &mut tfsf_states.h,
-                &mut tfsf_states.dn,
-                &mut tfsf_states.en
-            )?;
-        }
+        let source_states = &mut sim_state.source_states;
+        let Some(tfsf_states) = &mut source_states.tfsf_states else {
+            return Ok(());
+        };
+
+        self.aux_grid_update.call(
+            pass,
+            DispatchGrid::Grid(tfsf_states.aux_grid_workgroups),
+            &tfsf_states.tfsf_sources,
+            &sim_state.t_idx,
+            &mut tfsf_states.corrections,
+            &source_states.source_vals,
+            &tfsf_states.auxgr_coeffs,
+            &mut tfsf_states.h,
+            &mut tfsf_states.dn,
+            &mut tfsf_states.en
+        )?;
+
+        self.gpu_compute_tfsf_terms.call(
+            pass,
+            DispatchGrid::ThreadCount(sim_state.thread_count),
+            &sim_state.grid_params,
+            &mut source_states.src_h,
+            &mut source_states.src_dn,
+            &tfsf_states.tfsf_sources,
+            &tfsf_states.corrections,
+            &tfsf_states.tfsf_masks,
+            &sim_state.grid_coeffs,
+        )?;
+
         Ok(())
     }
 }

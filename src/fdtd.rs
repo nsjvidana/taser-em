@@ -145,6 +145,7 @@ impl FdtdLossySimulation {
             )?,
             // For update equation terms
             source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
+            update_source_terms_workgroups: update_source_terms_workgroups(n_cells),
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
@@ -632,6 +633,7 @@ pub struct FdtdLossyState {
     pub source_states: SourceStates,
     // For update equation terms
     pub source_terms: GpuBuffer<SourceTerms>,
+    pub update_source_terms_workgroups: [u32; 3],
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub grid_coeffs: GpuBuffer<PmlCoefficients>,
     // Monitors & DFTs
