@@ -5,6 +5,7 @@ pub use num_complex::ComplexFloat;
 use bytemuck::{Pod, Zeroable};
 pub use dim_types::*;
 use crate::cfg_cpu;
+use crate::math::u32;
 
 pub type Real = f32;
 pub type Index = u32;
@@ -380,11 +381,7 @@ impl GridIndexExt for GridIndex {
         #[cfg(feature = "dim2")]
         return self.y * n_cells.x + self.x;
         #[cfg(feature = "dim3")]
-        {
-            self.z * n_cells.x * n_cells.y +
-                self.y * n_cells.x +
-                self.x
-        }
+        grid_idx3_to_flat_idx(self, n_cells)
     }
 }
 
@@ -439,6 +436,15 @@ impl Axis {
         Self::PERMUTATION[*self as usize]
     }
 
+    /// Convert into a [`Vec3`] pointing along this [`Axis`].
+    #[inline]
+    pub const fn to_vec3(&self) -> Vec3 {
+        match self {
+            Axis::X => Vec3::X,
+            Axis::Y => Vec3::Y,
+            Axis::Z => Vec3::Z,
+        }
+    }
 
     /// Circular permutation in the reversed direction of [`Axis::permute()`]
     ///
@@ -737,4 +743,10 @@ impl GpuSaturatingSub for usize {
     fn gpu_saturating_sub(self, rhs: Self) -> Self {
         if self > rhs { self.wrapping_sub(rhs) } else { 0 }
     }
+}
+
+pub fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells3: UVec3) -> u32 {
+    grid_idx3.z * n_cells3.x * n_cells3.y +
+        grid_idx3.y * n_cells3.x +
+        grid_idx3.x
 }

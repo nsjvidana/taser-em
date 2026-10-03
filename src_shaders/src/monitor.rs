@@ -1,6 +1,6 @@
-use bytemuck::{Pod, Zeroable};
 use crate::fdtd::GridParameters;
 use crate::math::*;
+use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
 
@@ -100,24 +100,6 @@ pub fn flux_workgroups(n_cells: GridIndex, n_flux_monitors: Index) -> [u32; 3] {
         max_n.div_ceil(FLUX_WORKGROUP_SIZE.y),
         n_flux_monitors
     ]
-}
-
-// TODO: move this to math module
-pub fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells3: UVec3) -> u32 {
-    grid_idx3.z * n_cells3.x * n_cells3.y +
-        grid_idx3.y * n_cells3.x +
-        grid_idx3.x
-}
-
-// TODO: move this to math module
-impl Axis {
-    pub const fn to_vec3(&self) -> Vec3 {
-        match self {
-            Axis::X => Vec3::X,
-            Axis::Y => Vec3::Y,
-            Axis::Z => Vec3::Z,
-        }
-    }
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
