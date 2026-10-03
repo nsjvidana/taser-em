@@ -96,7 +96,13 @@ pub struct AuxGridParameters {
 }
 
 pub struct SourceFunction {
+    source: Arc<Source>,
+}
 
+impl SourceFunction {
+    pub fn new(source: &Arc<Source>, source_states: &SourceStates) -> Self {
+        todo!()
+    }
 }
 
 impl ToDft for SourceFunction {
@@ -146,6 +152,7 @@ impl SourcePipeline {
                 DispatchGrid::Grid(source_states.dipole_terms_workgroups),
                 &mut source_states.src_h,
                 &mut source_states.src_dn,
+                &mut source_states.dipole_curr_src_vals,
                 &sim_state.t_idx,
                 &source_states.source_vals,
                 &source_states.dipoles,
@@ -172,9 +179,10 @@ pub struct SourceStates {
     pub src_h: GpuBuffer<u32>,
     pub src_dn: GpuBuffer<u32>,
     pub dipoles: GpuBuffer<GpuDipole>,
+    pub dipole_curr_src_vals: GpuBuffer<Real>,
     pub tfsf_states: Option<TfsfStates>,
     pub source_vals: GpuBuffer<f32>,
-    pub dipole_terms_workgroups: [u32; 3]
+    pub dipole_terms_workgroups: [u32; 3],
 }
 
 impl SourceStates {
@@ -241,6 +249,7 @@ impl SourceStates {
             src_h: src_components_zero.create_gpu_buffer(backend)?,
             src_dn: src_components_zero.create_gpu_buffer(backend)?,
             dipoles: dipoles.create_gpu_buffer(backend)?,
+            dipole_curr_src_vals: vec![0.; dipoles.len()].create_gpu_buffer(backend)?,
             tfsf_states: tfsf_dispatch_data,
             source_vals: source_vals.create_gpu_buffer(backend)?,
             dipole_terms_workgroups: dipole_terms_workgroups(dipoles.len() as u32),
@@ -294,7 +303,7 @@ impl TfsfPipeline {
         self.aux_grid_update.call(
             pass,
             DispatchGrid::Grid(tfsf_states.aux_grid_workgroups),
-            &tfsf_states.tfsf_sources,
+            &mut tfsf_states.tfsf_sources,
             &sim_state.t_idx,
             &mut tfsf_states.corrections,
             &source_states.source_vals,
@@ -310,6 +319,7 @@ impl TfsfPipeline {
             &sim_state.grid_params,
             &mut source_states.src_h,
             &mut source_states.src_dn,
+            &mut tfsf_states.tfsf_curr_src_vals,
             &tfsf_states.tfsf_sources,
             &tfsf_states.corrections,
             &tfsf_states.tfsf_masks,
@@ -323,6 +333,7 @@ impl TfsfPipeline {
 /// The states of TFSF sources and their auxiliary grids.
 pub struct TfsfStates {
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
+    pub tfsf_curr_src_vals: GpuBuffer<Real>,
     pub tfsf_masks: GpuBuffer<TfsfMask>,
     pub corrections: GpuBuffer<TfsfSourceValues>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
@@ -467,6 +478,7 @@ impl TfsfStates {
                     inv_d_a,
                     inv_d_a1: inv_d[a1],
                     inv_d_a2: inv_d[a2],
+                    curr_src_val: 0.0,
                 })
             })
             .collect::<Vec<_>>();
@@ -488,6 +500,7 @@ impl TfsfStates {
         debug_assert!(!zeroed_vector_fields.is_empty());
         Ok(Some(TfsfStates {
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
+            tfsf_curr_src_vals: vec![0.; tfsf_srcs.len()].create_gpu_buffer(backend)?,
             tfsf_masks: tfsf_masks.create_gpu_buffer(backend)?,
             corrections: corrections.create_gpu_buffer(backend)?,
             auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,

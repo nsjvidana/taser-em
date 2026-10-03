@@ -16,9 +16,10 @@ pub fn gpu_compute_dipole_terms(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] src_h: &mut [u32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_dn: &mut [u32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] t_idx: &u32,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipoles: &[GpuDipole],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] dipole_curr_src_vals: &mut [Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] t_idx: &u32,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] source_vals: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
 ) {
     let dipole_idx = id.x as usize; // id.x is dipole idx
     let GpuDipole {
@@ -34,6 +35,7 @@ pub fn gpu_compute_dipole_terms(
     let idx = cell_idx as usize;
     let src_val = source_vals.read(vals_i.min(vals_end) as usize);
     let next_src_val = source_vals.read((vals_i + 1).min(vals_end) as usize);
+    dipole_curr_src_vals.write(dipole_idx, src_val);
 
     let mut dn_source = Vec4::ZERO;
     let mut h_source = Vec4::ZERO;
@@ -70,17 +72,18 @@ pub fn gpu_compute_tfsf_terms(
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_h: &mut [u32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] src_dn: &mut [u32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] tfsf_sources: &[GpuTfsf],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] tfsf_corrections: &[TfsfSourceValues],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_masks: &[TfsfMask],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] tfsf_curr_src_vals: &mut [Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] tfsf_sources: &[GpuTfsf],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_corrections: &[TfsfSourceValues],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] tfsf_masks: &[TfsfMask],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] pml_coeffs: &[PmlCoefficients],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
+    let min_cell_idx = GridIndex::from_uvec3(grid.problem_space_min);
+    let max_cell_idx = GridIndex::from_uvec3(grid.problem_space_max);
     let outside_problem_space = {
-        let min = GridIndex::from_uvec3(grid.problem_space_min);
-        let max = GridIndex::from_uvec3(grid.problem_space_max);
-        cell_idx.cmplt(min).any() || cell_idx.cmpgt(max).any() || cell_idx3.cmpge(grid.n_cells3).any()
+        cell_idx.cmplt(min_cell_idx).any() || cell_idx.cmpgt(max_cell_idx).any() || cell_idx3.cmpge(grid.n_cells3).any()
     };
     if outside_problem_space { return; }
 
@@ -149,6 +152,11 @@ pub fn gpu_compute_tfsf_terms(
     atomic_add_f32(src_dn.at_mut(x_idx), dn_source.x);
     atomic_add_f32(src_dn.at_mut(y_idx), dn_source.y);
     atomic_add_f32(src_dn.at_mut(z_idx), dn_source.z);
+
+    if cell_idx != min_cell_idx { return; }
+    for i in 0..tfsf_sources.len() {
+        tfsf_curr_src_vals.write(i, tfsf_sources.at(i).curr_src_val);
+    }
 }
 
 #[spirv_bindgen]
@@ -362,23 +370,23 @@ cfg_cpu! {
 #[spirv(compute(threads(1, 1, 64)))]
 pub fn aux_grid_update(
     #[spirv(global_invocation_id)] cell_idx3: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] tfsf_sources: &[GpuTfsf],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] tfsf_sources: &mut [GpuTfsf],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &Index,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] corrections: &mut [TfsfSourceValues],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real], // TODO: make a source_vals buffer for each kind of source
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] auxgr_coeffs: &[AuxGridPmlCoeffs],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h: &mut [AuxVect],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] dn: &mut [AuxVect],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] en: &mut [AuxVect],
 ) {
-    let wave_idx = cell_idx3.x as usize;
+    let tfsf_idx = cell_idx3.x as usize;
     let GpuTfsf {
         direction,
         grid_start, vals_start, vals_end, t_start, n_cells,
         polarization_a1, polarization_a2,
         corrections_start, num_correction_cells,
         inv_d_a, ..
-    } = tfsf_sources.read(wave_idx);
+    } = tfsf_sources.read(tfsf_idx);
     if vals_start == vals_end { return; } // skip invalid/inactive tfsf sources
 
     if cell_idx3.z >= n_cells { return; }
@@ -441,6 +449,9 @@ pub fn aux_grid_update(
         h_a1: h_self_corr.x,
         h_a2: h_self_corr.y,
     });
+
+    if dir_local_idx != 1 { return; }
+    tfsf_sources.at_mut(tfsf_idx).curr_src_val = src_val;
 }
 
 cfg_cpu! {
@@ -496,6 +507,7 @@ pub struct GpuTfsf {
     pub inv_d_a: Real,
     pub inv_d_a1: Real,
     pub inv_d_a2: Real,
+    pub curr_src_val: Real,
     // TODO: pub repeat_count: u32,
 }
 
