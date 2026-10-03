@@ -5,7 +5,6 @@ pub use num_complex::ComplexFloat;
 use bytemuck::{Pod, Zeroable};
 pub use dim_types::*;
 use crate::cfg_cpu;
-use crate::math::u32;
 
 pub type Real = f32;
 pub type Index = u32;

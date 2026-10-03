@@ -1,11 +1,14 @@
+cfg_cpu! {
+    use khal::ShaderArgsType;
+}
+
 use crate::fdtd::GridParameters;
 use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
 use num_complex::Complex32;
-
-pub const DFT_WORKGROUP_SIZE: UVec3 = UVec3::new(64, 1, 1);
+use crate::{cfg_cpu, workgroup_counts};
 
 /// Calculates DFT kernels that will be used by the DFT shader. You only need to dispatch this
 /// once before using `dft_kernels` in a DFT algorithm.
@@ -73,18 +76,16 @@ pub fn gpu_dft_shader(
     *dft_outputs.at_mut(global_kernel_idx) += k * function_values.read(f_val_idx);
 }
 
-/// Compute workgroup count for DFT kernel for multiple DFTs.
-///
-/// # Arguments
-/// - `max_n_kernels` is the maximum number of frequencies that a single DFT will resolve across all the DFTs.
-///   This is necessary to allow running multiple DFTs under one dispatch.
-/// - `n_functions` is the number of functions that will have their DFTs resolved in one dispatch.
-pub fn dft_workgroups(max_n_kernels: u32, n_functions: u32) -> [u32; 3] {
-    [
-        max_n_kernels.div_ceil(DFT_WORKGROUP_SIZE.x),
-        1u32.div_ceil(DFT_WORKGROUP_SIZE.y),
-        n_functions.div_ceil(DFT_WORKGROUP_SIZE.z)
-    ]
+cfg_cpu! {
+    /// Compute workgroup count for DFT kernel for multiple DFTs.
+    ///
+    /// # Arguments
+    /// - `max_n_kernels` is the maximum number of frequencies that a single DFT will resolve across all the DFTs.
+    ///   This is necessary to allow running multiple DFTs under one dispatch.
+    /// - `n_functions` is the number of functions that will have their DFTs resolved in one dispatch.
+    pub fn dft_workgroups(max_n_kernels: u32, n_functions: u32) -> [u32; 3] {
+        workgroup_counts!([max_n_kernels, 1u32, n_functions, ], GpuDftShaderArgs::WORKGROUP_SIZE)
+    }
 }
 
 /// Describes the DFT of a function for the [`GpuDft`] shader.

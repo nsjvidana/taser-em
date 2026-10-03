@@ -1,8 +1,13 @@
+cfg_cpu! {
+    use khal::ShaderArgsType;
+}
+
 use crate::fdtd::GridParameters;
 use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
+use crate::{cfg_cpu, workgroup_counts};
 
 pub const FLUX_WORKGROUP_SIZE: UVec3 = UVec3::new(8, 8, 1);
 
@@ -10,7 +15,7 @@ pub const FLUX_WORKGROUP_SIZE: UVec3 = UVec3::new(8, 8, 1);
 #[spirv(compute(threads(8, 8, 1)))]
 pub fn gpu_power_flux(
     #[spirv(global_invocation_id)] thread_id: UVec3,
-    #[allow(unused_variables)] #[spirv(local_invocation_id)] local_idx3: UVec3,
+    #[spirv(local_invocation_id)] local_idx3: UVec3,
     #[spirv(workgroup_id)] workgroup_id: UVec3,
     #[spirv(num_workgroups)] n_workgroups: UVec3,
     #[spirv(workgroup)] local_power: &mut [
@@ -93,13 +98,11 @@ pub fn gpu_power_flux(
     monitor_power.write(monitor_idx, power_integral);
 }
 
-pub fn flux_workgroups(n_cells: GridIndex, n_flux_monitors: Index) -> [u32; 3] {
-    let max_n = n_cells.max_element();
-    [
-        max_n.div_ceil(FLUX_WORKGROUP_SIZE.x),
-        max_n.div_ceil(FLUX_WORKGROUP_SIZE.y),
-        n_flux_monitors
-    ]
+cfg_cpu! {
+    pub fn flux_workgroups(n_cells: GridIndex, n_flux_monitors: Index) -> [u32; 3] {
+        let max_n = n_cells.max_element();
+        workgroup_counts!([max_n, max_n, n_flux_monitors], GpuPowerFluxArgs::WORKGROUP_SIZE)
+    }
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]

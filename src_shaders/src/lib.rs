@@ -21,10 +21,11 @@ macro_rules! cfg_gpu {
     };
 }
 
+/// Conditionally compiles anything passed into the macro for CPU targets only.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! cfg_cpu {
-    ($($input:tt)*) => {
+    { $($input:tt)* } => {
         cfg_select! {
             not(any(target_arch = "spirv", target_arch = "nvptx64")) => {
                 $($input)*
@@ -32,4 +33,13 @@ macro_rules! cfg_cpu {
             _ => {}
         }
     };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! workgroup_counts {
+    ($threads:expr, $wg_size:expr) => {{
+        let t = &$threads;
+        core::array::from_fn(|i| t[i].div_ceil($wg_size[i]))
+    }};
 }
