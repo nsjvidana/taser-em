@@ -117,7 +117,6 @@ impl ToDft for SourceFunction {
 
 pub struct SourcePipeline {
     tfsf_pipeline: TfsfPipeline,
-    compute_source_terms: GpuComputeSourceTerms,
     update_source_terms: UpdateSourceTerms,
     gpu_compute_dipole_terms: GpuComputeDipoleTerms,
 }
@@ -126,7 +125,6 @@ impl SourcePipeline {
     pub fn new(backend: &GpuBackend) -> TaserResult<Self> {
         Ok(Self {
             tfsf_pipeline: TfsfPipeline::new(backend)?,
-            compute_source_terms: GpuComputeSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             update_source_terms: UpdateSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             gpu_compute_dipole_terms: GpuComputeDipoleTerms::from_dir(backend, &crate::SPIRV_DIR)?,
         })
@@ -141,21 +139,6 @@ impl SourcePipeline {
     }
 
     pub fn dispatch_step(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
-
-        // self.compute_source_terms.call(
-        //     pass,
-        //     DispatchGrid::ThreadCount(sim_state.thread_count),
-        //     &sim_state.grid_params,
-        //     &sim_state.t_idx,
-        //     &mut sim_state.source_terms,
-        //     &source_states.source_vals,
-        //     &source_states.dipoles,
-        //     &source_states.tfsf_states.tfsf_sources,
-        //     &source_states.tfsf_states.corrections,
-        //     &source_states.tfsf_states.tfsf_masks,
-        //     &sim_state.grid_coeffs,
-        // )?;
-
         {
             let source_states = &mut sim_state.source_states;
             self.gpu_compute_dipole_terms.call(
