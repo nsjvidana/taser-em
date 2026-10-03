@@ -7,6 +7,7 @@ use crate::prelude::*;
 use khal::backend::GpuBuffer;
 use std::num::{NonZeroI32, NonZeroU32};
 use std::sync::Arc;
+use taser_em_shaders::fdtd::{GridParameters, PmlCoefficients};
 use taser_em_shaders::source::*;
 
 /// Inject energy into the simulation in various ways.
@@ -122,17 +123,19 @@ impl ToDft for SourceFunction {
 }
 
 pub struct SourcePipeline {
+    dipole_pipeline: DipolePipeline,
     tfsf_pipeline: TfsfPipeline,
+    zero_source_terms: ZeroSourceTerms,
     update_source_terms: UpdateSourceTerms,
-    gpu_compute_dipole_terms: GpuComputeDipoleTerms,
 }
 
 impl SourcePipeline {
     pub fn new(backend: &GpuBackend) -> TaserResult<Self> {
         Ok(Self {
+            dipole_pipeline: DipolePipeline::new(backend)?,
             tfsf_pipeline: TfsfPipeline::new(backend)?,
+            zero_source_terms: ZeroSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
             update_source_terms: UpdateSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
-            gpu_compute_dipole_terms: GpuComputeDipoleTerms::from_dir(backend, &crate::SPIRV_DIR)?,
         })
     }
 
@@ -145,30 +148,43 @@ impl SourcePipeline {
     }
 
     pub fn dispatch_step(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
-        {
-            let source_states = &mut sim_state.source_states;
-            self.gpu_compute_dipole_terms.call(
+        self.zero_source_terms.call(
+            pass,
+            DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
+            &mut sim_state.source_terms
+        )?;
+
+        if let Some(dipole_states) = &mut sim_state.source_states.dipole_states {
+            self.dipole_pipeline.dispatch_step(
                 pass,
-                DispatchGrid::Grid(source_states.dipole_terms_workgroups),
-                &mut source_states.src_h,
-                &mut source_states.src_dn,
-                &mut source_states.dipole_curr_src_vals,
-                &sim_state.t_idx,
-                &source_states.source_vals,
-                &source_states.dipoles,
+                dipole_states,
+                &sim_state.t_idx
+            )?;
+            self.update_source_terms.call(
+                pass,
+                DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
+                &mut dipole_states.src_h,
+                &mut dipole_states.src_dn,
+                &mut sim_state.source_terms
             )?;
         }
 
-        self.tfsf_pipeline.dispatch_step(pass, sim_state)?;
-
-        let source_states = &mut sim_state.source_states;
-        self.update_source_terms.call(
-            pass,
-            DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
-            &mut source_states.src_h,
-            &mut source_states.src_dn,
-            &mut sim_state.source_terms
-        )?;
+        if let Some(tfsf_states) = &mut sim_state.source_states.tfsf_states {
+            self.tfsf_pipeline.dispatch_step(
+                pass,
+                tfsf_states,
+                &sim_state.t_idx,
+                &sim_state.grid_params,
+                &sim_state.grid_coeffs,
+            )?;
+            self.update_source_terms.call(
+                pass,
+                DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
+                &mut tfsf_states.src_h,
+                &mut tfsf_states.src_dn,
+                &mut sim_state.source_terms
+            )?;
+        }
         
         Ok(())
     }
@@ -176,13 +192,12 @@ impl SourcePipeline {
 
 /// Buffers describing the states of different kinds of sources.
 pub struct SourceStates {
+    /// The global source terms, applied directly to H field update equations
     pub src_h: GpuBuffer<u32>,
+    /// The global source terms, applied directly to Dn field update equations
     pub src_dn: GpuBuffer<u32>,
-    pub dipoles: GpuBuffer<GpuDipole>,
-    pub dipole_curr_src_vals: GpuBuffer<Real>,
+    pub dipole_states: Option<DipoleStates>,
     pub tfsf_states: Option<TfsfStates>,
-    pub source_vals: GpuBuffer<f32>,
-    pub dipole_terms_workgroups: [u32; 3],
 }
 
 impl SourceStates {
@@ -195,19 +210,82 @@ impl SourceStates {
         problem_space_min: UVec3,
         problem_space_max: UVec3,
     ) -> TaserResult<Self> {
+        let n_cells = GridIndex::from_uvec3(n_cells3);
+
+        let tfsf_dispatch_data = TfsfStates::new(
+            backend,
+            sim,
+            n_cells3,
+            problem_space_min,
+            problem_space_max
+        )?;
+
+        let cell_count = n_cells.element_product();
+        let src_components_zero = vec![Real::to_bits(0.); cell_count as usize * 3];
+
+        Ok(Self {
+            src_h: src_components_zero.create_gpu_buffer(backend)?,
+            src_dn: src_components_zero.create_gpu_buffer(backend)?,
+            dipole_states: DipoleStates::new(backend, sim, sim_offset, n_cells)?,
+            tfsf_states: tfsf_dispatch_data,
+        })
+    }
+}
+
+pub struct DipolePipeline {
+    gpu_compute_dipole_terms: GpuComputeDipoleTerms,
+}
+
+impl DipolePipeline {
+    pub fn new(backend: &GpuBackend) -> TaserResult<Self> {
+        Ok(Self {
+            gpu_compute_dipole_terms: GpuComputeDipoleTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+        })
+    }
+    
+    pub fn dispatch_step(&self, pass: &mut GpuPass, dipole_states: &mut DipoleStates, t_idx: &GpuBuffer<Index>) -> TaserResult<()> {
+        self.gpu_compute_dipole_terms.call(
+            pass,
+            DispatchGrid::Grid(dipole_states.dipole_terms_workgroups),
+            &mut dipole_states.src_h,
+            &mut dipole_states.src_dn,
+            &mut dipole_states.curr_src_vals,
+            t_idx,
+            &dipole_states.source_vals,
+            &dipole_states.dipoles,
+        )?;
+        Ok(())
+    }
+}
+
+pub struct DipoleStates {
+    pub src_h: GpuBuffer<u32>,
+    pub src_dn: GpuBuffer<u32>,
+    pub dipoles: GpuBuffer<GpuDipole>,
+    pub curr_src_vals: GpuBuffer<Real>,
+    pub source_vals: GpuBuffer<Real>,
+    pub dipole_terms_workgroups: [u32; 3]
+}
+
+impl DipoleStates {
+    pub fn new(
+        backend: &GpuBackend,
+        sim: &FdtdLossySimulation,
+        sim_offset: Vect,
+        n_cells: GridIndex
+    ) -> TaserResult<Option<Self>> {
         let FdtdParameters {
             cell_size, dt, ..
         } = sim.fdtd_parameters;
 
-        let n_cells = GridIndex::from_uvec3(n_cells3);
-        
-        let mut source_vals: Vec<Real> = vec![];
-        
+        let mut source_vals = vec![];
         let mut dipoles = sim.sources.iter()
             .filter_map(|source| {
                 let Source::Dipole { dipole_type, position, t_start, vals, moment } = source else {
                     return None;
                 };
+                if vals.is_empty() { return None; }
+
                 let pos = (sim_offset + position) / cell_size;
                 let cell_grid_idx = pos.round().as_grid_index();
                 debug_assert!(!pos.min_element().is_sign_negative(), "negative source position!");
@@ -226,34 +304,21 @@ impl SourceStates {
             })
             .collect::<Vec<_>>();
 
-        if dipoles.is_empty() { dipoles.push(GpuDipole::default()) }
+        if dipoles.is_empty() {
+            return Ok(None);
+        }
 
-        let tfsf_dispatch_data = TfsfStates::new(
-            backend,
-            sim,
-            &mut source_vals,
-            n_cells3,
-            problem_space_min,
-            problem_space_max
-        )?;
-
-        if source_vals.is_empty() { source_vals.push(0.0); }
-
-        let cell_count = n_cells3.element_product();
+        let cell_count = n_cells.element_product();
         let src_components_zero = vec![Real::to_bits(0.); cell_count as usize * 3];
 
-        debug_assert!(!dipoles.is_empty());
-        debug_assert!(!source_vals.is_empty());
-        // TODO: make optional DipoleStates
-        Ok(Self {
+        Ok(Some(Self {
             src_h: src_components_zero.create_gpu_buffer(backend)?,
             src_dn: src_components_zero.create_gpu_buffer(backend)?,
             dipoles: dipoles.create_gpu_buffer(backend)?,
-            dipole_curr_src_vals: vec![0.; dipoles.len()].create_gpu_buffer(backend)?,
-            tfsf_states: tfsf_dispatch_data,
+            curr_src_vals: vec![0.; dipoles.len()].create_gpu_buffer(backend)?,
             source_vals: source_vals.create_gpu_buffer(backend)?,
             dipole_terms_workgroups: dipole_terms_workgroups(dipoles.len() as u32),
-        })
+        }))
     }
 }
 
@@ -293,20 +358,18 @@ impl TfsfPipeline {
     pub fn dispatch_step(
         &self,
         pass: &mut GpuPass,
-        sim_state: &mut FdtdLossyState,
+        tfsf_states: &mut TfsfStates,
+        t_idx: &GpuBuffer<u32>,
+        grid_params: &GpuBuffer<GridParameters>,
+        grid_coeffs: &GpuBuffer<PmlCoefficients>,
     ) -> TaserResult<()> {
-        let source_states = &mut sim_state.source_states;
-        let Some(tfsf_states) = &mut source_states.tfsf_states else {
-            return Ok(());
-        };
-
         self.aux_grid_update.call(
             pass,
             DispatchGrid::Grid(tfsf_states.aux_grid_workgroups),
             &mut tfsf_states.tfsf_sources,
-            &sim_state.t_idx,
+            t_idx,
             &mut tfsf_states.corrections,
-            &source_states.source_vals,
+            &tfsf_states.source_vals,
             &tfsf_states.auxgr_coeffs,
             &mut tfsf_states.h,
             &mut tfsf_states.dn,
@@ -315,15 +378,15 @@ impl TfsfPipeline {
 
         self.gpu_compute_tfsf_terms.call(
             pass,
-            DispatchGrid::ThreadCount(sim_state.thread_count),
-            &sim_state.grid_params,
-            &mut source_states.src_h,
-            &mut source_states.src_dn,
+            DispatchGrid::Grid(tfsf_states.tfsf_terms_workgroups),
+            grid_params,
+            &mut tfsf_states.src_h,
+            &mut tfsf_states.src_dn,
             &mut tfsf_states.tfsf_curr_src_vals,
             &tfsf_states.tfsf_sources,
             &tfsf_states.corrections,
             &tfsf_states.tfsf_masks,
-            &sim_state.grid_coeffs,
+            grid_coeffs,
         )?;
 
         Ok(())
@@ -332,7 +395,10 @@ impl TfsfPipeline {
 
 /// The states of TFSF sources and their auxiliary grids.
 pub struct TfsfStates {
+    pub src_h: GpuBuffer<u32>,
+    pub src_dn: GpuBuffer<u32>,
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
+    pub source_vals: GpuBuffer<Real>,
     pub tfsf_curr_src_vals: GpuBuffer<Real>,
     pub tfsf_masks: GpuBuffer<TfsfMask>,
     pub corrections: GpuBuffer<TfsfSourceValues>,
@@ -343,13 +409,14 @@ pub struct TfsfStates {
     /// Thread count for simulating auxiliary grids for multiple TFSF sources.
     pub aux_grid_workgroups: [u32; 3],
     pub mask_init_workgroups: [u32; 3],
+    /// Workgroup count for [`GpuComputeTfsfTerms`].
+    pub tfsf_terms_workgroups: [u32; 3],
 }
 
 impl TfsfStates {
     pub fn new(
         backend: &GpuBackend,
         sim: &FdtdLossySimulation,
-        source_vals: &mut Vec<Real>,
         n_cells3: UVec3,
         problem_space_min: UVec3,
         problem_space_max: UVec3,
@@ -362,6 +429,7 @@ impl TfsfStates {
         } = &sim.fdtd_parameters;
         let cell_count = n_cells3.element_product() as usize;
 
+        let mut source_vals = vec![];
         let mut corrections = Vec::new();
         let mut coeffs = Vec::new();
         let mut zeroed_vector_fields = Vec::new();
@@ -374,6 +442,8 @@ impl TfsfStates {
                     spatial_axis, direction, t_start, vals,
                     polarization, tfsf_buffer_width
                 } = source_val else { return None };
+                if vals.is_empty() { return None; }
+
                 let a = Axis::from(*spatial_axis);
                 let a1 = a.permute();
                 let a2 = a1.permute();
@@ -493,13 +563,19 @@ impl TfsfStates {
         let aux_grid_workgroups = aux_grid_update_workgroups(n_tfsf_srcs, aux_grid_n_cells_max);
         let mask_init_workgroups = init_tfsf_masks_workgroups(n_tfsf_srcs, n_cells3);
 
+        let cell_count = n_cells3.element_product();
+        let src_components_zero = vec![Real::to_bits(0.); cell_count as usize * 3];
+
         debug_assert!(!tfsf_srcs.is_empty());
         debug_assert!(!tfsf_masks.is_empty());
         debug_assert!(!corrections.is_empty());
         debug_assert!(!coeffs.is_empty());
         debug_assert!(!zeroed_vector_fields.is_empty());
         Ok(Some(TfsfStates {
+            src_h: src_components_zero.create_gpu_buffer(backend)?,
+            src_dn: src_components_zero.create_gpu_buffer(backend)?,
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
+            source_vals: source_vals.create_gpu_buffer(backend)?,
             tfsf_curr_src_vals: vec![0.; tfsf_srcs.len()].create_gpu_buffer(backend)?,
             tfsf_masks: tfsf_masks.create_gpu_buffer(backend)?,
             corrections: corrections.create_gpu_buffer(backend)?,
@@ -509,6 +585,7 @@ impl TfsfStates {
             en: zeroed_vector_fields.create_gpu_buffer(backend)?,
             aux_grid_workgroups,
             mask_init_workgroups,
+            tfsf_terms_workgroups: tfsf_terms_workgroups(n_cells3),
         }))
     }
 }

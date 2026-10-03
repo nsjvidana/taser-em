@@ -14,8 +14,8 @@ use khal_std::sync::atomic_add_f32;
 #[spirv(compute(threads(1, 1, 1)))]
 pub fn gpu_compute_dipole_terms(
     #[spirv(global_invocation_id)] id: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] src_h: &mut [u32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_dn: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] dipole_src_h: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dipole_src_dn: &mut [u32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] dipole_curr_src_vals: &mut [Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] t_idx: &u32,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] source_vals: &[Real],
@@ -50,12 +50,12 @@ pub fn gpu_compute_dipole_terms(
     };
 
     let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
-    atomic_add_f32(src_h.at_mut(x_idx), h_source.x);
-    atomic_add_f32(src_h.at_mut(y_idx), h_source.y);
-    atomic_add_f32(src_h.at_mut(z_idx), h_source.z);
-    atomic_add_f32(src_dn.at_mut(x_idx), dn_source.x);
-    atomic_add_f32(src_dn.at_mut(y_idx), dn_source.y);
-    atomic_add_f32(src_dn.at_mut(z_idx), dn_source.z);
+    atomic_add_f32(dipole_src_h.at_mut(x_idx), h_source.x);
+    atomic_add_f32(dipole_src_h.at_mut(y_idx), h_source.y);
+    atomic_add_f32(dipole_src_h.at_mut(z_idx), h_source.z);
+    atomic_add_f32(dipole_src_dn.at_mut(x_idx), dn_source.x);
+    atomic_add_f32(dipole_src_dn.at_mut(y_idx), dn_source.y);
+    atomic_add_f32(dipole_src_dn.at_mut(z_idx), dn_source.z);
 }
 
 pub fn dipole_terms_workgroups(n_dipoles: u32) -> [u32; 3] {
@@ -70,8 +70,8 @@ pub fn dipole_terms_workgroups(n_dipoles: u32) -> [u32; 3] {
 pub fn gpu_compute_tfsf_terms(
     #[spirv(global_invocation_id)] cell_idx3: UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_h: &mut [u32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] src_dn: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] tfsf_src_h: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] tfsf_src_dn: &mut [u32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] tfsf_curr_src_vals: &mut [Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] tfsf_sources: &[GpuTfsf],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] tfsf_corrections: &[TfsfSourceValues],
@@ -146,17 +146,35 @@ pub fn gpu_compute_tfsf_terms(
     }
 
     let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
-    atomic_add_f32(src_h.at_mut(x_idx), h_source.x);
-    atomic_add_f32(src_h.at_mut(y_idx), h_source.y);
-    atomic_add_f32(src_h.at_mut(z_idx), h_source.z);
-    atomic_add_f32(src_dn.at_mut(x_idx), dn_source.x);
-    atomic_add_f32(src_dn.at_mut(y_idx), dn_source.y);
-    atomic_add_f32(src_dn.at_mut(z_idx), dn_source.z);
+    atomic_add_f32(tfsf_src_h.at_mut(x_idx), h_source.x);
+    atomic_add_f32(tfsf_src_h.at_mut(y_idx), h_source.y);
+    atomic_add_f32(tfsf_src_h.at_mut(z_idx), h_source.z);
+    atomic_add_f32(tfsf_src_dn.at_mut(x_idx), dn_source.x);
+    atomic_add_f32(tfsf_src_dn.at_mut(y_idx), dn_source.y);
+    atomic_add_f32(tfsf_src_dn.at_mut(z_idx), dn_source.z);
 
     if cell_idx != min_cell_idx { return; }
     for i in 0..tfsf_sources.len() {
         tfsf_curr_src_vals.write(i, tfsf_sources.at(i).curr_src_val);
     }
+}
+
+cfg_cpu! {
+    pub fn tfsf_terms_workgroups(n_cells3: UVec3) -> [u32; 3] {
+        workgroup_counts!(n_cells3.to_array(), GpuComputeTfsfTermsArgs::WORKGROUP_SIZE)
+    }
+}
+
+/// Zeroes out source terms (used before [`UpdateSourceTerms`]).
+#[spirv_bindgen]
+#[spirv(compute(threads(64, 1, 1)))]
+pub fn zero_source_terms(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] source_terms: &mut [SourceTerms],
+) {
+    if id.x >= source_terms.len() as u32 { return; }
+    let idx = id.x as usize;
+    source_terms.write(idx, SourceTerms::ZERO)
 }
 
 #[spirv_bindgen]
@@ -189,7 +207,10 @@ pub fn update_source_terms(
     src_dn.write(x_idx, Real::to_bits(0.));
     src_dn.write(y_idx, Real::to_bits(0.));
     src_dn.write(z_idx, Real::to_bits(0.));
-    source_terms.write(idx, SourceTerms { h, dn });
+
+    let src_terms = source_terms.at_mut(idx);
+    src_terms.h += h;
+    src_terms.dn += dn;
 }
 
 cfg_cpu! {
@@ -216,6 +237,13 @@ fn dim3_components_flat_idx(idx: usize) -> (usize, usize, usize) {
 pub struct SourceTerms {
     pub h: Vec4,
     pub dn: Vec4,
+}
+
+impl SourceTerms {
+    pub const ZERO: Self = Self {
+        h: Vec4::ZERO,
+        dn: Vec4::ZERO,
+    };
 }
 
 /// A dipole source
@@ -450,6 +478,8 @@ pub fn aux_grid_update(
         h_a2: h_self_corr.y,
     });
 
+    // Store current source value in GpuTfsf instead of adding another buffer binding to this
+    // shader, avoiding the 8-storage-buffer limit wgpu enforces.
     if dir_local_idx != 1 { return; }
     tfsf_sources.at_mut(tfsf_idx).curr_src_val = src_val;
 }

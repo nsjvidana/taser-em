@@ -157,6 +157,14 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
             t_start: 0.0,
             vals: source_values.clone(),
             moment: Vec3::Y,
+        })
+        .add_source(Source::Tfsf {
+            spatial_axis: SpatialAxis::X,
+            direction: Direction::Positive,
+            t_start: 0.0,
+            vals: Source::gaussian_max_f(freq, 1., dt),
+            polarization: Vec3::Y,
+            tfsf_buffer_width: LayerWidths::splat_spatial(3),
         });
 
     // Power flux monitor for reading back power flux
