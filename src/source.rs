@@ -125,8 +125,8 @@ impl ToDft for SourceFunction {
 pub struct SourcePipeline {
     dipole_pipeline: DipolePipeline,
     tfsf_pipeline: TfsfPipeline,
-    zero_source_terms: ZeroSourceTerms,
-    update_source_terms: UpdateSourceTerms,
+    zeroed_src_terms_update: GpuZeroAndUpdateSourceTerms,
+    src_terms_update: GpuUpdateSourceTerms,
 }
 
 impl SourcePipeline {
@@ -134,8 +134,8 @@ impl SourcePipeline {
         Ok(Self {
             dipole_pipeline: DipolePipeline::new(backend)?,
             tfsf_pipeline: TfsfPipeline::new(backend)?,
-            zero_source_terms: ZeroSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
-            update_source_terms: UpdateSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+            zeroed_src_terms_update: GpuZeroAndUpdateSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
+            src_terms_update: GpuUpdateSourceTerms::from_dir(backend, &crate::SPIRV_DIR)?,
         })
     }
 
@@ -148,24 +148,20 @@ impl SourcePipeline {
     }
 
     pub fn dispatch_step(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
-        self.zero_source_terms.call(
-            pass,
-            DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
-            &mut sim_state.source_terms
-        )?;
-
+        let mut zero_src_terms = true;
         if let Some(dipole_states) = &mut sim_state.source_states.dipole_states {
             self.dipole_pipeline.dispatch_step(
                 pass,
                 dipole_states,
                 &sim_state.t_idx
             )?;
-            self.update_source_terms.call(
+            self.update_src_terms(
                 pass,
-                DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
+                sim_state.update_source_terms_workgroups,
                 &mut dipole_states.src_h,
                 &mut dipole_states.src_dn,
-                &mut sim_state.source_terms
+                &mut sim_state.source_terms,
+                &mut zero_src_terms
             )?;
         }
 
@@ -177,15 +173,46 @@ impl SourcePipeline {
                 &sim_state.grid_params,
                 &sim_state.grid_coeffs,
             )?;
-            self.update_source_terms.call(
+            self.update_src_terms(
                 pass,
-                DispatchGrid::Grid(sim_state.update_source_terms_workgroups),
+                sim_state.update_source_terms_workgroups,
                 &mut tfsf_states.src_h,
                 &mut tfsf_states.src_dn,
-                &mut sim_state.source_terms
+                &mut sim_state.source_terms,
+                &mut zero_src_terms
             )?;
         }
         
+        Ok(())
+    }
+
+    fn update_src_terms<'a>(
+        &self,
+        pass: &mut GpuPass,
+        workgroups: [u32; 3],
+        src_h: &mut GpuBuffer<Index>,
+        src_dn: &mut GpuBuffer<Index>,
+        source_terms: &mut GpuBuffer<SourceTerms>,
+        zero_src_terms: &mut bool,
+    ) -> TaserResult<()> {
+        if *zero_src_terms {
+            self.zeroed_src_terms_update.call(
+                pass,
+                DispatchGrid::Grid(workgroups),
+                src_h,
+                src_dn,
+                source_terms
+            )?;
+            *zero_src_terms = false;
+        } else {
+            self.src_terms_update.call(
+                pass,
+                DispatchGrid::Grid(workgroups),
+                src_h,
+                src_dn,
+                source_terms
+            )?;
+        }
         Ok(())
     }
 }

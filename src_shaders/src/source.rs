@@ -18,7 +18,7 @@ pub fn gpu_compute_dipole_terms(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] dipole_src_dn: &mut [u32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] dipole_curr_src_vals: &mut [Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] t_idx: &u32,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] source_vals: &[Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dipole_source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] dipoles: &[GpuDipole],
 ) {
     let dipole_idx = id.x as usize; // id.x is dipole idx
@@ -33,8 +33,8 @@ pub fn gpu_compute_dipole_terms(
     if !source_is_on { return; }
 
     let idx = cell_idx as usize;
-    let src_val = source_vals.read(vals_i.min(vals_end) as usize);
-    let next_src_val = source_vals.read((vals_i + 1).min(vals_end) as usize);
+    let src_val = dipole_source_vals.read(vals_i.min(vals_end) as usize);
+    let next_src_val = dipole_source_vals.read((vals_i + 1).min(vals_end) as usize);
     dipole_curr_src_vals.write(dipole_idx, src_val);
 
     let mut dn_source = Vec4::ZERO;
@@ -165,21 +165,10 @@ cfg_cpu! {
     }
 }
 
-/// Zeroes out source terms (used before [`UpdateSourceTerms`]).
+/// Zeroes out source terms and then runs [`GpuUpdateSourceTerms`].
 #[spirv_bindgen]
 #[spirv(compute(threads(64, 1, 1)))]
-pub fn zero_source_terms(
-    #[spirv(global_invocation_id)] id: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] source_terms: &mut [SourceTerms],
-) {
-    if id.x >= source_terms.len() as u32 { return; }
-    let idx = id.x as usize;
-    source_terms.write(idx, SourceTerms::ZERO)
-}
-
-#[spirv_bindgen]
-#[spirv(compute(threads(64, 1, 1)))]
-pub fn update_source_terms(
+pub fn gpu_zero_and_update_source_terms(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] src_h: &mut [u32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_dn: &mut [u32],
@@ -187,7 +176,30 @@ pub fn update_source_terms(
 ) {
     if id.x >= source_terms.len() as u32 { return; }
     let idx = id.x as usize;
+    source_terms.write(idx, SourceTerms::ZERO);
+    update_source_terms_inner(idx, src_h, src_dn, source_terms);
+}
 
+/// Adds the source terms stored as `u32`s in `src_h` & `src_dn` to `source_terms`, and zeores-out `src_h` & `src_dn`
+#[spirv_bindgen]
+#[spirv(compute(threads(64, 1, 1)))]
+pub fn gpu_update_source_terms(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] src_h: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] src_dn: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] source_terms: &mut [SourceTerms],
+) {
+    if id.x >= source_terms.len() as u32 { return; }
+    let idx = id.x as usize;
+    update_source_terms_inner(idx, src_h, src_dn, source_terms);
+}
+
+fn update_source_terms_inner(
+    idx: usize,
+    src_h: &mut [u32],
+    src_dn: &mut [u32],
+    source_terms: &mut [SourceTerms],
+) {
     let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
     let h = Vec4::new(
         Real::from_bits(src_h.read(x_idx)),
@@ -215,7 +227,7 @@ pub fn update_source_terms(
 
 cfg_cpu! {
     pub fn update_source_terms_workgroups(n_cells: GridIndex) -> [u32; 3] {
-        workgroup_counts!([n_cells.element_product(), 1, 1], UpdateSourceTermsArgs::WORKGROUP_SIZE)
+        workgroup_counts!([n_cells.element_product(), 1, 1], GpuUpdateSourceTermsArgs::WORKGROUP_SIZE)
     }
 }
 
@@ -401,7 +413,7 @@ pub fn aux_grid_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] tfsf_sources: &mut [GpuTfsf],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] t_idx: &Index,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] corrections: &mut [TfsfSourceValues],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] source_vals: &[Real], // TODO: make a source_vals buffer for each kind of source
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] tfsf_source_vals: &[Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] auxgr_coeffs: &[AuxGridPmlCoeffs],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h: &mut [AuxVect],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] dn: &mut [AuxVect],
@@ -433,7 +445,7 @@ pub fn aux_grid_update(
         (!is_positive_dir && idx_local == last_idx_local);
     let vals_i = vals_start + t_idx.gpu_saturating_sub(t_start);
     let src_enable = (*t_idx >= t_start && (vals_i <= vals_end)) as u32;
-    let src_val = source_vals.read((vals_i * src_enable) as usize) * src_enable as Real;
+    let src_val = tfsf_source_vals.read((vals_i * src_enable) as usize) * src_enable as Real;
     let src_vect = AuxVect::new(polarization_a1 * src_val, polarization_a2 * src_val);
 
     let en_self = en.read(idx);
