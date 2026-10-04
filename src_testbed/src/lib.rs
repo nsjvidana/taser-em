@@ -1,4 +1,4 @@
-mod util;
+pub mod util;
 pub mod plot;
 
 pub mod re_exports {

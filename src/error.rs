@@ -1,7 +1,5 @@
 use khal::backend::GpuBackendError;
-use crate::dft::DftError;
-use crate::mesh_loading::{MeshConverterError, MeshLoaderError};
-use crate::monitor::PowerFluxError;
+use crate::prelude::*;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -15,4 +13,6 @@ pub enum Error {
     Dft(#[from] DftError),
     #[error(transparent)]
     PowerFlux(#[from] PowerFluxError),
+    #[error(transparent)]
+    SourceError(#[from] SourceError)
 }

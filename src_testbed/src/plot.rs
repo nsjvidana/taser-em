@@ -1,5 +1,5 @@
 use crate::FdtdTestbedViewer;
-use egui::{Ui, WidgetText};
+use egui::{Color32, Ui, WidgetText};
 use egui_plot::{AxisHints, Legend, Line, Plot, PlotPoint, PlotPoints, PlotUi};
 use std::sync::Arc;
 use taser_em::dft::*;
@@ -27,7 +27,7 @@ impl PlotWindow {
     }
 
     /// Update every [`PlotLine`] in `plot_lines` with `readback` and
-    /// Show `self` with all `plot_lines` drawn.
+    /// show `self` with all `plot_lines` drawn.
     pub fn show<L: PlotLine>(
         &mut self,
         testbed: &mut FdtdTestbedViewer,
@@ -113,6 +113,7 @@ impl<L: PlotLine> PlotLine for Vec<L> {
 pub struct DftPlotLine<Func: ToDft> {
     pub name: String,
     pub mode: DftPlotMode,
+    pub color: Option<egui::Color32>,
     func: Arc<Func>,
     frequencies: Vec<Real>,
     pts: Vec<PlotPoint>,
@@ -134,10 +135,16 @@ impl<Func: ToDft> DftPlotLine<Func> {
         Ok(Self {
             name: name.to_string(),
             mode: DftPlotMode::Magnitude,
+            color: None,
             func: func.clone(),
             frequencies,
             pts: vec![PlotPoint::new(0., 0.); n_freqs],
         })
+    }
+
+    pub fn with_color(mut self, color: impl Into<Color32>) -> Self {
+        self.color = Some(color.into());
+        self
     }
 
     pub fn with_mode(mut self, mode: DftPlotMode) -> Self {
@@ -172,7 +179,9 @@ impl<Func: ToDft> PlotLine for DftPlotLine<Func> {
     }
 
     fn draw<'a>(&'a self, plot_ui: &mut PlotUi<'a>) {
-        plot_ui.line(Line::new(self.name.clone(), PlotPoints::Borrowed(&self.pts)));
+        let mut l = Line::new(self.name.clone(), PlotPoints::Borrowed(&self.pts));
+        if let Some(color) = self.color { l = l.color(color); }
+        plot_ui.line(l);
     }
 }
 

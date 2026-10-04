@@ -10,44 +10,23 @@ use std::sync::Arc;
 use taser_em_shaders::fdtd::{GridParameters, PmlCoefficients};
 use taser_em_shaders::source::*;
 
-/// Inject energy into the simulation in various ways.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum Source {
-    /// Dipole (magnetic or electric).
-    Dipole {
-        /// Choose between an electric and magnetic dipole source.
-        dipole_type: DipoleType,
-        /// The position in space where the source should be injected.
-        position: Vect,
-        /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
-        t_start: f32,
-        /// Signal data points.
-        vals: Vec<f32>,
-        /// The axis on which the dipole moves. Must be a unit vector, unless
-        /// you want to scale `vals` by the components of `moment`.
-        moment: Vec3,
-    },
-    /// Total-Field / Scattered-Field source
-    Tfsf {
-        /// The spatial axis along which the plane wave will travel.
-        spatial_axis: SpatialAxis,
-        /// The direction along `spatial_axis` the wave will travel in.
-        direction: Direction,
-        /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
-        t_start: f32,
-        /// Signal data points.
-        vals: Vec<f32>,
-        /// Polarization direction of the plane wave (unit vector)
-        polarization: Vec3,
-        /// The distances between the TF/SF boundary and the border/PML, in grid cells.
-        ///
-        /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
-        tfsf_buffer_width: LayerWidths,
+pub struct Source<S: SourceType> {
+    /// Reference to the struct describing this source
+    pub src_ref: Arc<S>,
+    /// Source data points
+    pub data_points: Vec<Real>,
+}
+
+impl<S: SourceType> Source<S> {
+    pub fn from_source(source: S, data_points: Vec<Real>) -> Self {
+        Self {
+            src_ref: Arc::new(source),
+            data_points,
+        }
     }
 }
 
-impl Source {
+impl Source<()> {
     /// Helper function that generates data points for a Gaussian curve with a maximum frequency of
     /// `f_max` (Hz).
     ///
@@ -88,37 +67,38 @@ impl Source {
     }
 }
 
-/// Parameters for an auxiliary grid (used for TF/SF sources)
-#[derive(Clone, Debug)]
-pub struct AuxGridParameters {
-    pub pml_width: NonZeroU32,
-    pub pml_sig_max: Real,
-    pub pml_grading_order: NonZeroI32
+pub struct SourceFunction<S: SourceType> {
+    source: Arc<S>,
+    val_pos: usize
 }
 
-pub struct SourceFunction {
-    source: Arc<Source>,
-}
-
-impl SourceFunction {
-    pub fn new(source: &Arc<Source>, source_states: &SourceStates) -> Self {
-        todo!()
+impl<S: SourceType> SourceFunction<S> {
+    pub fn new(source: &Arc<S>, source_states: &SourceStates) -> TaserResult<Self> {
+        Ok(Self {
+            source: source.clone(),
+            val_pos: S::get_value_position(source, source_states)
+                .ok_or(SourceError::NoSourceInstance(std::any::type_name::<S>().to_string()))?,
+        })
     }
 }
 
-impl ToDft for SourceFunction {
+impl<S: SourceType> ToDft for SourceFunction<S> {
     type GpuStateType = SourceStates;
 
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {
-        todo!()
+        let func = Arc::new(self);
+        Ok((Dft::new(frequencies, func.clone())?, func))
     }
 
     fn get_value_position(&self) -> usize {
-        todo!()
+        self.val_pos
     }
 
     fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real> {
-        todo!()
+        S::get_value_buffer(state)
+            .expect(
+                format!("{} source type must exist in the simulation to run a DFT on it", std::any::type_name::<S>()).as_str()
+            )
     }
 }
 
@@ -182,7 +162,7 @@ impl SourcePipeline {
                 &mut zero_src_terms
             )?;
         }
-        
+
         Ok(())
     }
 
@@ -259,6 +239,34 @@ impl SourceStates {
     }
 }
 
+/// Dipole source (magnetic or electric).
+#[derive(Clone, Debug)]
+pub struct Dipole {
+    /// Choose between an electric and magnetic dipole source.
+    pub dipole_type: DipoleType,
+    /// The position in space where the source should be injected.
+    pub position: Vect,
+    /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
+    pub t_start: f32,
+    /// The axis on which the dipole moves. Must be a unit vector, unless
+    /// you want to scale `vals` by the components of `moment`.
+    pub moment: Vec3,
+}
+
+impl SourceType for Dipole {
+    fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize> {
+        state.dipole_states.as_ref().map(|st|
+            st.dipole_refs.iter()
+                .position(|r| Arc::ptr_eq(r, ref_self))
+                .expect("The source at `ref_self` should be in `state`")
+        )
+    }
+
+    fn get_value_buffer(state: &SourceStates) -> Option<&GpuBuffer<Real>> {
+        state.dipole_states.as_ref().map(|st| &st.curr_src_vals)
+    }
+}
+
 pub struct DipolePipeline {
     gpu_compute_dipole_terms: GpuComputeDipoleTerms,
 }
@@ -286,6 +294,7 @@ impl DipolePipeline {
 }
 
 pub struct DipoleStates {
+    pub dipole_refs: Vec<Arc<Dipole>>,
     pub src_h: GpuBuffer<u32>,
     pub src_dn: GpuBuffer<u32>,
     pub dipoles: GpuBuffer<GpuDipole>,
@@ -306,11 +315,10 @@ impl DipoleStates {
         } = sim.fdtd_parameters;
 
         let mut source_vals = vec![];
-        let mut dipoles = sim.sources.iter()
+        let (dipole_refs, mut dipoles) = sim.dipoles.iter()
             .filter_map(|source| {
-                let Source::Dipole { dipole_type, position, t_start, vals, moment } = source else {
-                    return None;
-                };
+                let Dipole { dipole_type, position, t_start, moment } = &*source.src_ref;
+                let vals = &source.data_points;
                 if vals.is_empty() { return None; }
 
                 let pos = (sim_offset + position) / cell_size;
@@ -319,7 +327,7 @@ impl DipoleStates {
                 debug_assert!(!cell_grid_idx.cmpge(n_cells).any(), "Out of bounds source!");
                 let start = source_vals.len();
                 source_vals.extend_from_slice(vals);
-                Some(GpuDipole {
+                let dipole = GpuDipole {
                     cell_idx: cell_grid_idx.to_flat_idx(n_cells),
                     vals_start: start as u32,
                     vals_end: source_vals.len() as u32 - 1,
@@ -327,9 +335,10 @@ impl DipoleStates {
                     moment: Vec4::from((*moment, 0.)),
                     dipole_type: *dipole_type,
                     _padding0: [0; 3],
-                })
+                };
+                Some((source.src_ref.clone(), dipole))
             })
-            .collect::<Vec<_>>();
+            .collect::<(Vec<_>, Vec<_>)>();
 
         if dipoles.is_empty() {
             return Ok(None);
@@ -339,6 +348,7 @@ impl DipoleStates {
         let src_components_zero = vec![Real::to_bits(0.); cell_count as usize * 3];
 
         Ok(Some(Self {
+            dipole_refs,
             src_h: src_components_zero.create_gpu_buffer(backend)?,
             src_dn: src_components_zero.create_gpu_buffer(backend)?,
             dipoles: dipoles.create_gpu_buffer(backend)?,
@@ -347,6 +357,47 @@ impl DipoleStates {
             dipole_terms_workgroups: dipole_terms_workgroups(dipoles.len() as u32),
         }))
     }
+}
+
+/// Total-Field / Scattered-Field source
+///
+/// A type of plane wave source that only exists within a rectangular region.
+#[derive(Clone, Debug)]
+pub struct Tfsf {
+    /// The spatial axis along which the plane wave will travel.
+    pub spatial_axis: SpatialAxis,
+    /// The direction along `spatial_axis` the wave will travel in.
+    pub direction: Direction,
+    /// The time (in the simulation, not real-time) when the source begins injection (in seconds).
+    pub t_start: f32,
+    /// Polarization direction of the plane wave (unit vector)
+    pub polarization: Vec3,
+    /// The distances between the TF/SF boundary and the border/PML, in grid cells.
+    ///
+    /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
+    pub tfsf_buffer_width: LayerWidths,
+}
+
+impl SourceType for Tfsf {
+    fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize> {
+        state.tfsf_states.as_ref().map(|st|
+            st.tfsf_refs.iter()
+                .position(|r| Arc::ptr_eq(r, ref_self))
+                .expect("The source at `ref_self` should be in `state`")
+        )
+    }
+
+    fn get_value_buffer(state: &SourceStates) -> Option<&GpuBuffer<Real>> {
+        state.tfsf_states.as_ref().map(|st| &st.curr_src_vals)
+    }
+}
+
+/// Parameters for an auxiliary grid (used for TF/SF sources)
+#[derive(Clone, Debug)]
+pub struct AuxGridParameters {
+    pub pml_width: NonZeroU32,
+    pub pml_sig_max: Real,
+    pub pml_grading_order: NonZeroI32
 }
 
 pub struct TfsfPipeline {
@@ -409,7 +460,7 @@ impl TfsfPipeline {
             grid_params,
             &mut tfsf_states.src_h,
             &mut tfsf_states.src_dn,
-            &mut tfsf_states.tfsf_curr_src_vals,
+            &mut tfsf_states.curr_src_vals,
             &tfsf_states.tfsf_sources,
             &tfsf_states.corrections,
             &tfsf_states.tfsf_masks,
@@ -422,11 +473,12 @@ impl TfsfPipeline {
 
 /// The states of TFSF sources and their auxiliary grids.
 pub struct TfsfStates {
+    pub tfsf_refs: Vec<Arc<Tfsf>>,
     pub src_h: GpuBuffer<u32>,
     pub src_dn: GpuBuffer<u32>,
     pub tfsf_sources: GpuBuffer<GpuTfsf>,
     pub source_vals: GpuBuffer<Real>,
-    pub tfsf_curr_src_vals: GpuBuffer<Real>,
+    pub curr_src_vals: GpuBuffer<Real>,
     pub tfsf_masks: GpuBuffer<TfsfMask>,
     pub corrections: GpuBuffer<TfsfSourceValues>,
     pub auxgr_coeffs: GpuBuffer<AuxGridPmlCoeffs>,
@@ -463,12 +515,13 @@ impl TfsfStates {
         let mut aux_grid_n_cells_max = 0;
 
         let inv_d = cell_size.recip().to_3d(Vec3::ZERO);
-        let tfsf_srcs = sim.sources.iter()
-            .filter_map(|source_val| {
-                let Source::Tfsf {
-                    spatial_axis, direction, t_start, vals,
+        let (tfsf_refs, tfsf_srcs) = sim.tfsf_sources.iter()
+            .filter_map(|source| {
+                let Tfsf {
+                    spatial_axis, direction, t_start,
                     polarization, tfsf_buffer_width
-                } = source_val else { return None };
+                } = &*source.src_ref;
+                let vals = &source.data_points;
                 if vals.is_empty() { return None; }
 
                 let a = Axis::from(*spatial_axis);
@@ -557,8 +610,7 @@ impl TfsfStates {
                 debug_assert_eq!(coeffs.len(), zeroed_vector_fields.len());
                 coeffs.extend_from_slice(&grid_coeffs);
                 zeroed_vector_fields.extend_from_slice(&vec![AuxVect::ZERO; n_cells as usize]);
-
-                Some(GpuTfsf {
+                let tfsf = GpuTfsf {
                     a, a1, a2,
                     direction: *direction,
                     tf_min_a, tf_min_a1, tf_min_a2,
@@ -576,9 +628,11 @@ impl TfsfStates {
                     inv_d_a1: inv_d[a1],
                     inv_d_a2: inv_d[a2],
                     curr_src_val: 0.0,
-                })
+                };
+
+                Some((source.src_ref.clone(), tfsf))
             })
-            .collect::<Vec<_>>();
+            .collect::<(Vec<_>, Vec<_>)>();
 
         if tfsf_srcs.is_empty() {
             return Ok(None);
@@ -599,11 +653,12 @@ impl TfsfStates {
         debug_assert!(!coeffs.is_empty());
         debug_assert!(!zeroed_vector_fields.is_empty());
         Ok(Some(TfsfStates {
+            tfsf_refs,
             src_h: src_components_zero.create_gpu_buffer(backend)?,
             src_dn: src_components_zero.create_gpu_buffer(backend)?,
             tfsf_sources: tfsf_srcs.create_gpu_buffer(backend)?,
             source_vals: source_vals.create_gpu_buffer(backend)?,
-            tfsf_curr_src_vals: vec![0.; tfsf_srcs.len()].create_gpu_buffer(backend)?,
+            curr_src_vals: vec![0.; tfsf_srcs.len()].create_gpu_buffer(backend)?,
             tfsf_masks: tfsf_masks.create_gpu_buffer(backend)?,
             corrections: corrections.create_gpu_buffer(backend)?,
             auxgr_coeffs: coeffs.create_gpu_buffer(backend)?,
@@ -615,4 +670,30 @@ impl TfsfStates {
             tfsf_terms_workgroups: tfsf_terms_workgroups(n_cells3),
         }))
     }
+}
+
+/// Trait for sources that inject energy into the simulation in various ways.
+///
+/// Also has functions for
+pub trait SourceType {
+    /// Identical to [`ToDft::get_value_position`]
+    fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize>;
+    /// Identical to [`ToDft::get_value_buffer`]
+    fn get_value_buffer(state: &SourceStates) -> Option<&GpuBuffer<Real>>;
+}
+
+impl SourceType for () {
+    fn get_value_position(_ref_self: &Arc<Self>, _state: &SourceStates) -> Option<usize> {
+        None
+    }
+
+    fn get_value_buffer(_state: &SourceStates) -> Option<&GpuBuffer<Real>> {
+        None
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SourceError {
+    #[error("No instances of source type {0} is in the simulation")]
+    NoSourceInstance(String)
 }

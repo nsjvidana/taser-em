@@ -1,3 +1,4 @@
+use kiss3d::egui::Color32;
 use kiss3d::glamx::Vec3;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::plot::{DftPlotLine, PlotWindow};
@@ -59,14 +60,16 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source_values = Source::gaussian_max_f(f_max, 1., dt);
-    simulation.add_source(Source::Dipole {
-        dipole_type: DipoleType::Electric,
-        position: Vect::from_vec3(simulation.compute_bounding_box().mins - wavelen),
-        t_start: 0.0,
-        vals: source_values,
-        moment: Vec3::Z,
-    });
-    
+    simulation.add_dipole(
+        Dipole {
+            dipole_type: DipoleType::Electric,
+            position: Vect::from_vec3(simulation.compute_bounding_box().mins - wavelen),
+            t_start: 0.0,
+            moment: Vec3::Z,
+        },
+        source_values
+    );
+
     // Set up buffers and pipeline
     let backend = create_backend().await?;
     let backend_name = backend_name(&backend);
@@ -83,12 +86,12 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
         &mut state
     )?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
-    
+
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default();
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
     testbed.window.set_ambient(0.5);
-        
+
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
@@ -97,7 +100,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
         drop(pass);
         backend.submit(encoder)?;
     }
-    
+
     readback.request_copy_t_idx(&backend, &state)?;
     readback.read_back_t_idx(&backend)?;
     let n_steps = readback.get_t_idx();
@@ -149,23 +152,15 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         );
 
     // Source injection in antenna feed gap
-    let source_values = Source::sin_cycle(freq, dt).repeat(10);
-    simulation
-        .add_source(Source::Dipole {
-            dipole_type: DipoleType::Electric,
-            position: Vect::new(elem_thickness, feed_gap) / 2.,
-            t_start: 0.0,
-            vals: source_values.clone(),
-            moment: Vec3::Y,
-        })
-        .add_source(Source::Tfsf {
-            spatial_axis: SpatialAxis::X,
-            direction: Direction::Positive,
-            t_start: 0.0,
-            vals: Source::gaussian_max_f(freq, 1., dt),
-            polarization: Vec3::Y,
-            tfsf_buffer_width: LayerWidths::splat_spatial(3),
-        });
+    // let source_values = Source::sin_cycle(freq, dt).repeat(10);
+    let source_values = Source::gaussian_max_f(freq, 1., dt);
+    let dipole = Dipole {
+        dipole_type: DipoleType::Electric,
+        position: Vect::new(elem_thickness, feed_gap) / 2.,
+        t_start: 0.0,
+        moment: Vec3::Y,
+    };
+    let dipole = simulation.add_dipole(dipole, source_values);
 
     // Power flux monitor for reading back power flux
     let flux_monitor = simulation.add_flux_monitor(
@@ -188,11 +183,16 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Create GPU simulation state
     let mut state = simulation.finalize(&backend, &stability)?;
 
-    // Power flux DFT state
+    // Set up power flux DFT
     let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
     let (dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
     let mut flux_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
+
+    // Set up source DFT
+    let (dft, src_func) = SourceFunction::new(&dipole, &state.source_states)?
+        .to_dft(frequencies)?;
+    let mut src_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
 
     // Create and initialize pipelines
     let mut pipeline = FdtdLossyPipeline::new(
@@ -205,6 +205,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut pass = encoder.begin_pass("2D pipeline initialization", None);
     pipeline.initialize(&mut pass, &mut state)?;
     dft_pipeline.initialize_states(&mut pass, &state.grid_params, &mut flux_dft_states)?;
+    dft_pipeline.initialize_states(&mut pass, &state.grid_params, &mut src_dft_states)?;
     drop(pass);
     backend.submit(encoder)?;
 
@@ -212,7 +213,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
         .expect("we added a flux monitor to the simulation so readback must be possible");
-    let mut dft_readback = DftReadback::new(&backend, &flux_dft_states).await?;
+    let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_states).await?;
+    let mut src_dft_read = DftReadback::new(&backend, &src_dft_states).await?;
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
@@ -225,13 +227,21 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         Some("Frequency (GHz)"),
         None,
     );
-    let mut plot_lines = vec![
+    let mut flux_plot = vec![
         DftPlotLine::new(
-            "Dipole Antenna",
+            "Power Flux",
             &flux_func,
-            &dft_readback,
-            Some(1e-9) // Frequency is in GHz, so divide by 1E-9 for a cleaner X axis
-        )?
+            &flux_dft_read,
+            Some(1e-9) // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis
+        )?.with_color(Color32::RED)
+    ];
+    let mut src_plot = vec![
+        DftPlotLine::new(
+            "Source",
+            &src_func,
+            &src_dft_read,
+            Some(1e-9) // Frequency is in GHz, so multipl by 1E-9 for a cleaner X axis
+        )?.with_color(Color32::GREEN)
     ];
 
     // Render simulation
@@ -241,20 +251,29 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         let instantaneous_flux = power_readback.get_power(&flux_monitor).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
 
-        dft_readback.read_back(&backend)?;
-        dft_readback.request_copy(&backend, &flux_dft_states)?;
-        plot_window.show(&mut testbed, &mut plot_lines, &dft_readback)?;
+        // flux_dft_read.read_back(&backend)?;
+        // flux_dft_read.request_copy(&backend, &flux_dft_states)?;
+        // plot_window.show(&mut testbed, &mut flux_plot, &flux_dft_read)?;
+        src_dft_read.read_back(&backend)?;
+        src_dft_read.request_copy(&backend, &src_dft_states)?;
+        plot_window.show(&mut testbed, &mut src_plot, &src_dft_read)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);
-        pipeline.dispatch_steps_aux(&mut pass, &mut state, |pass, state|
+        pipeline.dispatch_steps_aux(&mut pass, &mut state, |pass, state| {
             dft_pipeline.dispatch_step(
                 pass,
                 &state.t_idx,
                 state.power_flux_states.as_ref().unwrap(),
                 &mut flux_dft_states,
+            )?;
+            dft_pipeline.dispatch_step(
+                pass,
+                &state.t_idx,
+                &state.source_states,
+                &mut src_dft_states,
             )
-        )?;
+        })?;
         drop(pass);
         backend.submit(encoder)?;
     }
@@ -267,7 +286,6 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     Ok(())
 }
-
 
 pub async fn benchmark_all() -> anyhow::Result<()> {
     const WARM_UP: u32 = 10;
@@ -313,24 +331,28 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
             pec
         );
 
-    // Source injection in antenna feed gap
+    // Source injection in antenna feed gap, and a TF/SF source
     let source_values = Source::sin_cycle(freq, dt).repeat(10);
     simulation
-        .add_source(Source::Dipole {
-            dipole_type: DipoleType::Electric,
-            position: Vect::new(elem_thickness, feed_gap) / 2.,
-            t_start: 0.0,
-            vals: source_values.clone(),
-            moment: Vec3::Y,
-        })
-        .add_source(Source::Tfsf {
+        .add_dipole(
+            Dipole {
+                dipole_type: DipoleType::Electric,
+                position: Vect::new(elem_thickness, feed_gap) / 2.,
+                t_start: 0.0,
+                moment: Vec3::Y,
+            },
+            source_values,
+        );
+    simulation.add_tfsf(
+        Tfsf {
             spatial_axis: SpatialAxis::Y,
             direction: Direction::Negative,
             t_start: 0.0,
-            vals: Source::gaussian_max_f(freq, 1., dt),
             polarization: Vec3::Z,
             tfsf_buffer_width: LayerWidths::splat_spatial(3),
-        });
+        },
+        Source::gaussian_max_f(freq, 1., dt)
+    );
 
     // Power flux monitor for reading back power flux
     let flux_monitor = simulation.add_flux_monitor(

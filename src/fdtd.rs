@@ -18,7 +18,8 @@ use taser_em_shaders::source::*;
 pub struct FdtdLossySimulation {
     pub material_regions: MaterialRegions,
     pub background_material: ElectricMaterial,
-    pub sources: Vec<Source>,
+    pub dipoles: Vec<Source<Dipole>>,
+    pub tfsf_sources: Vec<Source<Tfsf>>,
     pub power_flux_monitors: Vec<Arc<PowerFluxMonitor>>,
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
@@ -30,7 +31,8 @@ impl FdtdLossySimulation {
         Self {
             material_regions: MaterialRegions::new(),
             background_material: ElectricMaterial::FREE_SPACE,
-            sources: vec![],
+            dipoles: vec![],
+            tfsf_sources: vec![],
             power_flux_monitors: vec![],
             fdtd_parameters,
             pml_parameters,
@@ -42,9 +44,22 @@ impl FdtdLossySimulation {
         }
     }
 
-    pub fn add_source(&mut self, source: Source) -> &mut Self {
-        self.sources.push(source);
-        self
+    /// Adds a dipole source to the simulation with `data_points` being the data points of the
+    /// function that the dipole injects.
+    pub fn add_dipole(&mut self, dipole: Dipole, data_points: Vec<Real>) -> Arc<Dipole> {
+        let src = Source::from_source(dipole, data_points);
+        let ptr = src.src_ref.clone();
+        self.dipoles.push(src);
+        ptr
+    }
+
+    /// Adds a Total-Field / Scattered-Field source to the simulation with `data_points` being the
+    /// data points of the function that the TF/SF source injects.
+    pub fn add_tfsf(&mut self, tfsf: Tfsf, data_points: Vec<Real>) -> Arc<Tfsf> {
+        let src = Source::from_source(tfsf, data_points);
+        let ptr = src.src_ref.clone();
+        self.tfsf_sources.push(src);
+        ptr
     }
 
     pub fn add_flux_monitor(&mut self, power_flux_monitor: PowerFluxMonitor) -> Arc<PowerFluxMonitor> {
@@ -199,13 +214,9 @@ impl FdtdLossySimulation {
     pub fn compute_bounding_box(&self) -> Aabb {
         let mut regions_bb = self.material_regions.compute_bounding_box();
         let regions_center = regions_bb.center();
-        let source_pts = self.sources.iter()
-            .map(|src| {
-                match src {
-                    Source::Dipole { position, .. } => position.to_3d(Vec3::ZERO),
-                    Source::Tfsf { .. } => { regions_center }
-                }
-            })
+        let source_pts = self.dipoles.iter()
+            .map(|src| src.src_ref.position.to_3d(Vec3::ZERO))
+            .chain(self.tfsf_sources.iter().map(|_| regions_center))
             .collect::<Vec<_>>();
         for pt in source_pts.iter() {
             regions_bb.mins = regions_bb.mins.min(*pt);
