@@ -1,7 +1,7 @@
 use kiss3d::egui::Color32;
 use kiss3d::glamx::Vec3;
 use taser_em2d::prelude::*;
-use taser_em_testbed2d::plot::{DftPlotLine, PlotWindow};
+use taser_em_testbed2d::plot::{DftPlotLine, PlotLine, PlotWindow};
 use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode, re_exports::anyhow};
 
 #[kiss3d::main]
@@ -114,7 +114,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
     let dft_resolution = 100;
-    let sim_speed = 2;
+    let sim_speed = 1;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -152,8 +152,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         );
 
     // Source injection in antenna feed gap
-    // let source_values = Source::sin_cycle(freq, dt).repeat(10);
-    let source_values = Source::gaussian_max_f(freq, 1., dt);
+    let source_values = Source::sin_cycle(freq, dt).repeat(10);
     let dipole = Dipole {
         dipole_type: DipoleType::Electric,
         position: Vect::new(elem_thickness, feed_gap) / 2.,
@@ -227,22 +226,18 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         Some("Frequency (GHz)"),
         None,
     );
-    let mut flux_plot = vec![
-        DftPlotLine::new(
-            "Power Flux",
-            &flux_func,
-            &flux_dft_read,
-            Some(1e-9) // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis
-        )?.with_color(Color32::RED)
-    ];
-    let mut src_plot = vec![
-        DftPlotLine::new(
-            "Source",
-            &src_func,
-            &src_dft_read,
-            Some(1e-9) // Frequency is in GHz, so multipl by 1E-9 for a cleaner X axis
-        )?.with_color(Color32::GREEN)
-    ];
+    let mut flux_plot = DftPlotLine::new(
+        "Power Flux",
+        &flux_func,
+        &flux_dft_read,
+        Some(1e-9) // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis
+    )?.with_color(Color32::RED);
+    let mut src_plot = DftPlotLine::new(
+        "Source",
+        &src_func,
+        &src_dft_read,
+        Some(1e-9) // Frequency is in GHz, so multipl by 1E-9 for a cleaner X axis
+    )?.with_color(Color32::GREEN);
 
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {
@@ -251,12 +246,13 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         let instantaneous_flux = power_readback.get_power(&flux_monitor).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
 
-        // flux_dft_read.read_back(&backend)?;
-        // flux_dft_read.request_copy(&backend, &flux_dft_states)?;
-        // plot_window.show(&mut testbed, &mut flux_plot, &flux_dft_read)?;
+        flux_dft_read.read_back(&backend)?;
+        flux_dft_read.request_copy(&backend, &flux_dft_states)?;
+        flux_plot.update_points(&flux_dft_read)?;
         src_dft_read.read_back(&backend)?;
         src_dft_read.request_copy(&backend, &src_dft_states)?;
-        plot_window.show(&mut testbed, &mut src_plot, &src_dft_read)?;
+        src_plot.update_points(&src_dft_read)?;
+        plot_window.show(&mut testbed, vec![src_plot.create_line(), flux_plot.create_line()])?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);

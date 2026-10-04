@@ -161,7 +161,7 @@ impl PowerFluxStates {
         let cell_size3_one = sim.fdtd_parameters.cell_size
             .to_3d(Vec3::ONE);
 
-        let flux_monitors = sim.power_flux_monitors.iter()
+        let (monitors, flux_monitors) = sim.power_flux_monitors.iter()
             .map(|monitor| {
                 let axis = Axis::from(monitor.axis);
                 let axis1 = axis.permute();
@@ -169,25 +169,25 @@ impl PowerFluxStates {
 
                 let da = axis.to_vec3() * monitor.direction as i32 as Real;
                 let position = ((regions_offset[axis] + monitor.position) / cell_size3_one[axis]) as u32;
-                GpuPowerFluxMonitor {
+                let gpu_monitor = GpuPowerFluxMonitor {
                     da,
                     axis,
                     axis1,
                     axis2,
                     position,
                     _padding0: 0,
-                }
+                };
+                (monitor.clone(), gpu_monitor)
             })
-            .collect::<Vec<_>>()
-            .create_gpu_buffer(backend)?;
+            .collect::<(Vec<_>, Vec<_>)>();
 
         let monitor_power = vec![0.; sim.power_flux_monitors.len()].create_gpu_buffer(backend)?;
         let wg_summations = vec![0.; workgroups.iter().product::<u32>() as usize]
             .create_gpu_buffer(backend)?;
 
         Ok(Some(Self {
-            monitors: sim.power_flux_monitors.clone(),
-            flux_monitors,
+            monitors,
+            flux_monitors: flux_monitors.create_gpu_buffer(backend)?,
             monitor_power,
             wg_summations,
             workgroups,

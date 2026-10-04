@@ -26,50 +26,39 @@ impl PlotWindow {
         }
     }
 
-    /// Update every [`PlotLine`] in `plot_lines` with `readback` and
-    /// show `self` with all `plot_lines` drawn.
-    pub fn show<L: PlotLine>(
+    /// Show plot window with `lines_f` generating the lines to plot.
+    ///
+    /// `additonal_ui` adds anything to the plot window ui.
+    pub fn show<'a>(
         &mut self,
         testbed: &mut FdtdTestbedViewer,
-        plot_lines: &mut Vec<L>,
-        readback: &L::Readback,
+        lines: Vec<Line>,
     ) -> TaserResult<()> {
-        plot_lines.update_points(readback)?;
         testbed.window.draw_ui(|ctx| {
-            self.show_no_update(ctx, plot_lines);
-        });
-        Ok(())
-    }
-
-    pub fn show_no_update<L: PlotLine>(
-        &mut self, 
-        ctx: &egui::Context, 
-        lines: &mut Vec<L>,
-    ) {
-        egui::Window::new(self.name.as_str())
-            .open(&mut self.open)
-            .show(ctx, |ui| {
-                lines.aux_ui(ui);
-
-                let mut p = Plot::new(self.name.as_str())
-                    .legend(Legend::default());
-                if let Some(x_title) = self.x_axis_title.as_ref() {
-                    p = p.custom_x_axes(vec![
-                        AxisHints::new_x().label(x_title.clone())
-                    ]);
-                }
-                if let Some(y_title) = self.y_axis_title.as_ref() {
-                    p = p.custom_y_axes(vec![
-                        AxisHints::new_y().label(y_title.clone())
-                    ]);
-                }
-                p.show(ui, |plot_ui| -> TaserResult<()> {
+            egui::Window::new(self.name.as_str())
+                .open(&mut self.open)
+                .show(ctx, |ui| {
+                    let mut p = Plot::new(self.name.as_str())
+                        .legend(Legend::default());
+                    if let Some(x_title) = self.x_axis_title.as_ref() {
+                        p = p.custom_x_axes(vec![
+                            AxisHints::new_x().label(x_title.clone())
+                        ]);
+                    }
+                    if let Some(y_title) = self.y_axis_title.as_ref() {
+                        p = p.custom_y_axes(vec![
+                            AxisHints::new_y().label(y_title.clone())
+                        ]);
+                    }
+                    p.show(ui, |plot_ui| -> TaserResult<()> {
                         for line in lines {
-                            line.draw(plot_ui);
+                            plot_ui.line(line)
                         }
                         Ok(())
                     });
-            });
+                });
+        });
+        Ok(())
     }
 }
 
@@ -83,30 +72,12 @@ pub trait PlotLine {
     /// A function for updating the plot line's data points.
     fn update_points(&mut self, readback: &Self::Readback) -> TaserResult<()>;
 
+    /// Create a [`egui_plot::Line`] from `self` to plot.
+    fn create_line(&self) -> Line<'_>;
+
     /// Draws the plot line in a [`PlotUi`].
-    fn draw<'a>(&'a self, plot_ui: &mut PlotUi<'a>);
-}
-
-impl<L: PlotLine> PlotLine for Vec<L> {
-    type Readback = L::Readback;
-
-    fn aux_ui(&mut self, ui: &mut Ui) {
-        for l in self.iter_mut() {
-            l.aux_ui(ui);
-        }
-    }
-
-    fn update_points(&mut self, readback: &Self::Readback) -> TaserResult<()> {
-        for l in self.iter_mut() {
-            l.update_points(readback)?;
-        }
-        Ok(())
-    }
-
     fn draw<'a>(&'a self, plot_ui: &mut PlotUi<'a>) {
-        for l in self.iter() {
-            l.draw(plot_ui);
-        }
+        plot_ui.line(self.create_line());
     }
 }
 
@@ -178,10 +149,10 @@ impl<Func: ToDft> PlotLine for DftPlotLine<Func> {
         Ok(())
     }
 
-    fn draw<'a>(&'a self, plot_ui: &mut PlotUi<'a>) {
+    fn create_line(&self) -> Line<'_> {
         let mut l = Line::new(self.name.clone(), PlotPoints::Borrowed(&self.pts));
         if let Some(color) = self.color { l = l.color(color); }
-        plot_ui.line(l);
+        l
     }
 }
 
