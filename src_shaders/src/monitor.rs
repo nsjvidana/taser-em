@@ -7,6 +7,7 @@ use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
+use khal_std::sync::workgroup_memory_barrier_with_group_sync;
 use crate::{cfg_cpu, workgroup_counts};
 
 pub const FLUX_WORKGROUP_SIZE: UVec3 = UVec3::new(8, 8, 1);
@@ -44,9 +45,9 @@ pub fn gpu_power_flux(
 
     let is_hi_boundary_or_out_of_bounds =
         cell_idx.cmpge(n_cells - 1).any() || cell_idx3.cmpge(grid.n_cells3).any();
-    if is_hi_boundary_or_out_of_bounds { return; }
+    let idx_enable = !is_hi_boundary_or_out_of_bounds as usize;
 
-    let idx = cell_idx.to_flat_idx(n_cells) as usize;
+    let idx = cell_idx.to_flat_idx(n_cells) as usize * idx_enable;
 
     let en_self = en.read(idx);
     let en_pyz = en.read(idx + (grid.flat_idx_incrs.y + grid.flat_idx_incrs.z) as usize);
@@ -77,8 +78,10 @@ pub fn gpu_power_flux(
     let p = en_avg.cross(h_avg);
     let power = p.dot(monitor.da);
 
+    let enable_f = idx_enable as Real;
     let local_pwr_idx = grid_idx3_to_flat_idx(local_idx3, FLUX_WORKGROUP_SIZE) as usize;
-    local_power.write(local_pwr_idx, power);
+    local_power.write(local_pwr_idx, power * enable_f);
+    workgroup_memory_barrier_with_group_sync();
 
     // Sum up power at each workgroup
     if local_pwr_idx != 0 { return; }; // one invocation per workgroup

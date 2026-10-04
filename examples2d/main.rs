@@ -114,7 +114,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
     let dft_resolution = 100;
-    let sim_speed = 1;
+    let sim_speed = 2;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
