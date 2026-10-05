@@ -253,6 +253,18 @@ pub struct Dipole {
     pub moment: Vec3,
 }
 
+impl Dipole {
+    /// Construct electric dipole
+    pub fn electric(position: Vect, moment: Vec3) -> Self {
+        Self {
+            dipole_type: DipoleType::Electric,
+            position,
+            t_start: 0.0,
+            moment,
+        }
+    }
+}
+
 impl SourceType for Dipole {
     fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize> {
         state.dipole_states.as_ref().map(|st|

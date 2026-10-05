@@ -1,11 +1,12 @@
 use std::ops::Range;
 use crate::gpu_util::*;
 use crate::prelude::TaserResult;
-use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
+use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use std::sync::Arc;
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
+use crate::fdtd::FdtdLossyState;
 
 /// Describes the DFT of some function.
 ///
@@ -104,10 +105,32 @@ pub struct DftStates<Func: ToDft> {
 }
 
 impl<Func: ToDft> DftStates<Func> {
+    /// Creates new DFT buffers that are properly initialized
+    pub fn new(
+        backend: &GpuBackend,
+        dfts: impl Into<Vec<Dft<Func>>>,
+        sim_state: &FdtdLossyState,
+        dft_pipeline: &DftPipeline,
+    ) -> TaserResult<Self> {
+        let mut selff = Self::new_zeroed(backend, dfts)?;
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("__dft_init", None);
+        dft_pipeline.initialize_states(
+            &mut pass,
+            &sim_state.grid_params,
+            &mut selff
+        )?;
+        drop(pass);
+        backend.submit(encoder)?;
+        Ok(selff)
+    }
+
     /// Creates new zeroed-out DFT buffers.
     ///
-    /// Use [`DftPipeline::initialize_states`] to populate buffers with non-zero kernels.
-    pub fn new_zeroed(backend: &GpuBackend, dfts: Vec<Dft<Func>>) -> TaserResult<Self> {
+    /// Use [`DftPipeline::initialize_states`] to populate buffers with non-zero kernels, or use
+    /// [`DftStates::new`] instead to submit an initialize command right away.
+    pub fn new_zeroed(backend: &GpuBackend, dfts: impl Into<Vec<Dft<Func>>>) -> TaserResult<Self> {
+        let dfts = dfts.into();
         if dfts.is_empty() { return Err(DftError::NoDfts.into()) };
 
         let function_value_positions = dfts.iter()

@@ -6,7 +6,7 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, Visual
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::DipoleAntenna;
+    let example = Example::BenchAll;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),
@@ -78,13 +78,12 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
-    let mut state = simulation.finalize(&backend, &stability)?;
-    let mut pipeline = FdtdLossyPipeline::new_initialized(
+    let mut pipeline = FdtdLossyPipeline::new(
         &backend,
         boundary_conditions,
         sim_speed,
-        &mut state
     )?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
 
     // Create viewer and set up camera
@@ -116,20 +115,14 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let dft_resolution = 100;
     let sim_speed = 2;
 
-    // Simulation parameters w/ default stability values.
-    let stability = FdtdStability {
-        cells_per_wavelength: 30,
-        spacer_region_widths: LayerWidths::splat_spatial(30),
-        ..Default::default()
-    };
+    // Simulation parameters w/ 30 cells-per-wavelength
+    let stability = FdtdStability::from_cpw(30);
     let cell_size = stability.cell_size_from_min_wavelength(freq);
     let dt = stability.cfl_condition(cell_size);
     let parameters = FdtdParameters {
         cell_size,
         dt,
-        material_discretization: MaterialDiscretization::Smooth {
-            resolution: stability.material_resolution
-        },
+        material_discretization: MaterialDiscretization::smooth_from_stability(&stability)
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
@@ -138,27 +131,17 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let elem_thickness = cell_size.y;
     let feed_gap = cell_size.y * 2.;
     let half_len = antenna_len / 2.0;
-    let pec = ElectricMaterial::PEC;
     simulation
-        .fill_region(
-            Vect::ZERO,
-            Vect::new(elem_thickness, -half_len),
-            pec
-        )
+        .fill_region(Vect::ZERO, Vect::new(elem_thickness, -half_len), ElectricMaterial::PEC)
         .fill_region(
             Vect::new(0., feed_gap),
             Vect::new(0., feed_gap) + Vect::new(elem_thickness, half_len),
-            pec
+            ElectricMaterial::PEC
         );
 
     // Source injection in antenna feed gap
     let source_values = Source::sin_cycle(freq, dt).repeat(10);
-    let dipole = Dipole {
-        dipole_type: DipoleType::Electric,
-        position: Vect::new(elem_thickness, feed_gap) / 2.,
-        t_start: 0.0,
-        moment: Vec3::Y,
-    };
+    let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let dipole = simulation.add_dipole(dipole, source_values);
 
     // Power flux monitor for reading back power flux
@@ -170,76 +153,60 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         }
     );
 
+    // Preparing simulation
     // Create instance of backend we will run the simulation with
     let backend = create_backend().await?;
-    let backend_name = backend_name(&backend);
-    println!("Running on backend: {backend_name}");
+
+    // Create pipelines and boundary conditions
     let boundary_conditions = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
+    let dft_pipeline = DftPipeline::new(&backend)?;
 
     // Create GPU simulation state
-    let mut state = simulation.finalize(&backend, &stability)?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
 
     // Set up power flux DFT
     let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
     let (dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
-    let mut flux_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
+    let mut flux_dft_states = DftStates::new(&backend, [dft], &state, &dft_pipeline)?;
 
     // Set up source DFT
     let (dft, src_func) = SourceFunction::new(&dipole, &state.source_states)?
         .to_dft(frequencies)?;
-    let mut src_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
-
-    // Create and initialize pipelines
-    let mut pipeline = FdtdLossyPipeline::new(
-        &backend,
-        boundary_conditions,
-        sim_speed
-    )?;
-    let dft_pipeline = DftPipeline::new(&backend)?;
-    let mut encoder = backend.begin_encoding();
-    let mut pass = encoder.begin_pass("2D pipeline initialization", None);
-    pipeline.initialize(&mut pass, &mut state)?;
-    dft_pipeline.initialize_states(&mut pass, &state.grid_params, &mut flux_dft_states)?;
-    dft_pipeline.initialize_states(&mut pass, &state.grid_params, &mut src_dft_states)?;
-    drop(pass);
-    backend.submit(encoder)?;
+    let mut src_dft_states = DftStates::new(&backend, [dft], &state, &dft_pipeline)?;
 
     // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
-        .expect("we added a flux monitor to the simulation so readback must be possible");
+        .expect("we added a flux monitor to the simulation, so readback must be possible");
     let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_states).await?;
     let mut src_dft_read = DftReadback::new(&backend, &src_dft_states).await?;
 
-    // Create viewer and set up camera
-    let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
-
-    // Set up DFT plot
-    let mut plot_window = PlotWindow::new(
-        "Power Flux DFT",
-        Some("Frequency (GHz)"),
-        None,
-    );
+    // Set up DFT plots
+    let frequency_scale = Some(1e-9); // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis;
+    let mut plot_window = PlotWindow::new("Power Flux DFT", Some("Frequency (GHz)"), None);
     let mut flux_plot = DftPlotLine::new(
         "Power Flux",
         &flux_func,
         &flux_dft_read,
-        Some(1e-9) // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis
+        frequency_scale
     )?.with_color(Color32::RED);
     let mut src_plot = DftPlotLine::new(
         "Source",
         &src_func,
         &src_dft_read,
-        Some(1e-9) // Frequency is in GHz, so multipl by 1E-9 for a cleaner X axis
+        frequency_scale
     )?.with_color(Color32::GREEN);
 
-    // Render simulation
+    // Render simulation with viewer
+    println!("Running on backend: {}", backend_name(&backend));
+    let vis_mode = VisualizationMode::default()
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
@@ -284,7 +251,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 }
 
 pub async fn benchmark_all() -> anyhow::Result<()> {
-    const WARM_UP: u32 = 10;
+    const WARM_UP: u32 = 100;
     const BENCH: u32 = 3000;
     const SIM_SPEED: usize = 1;
 
@@ -292,20 +259,14 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
     let freq = 2.4e9; // 2.4 GHz
     let dft_resolution = 100;
 
-    // Simulation parameters w/ default stability values.
-    let stability = FdtdStability {
-        cells_per_wavelength: 30,
-        spacer_region_widths: LayerWidths::splat_spatial(30),
-        ..Default::default()
-    };
+    // Simulation parameters w/ 30 cells-per-wavelength
+    let stability = FdtdStability::from_cpw(30);
     let cell_size = stability.cell_size_from_min_wavelength(freq);
     let dt = stability.cfl_condition(cell_size);
     let parameters = FdtdParameters {
         cell_size,
         dt,
-        material_discretization: MaterialDiscretization::Smooth {
-            resolution: stability.material_resolution
-        },
+        material_discretization: MaterialDiscretization::smooth_from_stability(&stability)
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
@@ -314,41 +275,18 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
     let elem_thickness = cell_size.y;
     let feed_gap = cell_size.y * 2.;
     let half_len = antenna_len / 2.0;
-    let pec = ElectricMaterial::PEC;
     simulation
-        .fill_region(
-            Vect::ZERO,
-            Vect::new(elem_thickness, -half_len),
-            pec
-        )
+        .fill_region(Vect::ZERO, Vect::new(elem_thickness, -half_len), ElectricMaterial::PEC)
         .fill_region(
             Vect::new(0., feed_gap),
             Vect::new(0., feed_gap) + Vect::new(elem_thickness, half_len),
-            pec
+            ElectricMaterial::PEC
         );
 
-    // Source injection in antenna feed gap, and a TF/SF source
+    // Source injection in antenna feed gap
     let source_values = Source::sin_cycle(freq, dt).repeat(10);
-    simulation
-        .add_dipole(
-            Dipole {
-                dipole_type: DipoleType::Electric,
-                position: Vect::new(elem_thickness, feed_gap) / 2.,
-                t_start: 0.0,
-                moment: Vec3::Y,
-            },
-            source_values,
-        );
-    simulation.add_tfsf(
-        Tfsf {
-            spatial_axis: SpatialAxis::Y,
-            direction: Direction::Negative,
-            t_start: 0.0,
-            polarization: Vec3::Z,
-            tfsf_buffer_width: LayerWidths::splat_spatial(3),
-        },
-        Source::gaussian_max_f(freq, 1., dt)
-    );
+    let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
+    let dipole = simulation.add_dipole(dipole, source_values);
 
     // Power flux monitor for reading back power flux
     let flux_monitor = simulation.add_flux_monitor(
@@ -359,65 +297,71 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
         }
     );
 
+    // Preparing simulation
     // Create instance of backend we will run the simulation with
     let backend = create_backend().await?;
+
+    // Create pipelines and boundary conditions
     let boundary_conditions = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, SIM_SPEED)?;
+    let dft_pipeline = DftPipeline::new(&backend)?;
 
     // Create GPU simulation state
-    let mut state = simulation.finalize(&backend, &stability)?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
 
-    // Power flux DFT state
+    // Set up power flux DFT
     let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-    let (dft, _) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
+    let (dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
-    let mut flux_dft_states = DftStates::new_zeroed(&backend, vec![dft])?;
+    let mut flux_dft_states = DftStates::new(&backend, [dft], &state, &dft_pipeline)?;
 
-    // Create and initialize pipelines
-    let mut pipeline = FdtdLossyPipeline::new(
-        &backend,
-        boundary_conditions,
-        SIM_SPEED
-    )?;
-    let dft_pipeline = DftPipeline::new(&backend)?;
-    let mut encoder = backend.begin_encoding();
-    let mut pass = encoder.begin_pass("2D pipeline initialization", None);
-    pipeline.initialize(&mut pass, &mut state)?;
-    dft_pipeline.initialize_states(&mut pass, &state.grid_params, &mut flux_dft_states)?;
-    drop(pass);
-    backend.submit(encoder)?;
+    // Set up source DFT
+    let (dft, src_func) = SourceFunction::new(&dipole, &state.source_states)?
+        .to_dft(frequencies)?;
+    let mut src_dft_states = DftStates::new(&backend, [dft], &state, &dft_pipeline)?;
 
     // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
-        .expect("we added a flux monitor to the simulation so readback must be possible");
-    let mut dft_readback = DftReadback::new(&backend, &flux_dft_states).await?;
+        .expect("we added a flux monitor to the simulation, so readback must be possible");
+    let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_states).await?;
+    let mut src_dft_read = DftReadback::new(&backend, &src_dft_states).await?;
 
-    let mut run_sim = || -> anyhow::Result<()> {
-        // Dummy readbacks (also synchronizes the backend)
+    // Run simulation
+    println!("Running on backend: {}", backend_name(&backend));
+    let mut run_sim = || -> TaserResult<()> {
+        // Dummy readbacks (synchronizes backend too)
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
-        dft_readback.try_read_back(&backend); // already synced at this point, so trying is enough.
-        dft_readback.request_copy(&backend, &flux_dft_states)?;
+        flux_dft_read.try_read_back(&backend);
+        flux_dft_read.request_copy(&backend, &flux_dft_states)?;
+        src_dft_read.try_read_back(&backend);
+        src_dft_read.request_copy(&backend, &src_dft_states)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d benchmark example", None);
-        pipeline.dispatch_steps_aux(&mut pass, &mut state, |pass, state|
+        pipeline.dispatch_steps_aux(&mut pass, &mut state, |pass, state| {
             dft_pipeline.dispatch_step(
                 pass,
                 &state.t_idx,
                 state.power_flux_states.as_ref().unwrap(),
                 &mut flux_dft_states,
+            )?;
+            dft_pipeline.dispatch_step(
+                pass,
+                &state.t_idx,
+                &state.source_states,
+                &mut src_dft_states,
             )
-        )?;
+        })?;
         drop(pass);
         backend.submit(encoder)?;
         Ok(())
     };
 
-    // Warm up
     for _ in 0..WARM_UP {
         run_sim()?;
     }
@@ -430,13 +374,13 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
 
     readback.request_copy_t_idx(&backend, &state)?;
     readback.read_back_t_idx(&backend)?;
-    let n_steps = readback.get_t_idx() - WARM_UP;
+    let n_steps = readback.get_t_idx() - WARM_UP * SIM_SPEED as u32;
     let avg_per_step = elapsed / n_steps;
     let backend_name = backend_name(&backend);
     println!("===============2D FDTD BENCHMARK===============");
     println!("Backend: {backend_name}");
     println!("Average time per step: {avg_per_step:?}");
-    println!("Number of steps steps: {n_steps}");
+    println!("Number of steps: {n_steps}");
     println!("Steps per GPU submission (simulation speed): {SIM_SPEED}");
 
     Ok(())

@@ -88,7 +88,24 @@ impl FdtdLossySimulation {
         self
     }
 
-    pub fn finalize(
+    pub fn finalize<BCx: BoundaryCondition<X>, BCy: BoundaryCondition<Y>, BCz: BoundaryCondition<Z>>(
+        &self,
+        backend: &GpuBackend,
+        stability: &FdtdStability,
+        pipeline: &mut FdtdLossyPipeline<BCx, BCy, BCz>
+    ) -> TaserResult<FdtdLossyState> {
+        let mut state = self.finalize_no_init(backend, stability)?;
+
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("simulation initialize", None);
+        pipeline.initialize(&mut pass, &mut state)?;
+        drop(pass);
+        backend.submit(encoder)?;
+
+        Ok(state)
+    }
+
+    pub fn finalize_no_init(
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
@@ -140,7 +157,7 @@ impl FdtdLossySimulation {
         let cell_count = n_cells.element_product() as usize;
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
 
-        let buffers = FdtdLossyState {
+        let state = FdtdLossyState {
             // Uniforms / thread-independent vars
             grid_params: grid_params.create_gpu_uniform(backend)?,
             t_idx: 0.create_gpu_buffer(backend)?,
@@ -168,8 +185,7 @@ impl FdtdLossySimulation {
             thread_count: n_cells.n_cells_to_3d().to_array(),
             n_cells,
         };
-
-        Ok(buffers)
+        Ok(state)
     }
 
     pub fn create_material_grid(&self, simulation_bb: &Aabb, n_cells: GridIndex) -> YeeGridMaterials {
@@ -572,6 +588,16 @@ pub struct FdtdParameters {
     pub material_discretization: MaterialDiscretization
 }
 
+impl FdtdParameters {
+    pub fn new(cell_size: Vect, dt: Real, material_discretization: MaterialDiscretization) -> Self {
+        Self {
+            cell_size,
+            dt,
+            material_discretization,
+        }
+    }
+}
+
 /// Helper struct containing parameters and functions for ensuring simulation stability.
 ///
 /// The default of this struct contains hardcoded values that are generally stable.
@@ -594,6 +620,20 @@ pub struct FdtdStability {
 }
 
 impl FdtdStability {
+    /// Construct [`FdtdStability`] from cells-per-wavelength.
+    ///
+    /// Also makes `spacer_region_widths` `cells_per_wavelength` wide.
+    pub fn from_cpw(cells_per_wavelength: Index) -> Self {
+        Self {
+            cells_per_wavelength,
+            spacer_region_widths: LayerWidths::splat_spatial(cells_per_wavelength),
+            ..Default::default()
+        }
+    }
+
+    /// Construct cell size from minimum wavelength calculated with a maximum frequency in the simulation.
+    ///
+    /// Uses `self.cells_per_wavelength` to create the cell size.
     pub fn cell_size_from_min_wavelength(&self, f_max: Real) -> Vect {
         let min_wavelen = C_0 / f_max;
         let cell_size = min_wavelen / self.cells_per_wavelength as Real;
@@ -680,6 +720,14 @@ impl PmlParameters {
 pub enum MaterialDiscretization {
     Rough,
     Smooth { resolution: NonZeroU32 }
+}
+
+impl MaterialDiscretization {
+    pub fn smooth_from_stability(stability: &FdtdStability) -> Self {
+        Self::Smooth {
+            resolution: stability.material_resolution,
+        }
+    }
 }
 
 /// Material properties
