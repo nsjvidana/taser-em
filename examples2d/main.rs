@@ -89,11 +89,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 
     // Render simulation
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("2d suzanne example", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
-        drop(pass);
-        backend.submit(encoder)?;
+        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;
@@ -182,6 +178,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_states).await?;
     let mut src_dft_read = DftReadback::new(&backend, &src_dft_states).await?;
 
+    // Running simulation
     // Set up DFT plots
     let frequency_scale = Some(1e-9); // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis;
     let mut plot_window = PlotWindow::new("Power Flux DFT", Some("Frequency (GHz)"), None);
@@ -190,7 +187,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut src_plot = DftPlotLine::new("Source", &src_func, &src_dft_read, frequency_scale)?
         .with_color(Color32::GREEN);
 
-    // Render simulation with viewer
+    // Run & render simulation with viewer
     println!("Running on backend: {}", backend_name(&backend));
     let vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
@@ -205,9 +202,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         src_plot.update_points(&backend, &src_dft_states, &mut src_dft_read)?;
         plot_window.show(&mut testbed, vec![src_plot.create_line(), flux_plot.create_line()])?;
 
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("2d dipole antenna example", None);
-        pipeline.dispatch_steps_aux(&mut pass, &mut state, |pass, state| {
+        pipeline.simulate(&backend, &mut state, |pass, state| {
             dft_pipeline.dispatch_step(
                 pass,
                 &state.t_idx,
@@ -221,8 +216,6 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
                 &mut src_dft_states,
             )
         })?;
-        drop(pass);
-        backend.submit(encoder)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;

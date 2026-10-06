@@ -198,9 +198,11 @@ impl SourcePipeline {
 
 /// Buffers describing the states of different kinds of sources.
 pub struct SourceStates {
-    /// The global source terms, applied directly to H field update equations
+    /// The global source terms, applied directly to H field update equations. Stored as `u32`s for
+    /// atomic support.
     pub src_h: GpuBuffer<u32>,
-    /// The global source terms, applied directly to Dn field update equations
+    /// The global source terms, applied directly to Dn field update equations. Stored as `u32`s for
+    /// atomic support.
     pub src_dn: GpuBuffer<u32>,
     pub dipole_states: Option<DipoleStates>,
     pub tfsf_states: Option<TfsfStates>,

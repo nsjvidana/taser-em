@@ -107,11 +107,7 @@ pub async fn cube() -> anyhow::Result<()> {
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("3d fdtd example", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
-        drop(pass);
-        backend.submit(encoder)?;
+        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;
@@ -193,11 +189,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("2d dipole antenna example", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
-        drop(pass);
-        backend.submit(encoder)?;
+        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;

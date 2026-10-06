@@ -407,19 +407,28 @@ where
         Ok(())
     }
 
-    /// Dispatches `num_steps_per_submission` FDTD steps.
-    pub fn dispatch_steps(
+    /// Submits `num_steps_per_submission` FDTD steps to the backend.
+    ///
+    /// `aux_f` function allows the user to do additional dispatching work that gets called immediately after
+    /// each FDTD step (so `aux_f` runs `num_steps_per_submission` times).
+    /// Just provide an empty function `|_,_| Ok(())` if adding extra things to the simulation loop isn't
+    /// necessary.
+    ///
+    /// If you want to avoid direct submissions, use [`FdtdLossyPipeline::dispatch_steps_aux`] instead.
+    pub fn simulate(
         &mut self,
-        pass: &mut GpuPass,
+        backend: &GpuBackend,
         state: &mut FdtdLossyState,
+        aux_f: impl FnMut(&mut GpuPass, &mut FdtdLossyState) -> TaserResult<()>
     ) -> TaserResult<()> {
-        self.dispatch_steps_aux(pass, state, |_, _| Ok(()))
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("__fdtd_lossy_simulation", None);
+        self.dispatch_steps_aux(&mut pass, state, aux_f)?;
+        drop(pass);
+        backend.submit(encoder)?;
+        Ok(())
     }
 
-    /// Dispatches `num_steps_per_submission` FDTD steps.
-    ///
-    /// `aux_f` allows the user to do additional dispatching work that gets called immediately after
-    /// each FDTD step (so `aux_f` runs `num_steps_per_submission` times).
     pub fn dispatch_steps_aux(
         &mut self,
         pass: &mut GpuPass,

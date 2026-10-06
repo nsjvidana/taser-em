@@ -75,11 +75,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
 
     // Run simulation
     for _ in 0..WARMUP {
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("3d fdtd bench", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
-        drop(pass);
-        backend.submit(encoder)?;
+        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
         backend.synchronize()?;
     }
 
@@ -87,11 +83,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
 
     let start = std::time::Instant::now();
     for _ in 0..BENCH {
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("3d fdtd bench", None);
-        pipeline.dispatch_steps(&mut pass, &mut state)?;
-        drop(pass);
-        backend.submit(encoder)?;
+        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
         backend.synchronize()?;
     }
     let elapsed = start.elapsed();
