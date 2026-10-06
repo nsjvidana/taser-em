@@ -12,7 +12,6 @@ use kiss3d::camera::Projection;
 use kiss3d::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-use taser_em::grid::{MaterialRegions, YeeGridMaterials};
 use taser_em::prelude::*;
 use taser_em::*;
 
@@ -67,8 +66,9 @@ impl FdtdTestbedViewer {
         let camera = OrbitCamera3d::default();
         let mut scene = SceneNode3d::default();
 
-        let sim_bb = simulation.compute_bounding_box();
-        let n_cells = simulation.compute_n_cells(&sim_bb, stability);
+        let GridSizing {
+            n_cells, sim_offset
+        } = simulation.compute_grid_sizing(stability);
         let cell_size = simulation.fdtd_parameters.cell_size;
         visualization_mode.initialize(&mut scene, n_cells, cell_size);
 
@@ -97,11 +97,6 @@ impl FdtdTestbedViewer {
             grid_bb_max: grid_extents,
             bb_color: WHITE,
         };
-        let sim_offset = YeeGridMaterials::compute_simulation_offset(
-            &simulation.compute_bounding_box(),
-            n_cells,
-            simulation.fdtd_parameters.cell_size,
-        );
         selff.default_cam_setup();
         selff.update_cam_light();
         selff.add_region_meshes(&simulation.material_regions, sim_offset);

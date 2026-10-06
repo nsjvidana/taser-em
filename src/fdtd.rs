@@ -16,24 +16,20 @@ use taser_em_shaders::source::*;
 
 // TODO: Docs.
 pub struct FdtdLossySimulation {
+    pub fdtd_parameters: FdtdParameters,
+    pub pml_parameters: PmlParameters,
+    pub tfsf_parameters: AuxGridParameters,
+    pub grid_sizing_mode: GridSizingMode,
     pub material_regions: MaterialRegions,
     pub background_material: ElectricMaterial,
     pub dipoles: Vec<Source<Dipole>>,
     pub tfsf_sources: Vec<Source<Tfsf>>,
     pub power_flux_monitors: Vec<Arc<PowerFluxMonitor>>,
-    pub fdtd_parameters: FdtdParameters,
-    pub pml_parameters: PmlParameters,
-    pub tfsf_parameters: AuxGridParameters
 }
 
 impl FdtdLossySimulation {
     pub fn new(fdtd_parameters: FdtdParameters, pml_parameters: PmlParameters) -> Self {
         Self {
-            material_regions: MaterialRegions::new(),
-            background_material: ElectricMaterial::FREE_SPACE,
-            dipoles: vec![],
-            tfsf_sources: vec![],
-            power_flux_monitors: vec![],
             fdtd_parameters,
             pml_parameters,
             tfsf_parameters: AuxGridParameters {
@@ -41,6 +37,12 @@ impl FdtdLossySimulation {
                 pml_sig_max: pml_parameters.sig_max,
                 pml_grading_order: pml_parameters.grading_order,
             },
+            grid_sizing_mode: GridSizingMode::default(),
+            material_regions: MaterialRegions::new(),
+            background_material: ElectricMaterial::FREE_SPACE,
+            dipoles: vec![],
+            tfsf_sources: vec![],
+            power_flux_monitors: vec![],
         }
     }
 
@@ -114,11 +116,12 @@ impl FdtdLossySimulation {
             cell_size, dt, ..
         } = self.fdtd_parameters;
 
-        let sim_bb = self.compute_bounding_box();
-        let n_cells = self.compute_n_cells(&sim_bb, stability);
+        let GridSizing {
+            n_cells, sim_offset
+        } = self.compute_grid_sizing(stability);
         let n_cells3 = n_cells.n_cells_to_3d();
 
-        let grid_mats = self.create_material_grid(&sim_bb, n_cells);
+        let grid_mats = self.create_material_grid(sim_offset, n_cells);
         let pml_coeffs = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
         let sim_offset3 = pml_coeffs.sim_offset;
 
@@ -189,7 +192,7 @@ impl FdtdLossySimulation {
         Ok(state)
     }
 
-    pub fn create_material_grid(&self, simulation_bb: &Aabb, n_cells: GridIndex) -> YeeGridMaterials {
+    pub fn create_material_grid(&self, sim_offset: Vec3, n_cells: GridIndex) -> YeeGridMaterials {
         let FdtdParameters { material_discretization, cell_size, .. } =
             &self.fdtd_parameters;
         match material_discretization {
@@ -197,7 +200,7 @@ impl FdtdLossySimulation {
                 YeeGridMaterials::new_material_grid(
                     n_cells,
                     *cell_size,
-                    simulation_bb,
+                    sim_offset,
                     &self.material_regions,
                     self.background_material,
                 ),
@@ -206,7 +209,7 @@ impl FdtdLossySimulation {
                 YeeGridMaterials::new_material_grid(
                     n_cells * res,
                     cell_size / res as Real,
-                    simulation_bb,
+                    sim_offset,
                     &self.material_regions,
                     self.background_material,
                 ).downscaled(*resolution)
@@ -215,22 +218,39 @@ impl FdtdLossySimulation {
     }
 
     /// Compute the dimensions of a grid that can encompass `simulation_bb`, spacer regions,
-    /// from `stability`, and PML widths from `self.pml_parameters`.
+    /// from `stability`, PML widths from `self.pml_parameters`, and boundary cells. Also provides
+    /// the simulation offset to apply to material regions and other simulation objects.
     ///
     /// If `overlay_on_grid` is enabled in the PML parameters, PML widths won't be added to the
     /// grid dimensions.
-    pub fn compute_n_cells(&self, simulation_bb: &Aabb, stability: &FdtdStability) -> GridIndex {
-        // TODO: let user set custom n_cells that forces the user to make sure their objects are placed
-        //       within the boundaries of the grid (sim_offset becomes Vec3::ZERO). maybe use an enum for this.
-        let cell_size = self.fdtd_parameters.cell_size;
-        let n_cells_vec3 = (simulation_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
-        let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
-        let mut n_cells = stability.spacer_region_widths
-            .sum_with_n_cells(materials_n_cells);
-        if !self.pml_parameters.overlay_on_grid {
-            n_cells = self.pml_parameters.widths.sum_with_n_cells(n_cells);
+    pub fn compute_grid_sizing(&self, stability: &FdtdStability) -> GridSizing {
+        let sim_to_n_cells = |n_cells_sim| {
+            let mut n_cells = stability.spacer_region_widths.sum_with_n_cells(n_cells_sim);
+            if !self.pml_parameters.overlay_on_grid {
+                n_cells = self.pml_parameters.widths.sum_with_n_cells(n_cells);
+            }
+            LayerWidths::splat_spatial(1).sum_with_n_cells(n_cells) // Boundary cells
+        };
+
+        macro_rules! auto_sizing {
+            ($custom_bb: expr, $n_cells_rounding_func:ident) => {{
+                let bb = $custom_bb.unwrap_or_else(|| self.compute_bounding_box());
+                let cell_size = self.fdtd_parameters.cell_size;
+                let n_cells3_f = bb.extents() / cell_size.to_3d(Vec3::ONE);
+                let n_cells_sim = Vect::from_vec3(n_cells3_f.$n_cells_rounding_func()).as_grid_index();
+                let n_cells = sim_to_n_cells(n_cells_sim);
+                let sim_offset = YeeGridMaterials::compute_simulation_offset(&bb, n_cells, cell_size);
+                (n_cells, sim_offset)
+            }};
         }
-        LayerWidths::splat_spatial(1).sum_with_n_cells(n_cells) // Boundary cells
+
+        let (n_cells, sim_offset) = match self.grid_sizing_mode {
+            GridSizingMode::AutoCeil(custom_bb) => auto_sizing!(custom_bb, ceil),
+            GridSizingMode::AutoFloor(custom_bb) => auto_sizing!(custom_bb, floor),
+            GridSizingMode::Custom(n_cells) => (n_cells, Vec3::ZERO),
+        };
+
+        GridSizing { n_cells, sim_offset, }
     }
 
     /// Compute the bounding box surrounding all objects and sources in the simulation.
@@ -262,6 +282,47 @@ impl FdtdLossySimulation {
             .iter_spatial_axes()
             .for_each(|(s_axis, w)| problem_space_max[s_axis] -= w.hi);
         (problem_space_min, problem_space_max)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GridSizing {
+    /// Grid dimensions in cells
+    pub n_cells: GridIndex,
+    /// Translation offset applied to material regions and other simulation objects
+    pub sim_offset: Vec3,
+}
+
+/// How the grid's size (`n_cells`) will be calculated. Default is [`GridSizingMode::AutoCeil`] with no
+/// specified [`Aabb`].
+///
+/// If using a custom grid size, please read the documentation for [`GridSizingMode::Custom`].
+#[derive(Copy, Clone, Debug)]
+pub enum GridSizingMode {
+    /// Automatically generates `n_cells` and internally moves all [`MaterialRegion`]s
+    /// to discretize them (doesn't actually modify any [`MaterialRegion`]s on the user's end).
+    ///
+    /// `n_cells` is rounded up to make sure everything is within the grid.
+    ///
+    /// By default, `n_cells` will encompass every [`MaterialRegion`], but if [`Aabb`] is specified,
+    /// `n_cells` will encompass the [`Aabb`] instead.
+    AutoCeil(Option<Aabb>),
+    /// Does same thing as [`GridSizingMode::AutoCeil`], but rounds down `n_cells` instead of
+    /// rounding up.
+    AutoFloor(Option<Aabb>),
+    /// Use a custom grid size with a **limitation**:
+    /// Auto-positioning of [`MaterialRegion`]s won't happen. You must position things properly yourself.
+    ///
+    /// The grid will span from the origin to the grid extents (`cell_size * custom_n_cells`), in world space,
+    /// with the **out-most layer of cells being boundary cells**.
+    /// See the Region Intersections section of [`YeeGridMaterials::new_material_grid`] to know whether
+    /// your [`MaterialRegions`] will be included in the grid or not.
+    Custom(GridIndex),
+}
+
+impl Default for GridSizingMode {
+    fn default() -> Self {
+        Self::AutoCeil(None)
     }
 }
 

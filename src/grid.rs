@@ -157,12 +157,15 @@ impl YeeGridMaterials {
 
     /// Compute a material grid with the dimensions of `n_cells` by sampling material regions.
     ///
+    /// `sim_offset` gets applied to the translation of all `regions` internally before they get discretized.
+    ///
     /// # How it Works
     /// First, the grid is moved **only along the spatial axes** (see [`SpatialAxis::ALL_SPATIAL`]) in a way
     /// that puts its center at the middle of all regions.
     /// Then point-intersection tests are done for each vector component's physical position using [`SharedShape::contains_point`]
     /// on each region. Components that don't intersect with any regions are assigned `default_mat`.
     ///
+    /// # Region Intersections
     /// Since grid centering only happens along spatial axes, whether a region is in the grid will
     /// depend on the dimension:
     /// - 1D: Only when intersecting w/ Z axis
@@ -172,13 +175,12 @@ impl YeeGridMaterials {
     pub fn new_material_grid(
         n_cells: GridIndex,
         cell_size: Vect,
-        simulation_bb: &Aabb,
+        sim_offset: Vec3,
         regions: &MaterialRegions,
         default_mat: ElectricMaterial,
     ) -> Self {
         let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
 
-        let sim_offset = Self::compute_simulation_offset(simulation_bb, n_cells, cell_size);
         let centered_scene_pose = regions.scene_pose.append_translation(sim_offset);
 
         let half_cell_size3 = (cell_size / 2.).to_3d(Vec3::ZERO);
