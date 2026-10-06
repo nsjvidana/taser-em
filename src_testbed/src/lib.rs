@@ -97,14 +97,14 @@ impl FdtdTestbedViewer {
             grid_bb_max: grid_extents,
             bb_color: WHITE,
         };
-        let regions_offset = YeeGridMaterials::compute_simulation_offset(
+        let sim_offset = YeeGridMaterials::compute_simulation_offset(
             &simulation.compute_bounding_box(),
             n_cells,
             simulation.fdtd_parameters.cell_size,
         );
         selff.default_cam_setup();
         selff.update_cam_light();
-        selff.add_region_meshes(&simulation.material_regions, regions_offset);
+        selff.add_region_meshes(&simulation.material_regions, sim_offset);
 
         selff.add_flux_planes(
             simulation.power_flux_monitors.iter().map(|rc| rc.as_ref())
@@ -155,7 +155,7 @@ impl FdtdTestbedViewer {
     }
 
     /// Add material regions as meshes rendered in the scene.
-    pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, regions_offset: Vec3) {
+    pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, sim_offset: Vec3) {
         for MaterialRegion {
             shape, pose,
             mesh,
@@ -188,7 +188,7 @@ impl FdtdTestbedViewer {
                     self.scene
                         .add_mesh(kiss3d_mesh, Vec3::ONE)
                 });
-            let region_pose_world = (mat_regions.scene_pose * pose).append_translation(regions_offset);
+            let region_pose_world = (mat_regions.scene_pose * pose).append_translation(sim_offset);
             node
                 .set_pose(region_pose_world)
                 .set_color(GRAY.with_alpha(self.material_region_alpha))

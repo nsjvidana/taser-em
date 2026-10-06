@@ -141,7 +141,7 @@ pub struct YeeGridMaterials {
     pub materials: Vec<YeeCellMaterials>,
     /// The material applied to cells that don't intersect with any material regions.
     pub default_mat: ElectricMaterial,
-    /// The translation applied to all objects in a [`MaterialRegions`] to center them on this grid.
+    /// The translation applied to all objects in a [`MaterialRegions`] to center them on a Yee grid.
     pub sim_offset: Vec3,
 }
 
@@ -330,6 +330,7 @@ pub struct PmlCoefficientsGrid {
     pub n_cells: GridIndex,
     /// Grid's update coefficients in a flattened array.
     pub coeffs: Vec<PmlCoefficients>,
+    pub sim_offset: Vec3,
 }
 
 impl PmlCoefficientsGrid {
@@ -340,11 +341,12 @@ impl PmlCoefficientsGrid {
         grid_mats: &YeeGridMaterials,
         pml_parameters: PmlParameters,
         dt: Real
-    ) -> (Vec3, Self) {
+    ) -> Self {
         let PmlParameters {
             widths: pml_widths,
             sig_max: pml_sig_max,
-            grading_order: pml_grading_order
+            grading_order: pml_grading_order,
+            ..
         } = pml_parameters;
         let n_cells = grid_mats.n_cells;
         let n_cells3 = n_cells.n_cells_to_3d();
@@ -352,7 +354,7 @@ impl PmlCoefficientsGrid {
         let YeeGridMaterials {
             n_cells: _n_cells,
             materials: mats,
-            sim_offset: regions_offset,
+            sim_offset,
             ..
         } = grid_mats;
 
@@ -482,7 +484,7 @@ impl PmlCoefficientsGrid {
                 }
             });
 
-        (*regions_offset, Self { n_cells, coeffs, })
+        Self { n_cells, coeffs, sim_offset: *sim_offset }
     }
 }
 

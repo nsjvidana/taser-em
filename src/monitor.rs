@@ -150,7 +150,7 @@ impl PowerFluxStates {
         backend: &GpuBackend,
         sim: &FdtdLossySimulation,
         n_cells: GridIndex,
-        regions_offset: &Vec3
+        sim_offset: &Vec3
     ) -> TaserResult<Option<Self>> {
         if sim.power_flux_monitors.is_empty() {
             return Ok(None);
@@ -168,7 +168,7 @@ impl PowerFluxStates {
                 let axis2 = axis1.permute();
 
                 let da = axis.to_vec3() * monitor.direction as i32 as Real;
-                let position = ((regions_offset[axis] + monitor.position) / cell_size3_one[axis]) as u32;
+                let position = ((sim_offset[axis] + monitor.position) / cell_size3_one[axis]) as u32;
                 let gpu_monitor = GpuPowerFluxMonitor {
                     da,
                     axis,

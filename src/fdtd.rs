@@ -119,11 +119,12 @@ impl FdtdLossySimulation {
         let n_cells3 = n_cells.n_cells_to_3d();
 
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
-        let (regions_offset3, grid_coeffs) = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+        let grid_coeffs = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+        let sim_offset3 = grid_coeffs.sim_offset;
 
         let cell_count = n_cells.element_product();
 
-        let regions_offset = Vect::from_vec3(regions_offset3);
+        let sim_offset = Vect::from_vec3(sim_offset3);
         let (problem_space_min, problem_space_max) = self.compute_problem_space(n_cells);
 
         let flat_idx_incrs = {
@@ -171,7 +172,7 @@ impl FdtdLossySimulation {
                 backend,
                 self,
                 n_cells3,
-                regions_offset,
+                sim_offset,
                 problem_space_min.cell_idx_to_3d(),
                 problem_space_max.cell_idx_to_3d()
             )?,
@@ -181,7 +182,7 @@ impl FdtdLossySimulation {
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
             grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
-            power_flux_states: PowerFluxStates::new(backend, self, n_cells, &regions_offset3)?,
+            power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
             thread_count: n_cells.n_cells_to_3d().to_array(),
             n_cells,
         };
@@ -213,17 +214,23 @@ impl FdtdLossySimulation {
         }
     }
 
-    /// Compute the dimensions of a grid that can encompass `simulation_bb`, then add spacer regions
-    /// from `stability` and PML widths from `self`.
+    /// Compute the dimensions of a grid that can encompass `simulation_bb`, spacer regions,
+    /// from `stability`, and PML widths from `self.pml_parameters`.
+    ///
+    /// If `overlay_on_grid` is enabled in the PML parameters, PML widths won't be added to the
+    /// grid dimensions.
     pub fn compute_n_cells(&self, simulation_bb: &Aabb, stability: &FdtdStability) -> GridIndex {
+        // TODO: let user set custom n_cells that forces the user to make sure their objects are placed
+        //       within the boundaries of the grid (sim_offset becomes Vec3::ZERO). maybe use an enum for this.
         let cell_size = self.fdtd_parameters.cell_size;
         let n_cells_vec3 = (simulation_bb.extents() / cell_size.to_3d(Vec3::ONE)).ceil();
         let materials_n_cells = Vect::from_vec3(n_cells_vec3).as_grid_index();
-
         let mut n_cells = stability.spacer_region_widths
             .sum_with_n_cells(materials_n_cells);
-        n_cells = self.pml_parameters.widths.sum_with_n_cells(n_cells);
-        LayerWidths::splat_spatial(1).sum_with_n_cells(n_cells)
+        if !self.pml_parameters.overlay_on_grid {
+            n_cells = self.pml_parameters.widths.sum_with_n_cells(n_cells);
+        }
+        LayerWidths::splat_spatial(1).sum_with_n_cells(n_cells) // Boundary cells
     }
 
     /// Compute the bounding box surrounding all objects and sources in the simulation.
@@ -702,7 +709,10 @@ pub struct PmlParameters {
     /// Maximum conductivity of the PML
     pub sig_max: Real,
     /// The order of the monomial that ramps PML conductivity up to `sig_max`
-    pub grading_order: NonZeroI32
+    pub grading_order: NonZeroI32, // TODO: make this a positive f32 type.
+    /// If PML conductivities should be placed over the grid edges rather than added as new cells
+    /// at the grid edges (off by default).
+    pub overlay_on_grid: bool,
 }
 
 impl PmlParameters {
@@ -712,6 +722,7 @@ impl PmlParameters {
             widths: LayerWidths::splat_spatial(12),
             sig_max: FdtdStability::pml_sig_max(dt),
             grading_order: NonZeroI32::new(3).unwrap(),
+            overlay_on_grid: false,
         }
     }
 }

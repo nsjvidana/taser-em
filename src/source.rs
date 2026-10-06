@@ -208,7 +208,6 @@ pub struct SourceStates {
 }
 
 impl SourceStates {
-    // TODO: rename regions_offsets to sim_offset globally for clarity
     pub fn new(
         backend: &GpuBackend,
         sim: &FdtdLossySimulation,
