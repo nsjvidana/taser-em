@@ -124,7 +124,7 @@ impl PowerFluxPipeline {
         self.power_flux_kernel.call(
             pass,
             DispatchGrid::Grid(flux_state.workgroups),
-            &sim_state.grid_params,
+            &sim_state.grid,
             &sim_state.h_previous,
             &sim_state.h,
             &sim_state.en,

@@ -119,8 +119,8 @@ impl FdtdLossySimulation {
         let n_cells3 = n_cells.n_cells_to_3d();
 
         let grid_mats = self.create_material_grid(&sim_bb, n_cells);
-        let grid_coeffs = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
-        let sim_offset3 = grid_coeffs.sim_offset;
+        let pml_coeffs = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+        let sim_offset3 = pml_coeffs.sim_offset;
 
         let cell_count = n_cells.element_product();
 
@@ -140,7 +140,7 @@ impl FdtdLossySimulation {
         };
 
         let cell_size3 = cell_size.to_3d(Vec3::ZERO);
-        let grid_params = GridParameters {
+        let grid = GridParameters {
             flat_idx_incrs,
             _padding0: 0,
             n_cells3: n_cells.n_cells_to_3d(),
@@ -160,7 +160,7 @@ impl FdtdLossySimulation {
 
         let state = FdtdLossyState {
             // Uniforms / thread-independent vars
-            grid_params: grid_params.create_gpu_uniform(backend)?,
+            grid: grid.create_gpu_uniform(backend)?,
             t_idx: 0.create_gpu_buffer(backend)?,
             // Vector fields
             h_previous: zeroed_vector_field.create_gpu_buffer(backend)?,
@@ -180,7 +180,7 @@ impl FdtdLossySimulation {
             source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
             update_source_terms_workgroups: update_source_terms_workgroups(n_cells),
             int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
-            grid_coeffs: grid_coeffs.coeffs.create_gpu_buffer(backend)?,
+            pml_coeffs: pml_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
             power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
             thread_count: n_cells.n_cells_to_3d().to_array(),
@@ -333,11 +333,11 @@ where
         self.init_pec.call(
             pass,
             DispatchGrid::ThreadCount(state.thread_count),
-            &state.grid_params,
+            &state.grid,
             &mut state.h,
             &mut state.dn,
             &mut state.en,
-            &state.grid_coeffs
+            &state.pml_coeffs
         )?;
         Ok(())
     }
@@ -369,12 +369,12 @@ where
             self.h_update.call(
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
-                &state.grid_params,
+                &state.grid,
                 &mut state.h_previous,
                 &mut state.h,
                 &mut state.en,
                 &mut state.int_terms,
-                &state.grid_coeffs,
+                &state.pml_coeffs,
                 &state.source_terms,
             )?;
 
@@ -383,13 +383,13 @@ where
             self.dn_en_update.call(
                 pass,
                 DispatchGrid::ThreadCount(state.thread_count),
-                &state.grid_params,
+                &state.grid,
                 &mut state.t_idx,
                 &mut state.h,
                 &mut state.dn,
                 &mut state.en,
                 &mut state.int_terms,
-                &state.grid_coeffs,
+                &state.pml_coeffs,
                 &state.source_terms,
             )?;
 
@@ -680,7 +680,7 @@ impl FdtdStability {
 /// Buffers and data needed for running the shader
 pub struct FdtdLossyState {
     // Uniforms / thread-independent vars
-    pub grid_params: GpuBuffer<GridParameters>,
+    pub grid: GpuBuffer<GridParameters>,
     pub t_idx: GpuBuffer<u32>,
     // Vector fields
     pub h_previous: GpuBuffer<Vec4>,
@@ -693,7 +693,7 @@ pub struct FdtdLossyState {
     pub source_terms: GpuBuffer<SourceTerms>,
     pub update_source_terms_workgroups: [u32; 3],
     pub int_terms: GpuBuffer<PmlIntegrals>,
-    pub grid_coeffs: GpuBuffer<PmlCoefficients>,
+    pub pml_coeffs: GpuBuffer<PmlCoefficients>,
     // Monitors & DFTs
     pub power_flux_states: Option<PowerFluxStates>,
     // Misc data

@@ -117,7 +117,7 @@ impl<Func: ToDft> DftStates<Func> {
         let mut pass = encoder.begin_pass("__dft_init", None);
         dft_pipeline.initialize_states(
             &mut pass,
-            &sim_state.grid_params,
+            &sim_state.grid,
             &mut selff
         )?;
         drop(pass);

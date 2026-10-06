@@ -68,6 +68,7 @@ impl Source<()> {
 }
 
 pub struct SourceFunction<S: SourceType> {
+    #[allow(dead_code)]
     source: Arc<S>,
     val_pos: usize
 }
@@ -150,8 +151,8 @@ impl SourcePipeline {
                 pass,
                 tfsf_states,
                 &sim_state.t_idx,
-                &sim_state.grid_params,
-                &sim_state.grid_coeffs,
+                &sim_state.grid,
+                &sim_state.pml_coeffs,
             )?;
             self.update_src_terms(
                 pass,
@@ -326,7 +327,7 @@ impl DipoleStates {
         } = sim.fdtd_parameters;
 
         let mut source_vals = vec![];
-        let (dipole_refs, mut dipoles) = sim.dipoles.iter()
+        let (dipole_refs, dipoles) = sim.dipoles.iter()
             .filter_map(|source| {
                 let Dipole { dipole_type, position, t_start, moment } = &*source.src_ref;
                 let vals = &source.data_points;
@@ -436,7 +437,7 @@ impl TfsfPipeline {
             self.init_tfsf_masks.call(
                 pass,
                 DispatchGrid::Grid(tfsf_states.mask_init_workgroups),
-                &sim_state.grid_params,
+                &sim_state.grid,
                 &tfsf_states.tfsf_sources,
                 &mut tfsf_states.tfsf_masks,
             )?;
@@ -449,8 +450,8 @@ impl TfsfPipeline {
         pass: &mut GpuPass,
         tfsf_states: &mut TfsfStates,
         t_idx: &GpuBuffer<u32>,
-        grid_params: &GpuBuffer<GridParameters>,
-        grid_coeffs: &GpuBuffer<PmlCoefficients>,
+        grid: &GpuBuffer<GridParameters>,
+        pml_coeffs: &GpuBuffer<PmlCoefficients>,
     ) -> TaserResult<()> {
         self.aux_grid_update.call(
             pass,
@@ -468,14 +469,14 @@ impl TfsfPipeline {
         self.gpu_compute_tfsf_terms.call(
             pass,
             DispatchGrid::Grid(tfsf_states.tfsf_terms_workgroups),
-            grid_params,
+            grid,
             &mut tfsf_states.src_h,
             &mut tfsf_states.src_dn,
             &mut tfsf_states.curr_src_vals,
             &tfsf_states.tfsf_sources,
             &tfsf_states.corrections,
             &tfsf_states.tfsf_masks,
-            grid_coeffs,
+            pml_coeffs,
         )?;
 
         Ok(())
@@ -561,7 +562,7 @@ impl TfsfStates {
                 let vals_start = source_vals.len() as u32;
                 source_vals.extend_from_slice(vals);
 
-                let grid_coeffs = {
+                let pml_coeffs = {
                     let sig = {
                         const HALF_CELL: Index = 1;
                         const ONE_CELL: Index = HALF_CELL*2;
@@ -619,7 +620,7 @@ impl TfsfStates {
                 };
                 let coeffs_start = coeffs.len() as u32;
                 debug_assert_eq!(coeffs.len(), zeroed_vector_fields.len());
-                coeffs.extend_from_slice(&grid_coeffs);
+                coeffs.extend_from_slice(&pml_coeffs);
                 zeroed_vector_fields.extend_from_slice(&vec![AuxVect::ZERO; n_cells as usize]);
                 let tfsf = GpuTfsf {
                     a, a1, a2,

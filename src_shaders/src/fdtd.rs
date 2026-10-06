@@ -50,7 +50,7 @@ pub fn gpu_lossy_h_update(
     #[cfg_attr(feature = "dim1", allow(unused_variables))]
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)]
         integrals: &mut [PmlIntegrals],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] pml_coeffs: &[PmlCoefficients],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] source_terms: &[SourceTerms],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
@@ -62,7 +62,7 @@ pub fn gpu_lossy_h_update(
 
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
-    let m = grid_coeffs.read(idx);
+    let m = pml_coeffs.read(idx);
     if m.no_update() { return; }
     #[cfg(not(feature = "dim1"))]
     let mut ints = integrals.read(idx);
@@ -139,7 +139,7 @@ pub fn gpu_lossy_dn_en_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] en: &mut [Vec4],
     // Field update terms
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] integrals: &mut [PmlIntegrals],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] grid_coeffs: &[PmlCoefficients],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] pml_coeffs: &[PmlCoefficients],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] source_terms: &[SourceTerms],
 ) {
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
@@ -151,7 +151,7 @@ pub fn gpu_lossy_dn_en_update(
 
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
-    let m = grid_coeffs.read(idx);
+    let m = pml_coeffs.read(idx);
     if m.no_update() { return; }
 
     let mut ints = integrals.read(idx);

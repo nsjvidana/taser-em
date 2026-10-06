@@ -168,8 +168,8 @@ macro_rules! impl_pec_boundary {
                 self.init_kernel.call(
                     pass,
                     DispatchGrid::ThreadCount(state.thread_count),
-                    &state.grid_params,
-                    &mut state.grid_coeffs
+                    &state.grid,
+                    &mut state.pml_coeffs
                 )?;
                 Ok(())
             }
@@ -205,7 +205,7 @@ macro_rules! periodic_boundary {
                 Ok(self.en_kernel.call(
                     pass,
                     DispatchGrid::ThreadCount(state.thread_count),
-                    &state.grid_params,
+                    &state.grid,
                     &mut state.en,
                 )?)
             }
@@ -218,7 +218,7 @@ macro_rules! periodic_boundary {
                 Ok(self.h_kernel.call(
                     pass,
                     DispatchGrid::ThreadCount(state.thread_count),
-                    &state.grid_params,
+                    &state.grid,
                     &mut state.h,
                 )?)
             }
