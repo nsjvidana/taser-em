@@ -1,9 +1,9 @@
 #[cfg(feature = "rayon")]
+#[allow(unused_imports)]
 use rayon::prelude::*;
 
 use crate::gpu_util::*;
 use crate::prelude::*;
-use crate::*;
 use derivative::Derivative;
 use khal::backend::*;
 use parry3d::bounding_volume::Aabb;
@@ -538,13 +538,13 @@ impl FdtdStateReadback {
             _ =>
                 match self.mode {
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => par_iter!(self.h).map(|v| v.x.abs()).collect(),
+                    FdtdSimulationMode::EyHx => crate::par_iter!(self.h).map(|v| v.x.abs()).collect(),
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => par_iter!(self.h).map(|v| v.y.abs()).collect(),
+                    FdtdSimulationMode::ExHy => crate::par_iter!(self.h).map(|v| v.y.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => par_iter!(self.h).map(|v| v.xy().length()).collect(),
+                    FdtdSimulationMode::TransverseMagneticZ => crate::par_iter!(self.h).map(|v| v.xy().length()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => par_iter!(self.h).map(|v| v.z.abs()).collect(),
+                    FdtdSimulationMode::TransverseElectricZ => crate::par_iter!(self.h).map(|v| v.z.abs()).collect(),
                 },
         }
     }
@@ -557,13 +557,13 @@ impl FdtdStateReadback {
             _ =>
                 match self.mode {
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => par_iter!(self.dn).map(|v| v.y.abs()).collect(),
+                    FdtdSimulationMode::EyHx => crate::par_iter!(self.dn).map(|v| v.y.abs()).collect(),
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => par_iter!(self.dn).map(|v| v.x.abs()).collect(),
+                    FdtdSimulationMode::ExHy => crate::par_iter!(self.dn).map(|v| v.x.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => par_iter!(self.dn).map(|v| v.z.abs()).collect(),
+                    FdtdSimulationMode::TransverseMagneticZ => crate::par_iter!(self.dn).map(|v| v.z.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => par_iter!(self.dn).map(|v| v.xy().length()).collect(),
+                    FdtdSimulationMode::TransverseElectricZ => crate::par_iter!(self.dn).map(|v| v.xy().length()).collect(),
                 },
         }
     }
@@ -576,13 +576,13 @@ impl FdtdStateReadback {
             _ =>
                 match self.mode {
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => par_iter!(self.en).map(|v| v.y.abs()).collect(),
+                    FdtdSimulationMode::EyHx => crate::par_iter!(self.en).map(|v| v.y.abs()).collect(),
                     #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => par_iter!(self.en).map(|v| v.x.abs()).collect(),
+                    FdtdSimulationMode::ExHy => crate::par_iter!(self.en).map(|v| v.x.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => par_iter!(self.en).map(|v| v.z.abs()).collect(),
+                    FdtdSimulationMode::TransverseMagneticZ => crate::par_iter!(self.en).map(|v| v.z.abs()).collect(),
                     #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => par_iter!(self.en).map(|v| v.xy().length()).collect(),
+                    FdtdSimulationMode::TransverseElectricZ => crate::par_iter!(self.en).map(|v| v.xy().length()).collect(),
                 }
         }
     }

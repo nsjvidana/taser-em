@@ -97,9 +97,7 @@ impl<S: SourceType> ToDft for SourceFunction<S> {
 
     fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real> {
         S::get_value_buffer(state)
-            .expect(
-                format!("{} source type must exist in the simulation to run a DFT on it", std::any::type_name::<S>()).as_str()
-            )
+            .unwrap_or_else(|| panic!("{} source type must exist in the simulation to run a DFT on it", std::any::type_name::<S>()))
     }
 }
 
@@ -167,7 +165,7 @@ impl SourcePipeline {
         Ok(())
     }
 
-    fn update_src_terms<'a>(
+    fn update_src_terms(
         &self,
         pass: &mut GpuPass,
         workgroups: [u32; 3],

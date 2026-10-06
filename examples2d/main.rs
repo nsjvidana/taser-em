@@ -6,7 +6,7 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, Visual
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::BenchAll;
+    let example = Example::DipoleAntenna;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),
@@ -314,12 +314,12 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
 
     // Set up power flux DFT
     let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-    let (dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
+    let (dft, _flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
     let mut flux_dft_states = DftStates::new(&backend, [dft], &state, &dft_pipeline)?;
 
     // Set up source DFT
-    let (dft, src_func) = SourceFunction::new(&dipole, &state.source_states)?
+    let (dft, _src_func) = SourceFunction::new(&dipole, &state.source_states)?
         .to_dft(frequencies)?;
     let mut src_dft_states = DftStates::new(&backend, [dft], &state, &dft_pipeline)?;
 

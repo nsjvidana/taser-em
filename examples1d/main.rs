@@ -32,7 +32,9 @@ pub async fn single_slab() -> anyhow::Result<()> {
         },
         // material_discretization: MaterialDiscretization::Rough,
     };
-    let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
+    let pml_params = PmlParameters::new(dt);
+    pml_params.widths.with_axis_widths(SpatialAxis::Z, LoHiWidths::splat(0));
+    let mut simulation = FdtdLossySimulation::new(parameters, pml_params);
 
     // Construct the slab
     let mat = ElectricMaterial {
@@ -47,28 +49,23 @@ pub async fn single_slab() -> anyhow::Result<()> {
         Vec3::ONE
     )?;
 
-    // Compute source position and gaussian curve data points
-    simulation.add_source(Source::Tfsf {
+    // Compute TF/SF source with gaussian curve data points
+    let tfsf = Tfsf {
         spatial_axis: SpatialAxis::Z,
         direction: Direction::Negative,
         t_start: 0.,
-        vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::Y, // Ey/Hx mode
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
-    });
+    };
+    simulation.add_tfsf(tfsf, Source::gaussian_max_f(f_max, 1., dt));
 
     // Set up buffers and pipeline
     let backend = create_backend().await?;
-    let backend_name = backend_name(&backend);
-    println!("Running on backend: {backend_name}");
     let boundary_condition = BoundaryConditions::new(
-        // PECBoundaryZ::from_backend(&backend)?,
         PeriodicBoundaryZ::from_backend(&backend)?,
     );
-    simulation.pml_parameters.widths = simulation.pml_parameters.widths
-        .with_axis_widths(SpatialAxis::Z, LoHiWidths::splat(0));
-    let mut state = simulation.finalize(&backend, &stability)?;
-    let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
     // Create viewer and set up camera
@@ -83,6 +80,8 @@ pub async fn single_slab() -> anyhow::Result<()> {
     });
 
     // Render simulation
+    let backend_name = backend_name(&backend);
+    println!("Running on backend: {backend_name}");
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("1d fdtd example", None);

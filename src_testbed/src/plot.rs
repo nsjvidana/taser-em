@@ -29,7 +29,7 @@ impl PlotWindow {
     /// Show plot window with `lines_f` generating the lines to plot.
     ///
     /// `additonal_ui` adds anything to the plot window ui.
-    pub fn show<'a>(
+    pub fn show(
         &mut self,
         testbed: &mut FdtdTestbedViewer,
         lines: Vec<Line>,

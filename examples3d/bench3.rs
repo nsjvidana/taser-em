@@ -45,25 +45,24 @@ pub async fn benchmark() -> anyhow::Result<()> {
     simulation.fill_region(box_min, box_max, mat);
 
     // Source
-    let source = Source::Tfsf {
+    let tfsf = Tfsf {
         spatial_axis: SpatialAxis::Z,
         direction: Direction::Positive,
         t_start: 0.0,
-        vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::new(1., 1., 0.).normalize(),
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
     };
-    simulation.add_source(source);
+    simulation.add_tfsf(tfsf, Source::gaussian_max_f(f_max, 1., dt));
 
     // Set up buffers and pipeline
     let backend = create_backend().await?;
-    let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
         PECBoundaryZ::from_backend(&backend)?,
     );
-    let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     macro_rules! get_n_steps {

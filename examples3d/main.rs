@@ -65,28 +65,24 @@ pub async fn cube() -> anyhow::Result<()> {
     )?;
 
     // Compute source position and gaussian curve data points
-    let source = Source::Tfsf {
+    let source = Tfsf {
         spatial_axis: SpatialAxis::Z,
         direction: Direction::Positive,
         t_start: 0.0,
-        vals: Source::gaussian_max_f(f_max, 1., dt),
         polarization: Vec3::X,
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
     };
-    simulation.add_source(source);
+    simulation.add_tfsf(source, Source::gaussian_max_f(f_max, 1., dt));
 
     // Set up buffers and pipeline
     let backend = create_backend().await?;
-    let backend_name = backend_name(&backend);
-    println!("Running on backend: {backend_name}");
-    let mut state = simulation.finalize(&backend, &stability)?;
     let boundary_condition = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
         PECBoundaryZ::from_backend(&backend)?,
     );
-    // simulation.pml_parameters.widths = LayerWidths::splat_spatial(0);
-    let mut pipeline = FdtdLossyPipeline::new_initialized(&backend, boundary_condition, sim_speed, &mut state)?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Create viewer and set up camera
@@ -109,6 +105,7 @@ pub async fn cube() -> anyhow::Result<()> {
     ).await?;
 
     // Render simulation
+    println!("Running on backend: {}", backend_name(&backend));
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("3d fdtd example", None);
@@ -167,32 +164,24 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         );
 
     // Source injection in antenna feed gap
-    let source_values = Source::sin_cycle(freq, dt).repeat(10);
+    let dipole = Dipole {
+        dipole_type: DipoleType::Electric,
+        position: Vect::new(elem_thickness, -feed_gap, elem_thickness) / 2.,
+        t_start: 0.0,
+        moment: Vec3::Y,
+    };
     simulation
-        .add_source(Source::Dipole {
-            dipole_type: DipoleType::Electric,
-            position: Vect::new(elem_thickness, -feed_gap, elem_thickness) / 2.,
-            t_start: 0.0,
-            vals: source_values.clone(),
-            moment: Vec3::Y,
-        });
+        .add_dipole(dipole, Source::sin_cycle(freq, dt).repeat(10));
 
     // Set up buffers and pipeline
     let backend = create_backend().await?;
-    let backend_name = backend_name(&backend);
-    println!("Running on backend: {backend_name}");
     let boundary_conditions = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
         PECBoundaryZ::from_backend(&backend)?,
     );
-    let mut state = simulation.finalize(&backend, &stability)?;
-    let mut pipeline = FdtdLossyPipeline::new_initialized(
-        &backend,
-        boundary_conditions,
-        sim_speed,
-        &mut state
-    )?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
+    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Create viewer and set up camera
@@ -202,6 +191,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
 
     // Render simulation
+    println!("Running on backend: {}", backend_name(&backend));
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d dipole antenna example", None);
