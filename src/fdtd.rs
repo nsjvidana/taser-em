@@ -311,12 +311,16 @@ pub enum GridSizingMode {
     /// rounding up.
     AutoFloor(Option<Aabb>),
     /// Use a custom grid size with a **limitation**:
-    /// Auto-positioning of [`MaterialRegion`]s won't happen. You must position things properly yourself.
+    /// Auto-positioning of [`MaterialRegion`]s won't happen. The user must position things properly themselves.
     ///
+    /// # How to use
     /// The grid will span from the origin to the grid extents (`cell_size * custom_n_cells`), in world space,
     /// with the **out-most layer of cells being boundary cells**.
-    /// See the Region Intersections section of [`YeeGridMaterials::new_material_grid`] to know whether
-    /// your [`MaterialRegions`] will be included in the grid or not.
+    ///
+    /// Objects, like [`Source`]s, must be within the grid bounds in world space, otherwise an error will occur.
+    ///
+    /// See the Region Intersections section of [`YeeGridMaterials::new_material_grid`] to know how to
+    /// ensure that [`MaterialRegions`] will be included in the grid.
     Custom(GridIndex),
 }
 

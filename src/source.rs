@@ -333,8 +333,12 @@ impl DipoleStates {
 
                 let pos = (sim_offset + position) / cell_size;
                 let cell_grid_idx = pos.round().as_grid_index();
-                debug_assert!(!pos.min_element().is_sign_negative(), "negative source position!");
-                debug_assert!(!cell_grid_idx.cmpge(n_cells).any(), "Out of bounds source!");
+                if pos.cmplt(Vec2::ZERO).any() || cell_grid_idx.cmpge(n_cells).any() {
+                    return Some(Err(
+                        SourceError::SourceOutOfBounds(std::any::type_name_of_val(source).to_string())
+                            .into()
+                    ))
+                }
                 let start = source_vals.len();
                 source_vals.extend_from_slice(vals);
                 let dipole = GpuDipole {
@@ -346,9 +350,9 @@ impl DipoleStates {
                     dipole_type: *dipole_type,
                     _padding0: [0; 3],
                 };
-                Some((source.src_ref.clone(), dipole))
+                Some(Ok((source.src_ref.clone(), dipole)))
             })
-            .collect::<(Vec<_>, Vec<_>)>();
+            .collect::<TaserResult<(Vec<_>, Vec<_>)>>()?;
 
         if dipoles.is_empty() {
             return Ok(None);
@@ -705,5 +709,7 @@ impl SourceType for () {
 #[derive(thiserror::Error, Debug)]
 pub enum SourceError {
     #[error("No instances of source type {0} is in the simulation")]
-    NoSourceInstance(String)
+    NoSourceInstance(String),
+    #[error("A source of type {0} was found outside the simulation grid")]
+    SourceOutOfBounds(String)
 }

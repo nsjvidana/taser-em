@@ -160,18 +160,18 @@ impl YeeGridMaterials {
     /// `sim_offset` gets applied to the translation of all `regions` internally before they get discretized.
     ///
     /// # How it Works
-    /// First, the grid is moved **only along the spatial axes** (see [`SpatialAxis::ALL_SPATIAL`]) in a way
-    /// that puts its center at the middle of all regions.
-    /// Then point-intersection tests are done for each vector component's physical position using [`SharedShape::contains_point`]
-    /// on each region. Components that don't intersect with any regions are assigned `default_mat`.
+    /// The grid spans from the world space origin to the grid extents (`cell_size * custom_n_cells`), in world space,
+    /// with the **out-most layer of cells being boundary cells**.
+    ///
+    /// With `sim_offset` applied each region, point-intersection tests with each region are done with
+    /// the physical positions of each vector component in the grid (using [`SharedShape::contains_point`]).
+    /// Components that don't intersect with any regions are assigned `default_mat`.
     ///
     /// # Region Intersections
-    /// Since grid centering only happens along spatial axes, whether a region is in the grid will
-    /// depend on the dimension:
-    /// - 1D: Only when intersecting w/ Z axis
-    /// - 2D: Only when intersecting w/ X-Y plane
-    /// - 3D: Grid of size `n_cells` is centered at the middle of a bounding box encapsulating all regions.
-    ///   Whatever parts of regions that are inside the grid at this location are included.
+    /// Whether a region is in the grid will depend on the dimension:
+    /// - 1D: Only parts of `regions` intersecting with the Z axis after `sim_offset` is applied.
+    /// - 2D: Only parts of `regions` intersecting with the X-Y plane after `sim_offset` is applied.
+    /// - 3D: Only parts of `regions` that end up inside the 3D grid after `sim_offset` is applied.
     pub fn new_material_grid(
         n_cells: GridIndex,
         cell_size: Vect,
