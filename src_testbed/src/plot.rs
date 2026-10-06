@@ -2,6 +2,7 @@ use crate::FdtdTestbedViewer;
 use egui::{Color32, Ui, WidgetText};
 use egui_plot::{AxisHints, Legend, Line, Plot, PlotPoint, PlotPoints, PlotUi};
 use std::sync::Arc;
+use khal::backend::GpuBackend;
 use taser_em::dft::*;
 use taser_em::prelude::{Complex32, Real, TaserResult};
 
@@ -63,14 +64,9 @@ impl PlotWindow {
 }
 
 pub trait PlotLine {
-    type Readback;
-
     /// An extra UI to go with the plot line. Can allow the user to edit certain settings
     /// of the plot line.
     fn aux_ui(&mut self, _ui: &mut egui::Ui) {}
-
-    /// A function for updating the plot line's data points.
-    fn update_points(&mut self, readback: &Self::Readback) -> TaserResult<()>;
 
     /// Create a [`egui_plot::Line`] from `self` to plot.
     fn create_line(&self) -> Line<'_>;
@@ -122,11 +118,34 @@ impl<Func: ToDft> DftPlotLine<Func> {
         self.mode = mode;
         self
     }
+
+    /// Read back and update DFT plot values.
+    ///
+    /// Also calls [`DftReadback::request_copy`].
+    pub fn update_points(
+        &mut self,
+        backend: &GpuBackend,
+        dft_state: &DftStates<Func>,
+        readback: &mut DftReadback<Func>,
+    ) -> TaserResult<()> {
+        readback.read_back(backend)?;
+        readback.request_copy(backend, dft_state)?;
+        self.update_points_no_read(readback)
+    }
+
+    /// Similar to [`DftPlotLine::update_points`], but doesn't do readback.
+    pub fn update_points_no_read(&mut self, readback: &DftReadback<Func>) -> TaserResult<()> {
+        self.pts = readback.get_dft(&self.func)
+            .ok_or(DftError::CannotFindFunction)?
+            .into_iter()
+            .zip(self.frequencies.iter())
+            .map(|(c, f)| PlotPoint::new(*f, self.mode.get_dft_val(c)))
+            .collect::<Vec<_>>();
+        Ok(())
+    }
 }
 
 impl<Func: ToDft> PlotLine for DftPlotLine<Func> {
-    type Readback = DftReadback<Func>;
-
     fn aux_ui(&mut self, ui: &mut Ui) {
         egui::CollapsingHeader::new(format!("{} (DFT)", self.name))
             .show(ui, |ui| {
@@ -137,16 +156,6 @@ impl<Func: ToDft> PlotLine for DftPlotLine<Func> {
                         ui.selectable_value(&mut self.mode, DftPlotMode::Phase, "Phase");
                     });
             });
-    }
-
-    fn update_points(&mut self, readback: &Self::Readback) -> TaserResult<()> {
-        self.pts = readback.get_dft(&self.func)
-            .ok_or(DftError::CannotFindFunction)?
-            .into_iter()
-            .zip(self.frequencies.iter())
-            .map(|(c, f)| PlotPoint::new(*f, self.mode.get_dft_val(c)))
-            .collect::<Vec<_>>();
-        Ok(())
     }
 
     fn create_line(&self) -> Line<'_> {

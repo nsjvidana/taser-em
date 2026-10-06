@@ -333,7 +333,7 @@ impl DipoleStates {
 
                 let pos = (sim_offset + position) / cell_size;
                 let cell_grid_idx = pos.round().as_grid_index();
-                if pos.cmplt(Vec2::ZERO).any() || cell_grid_idx.cmpge(n_cells).any() {
+                if pos.cmplt(Vect::ZERO).any() || cell_grid_idx.cmpge(n_cells).any() {
                     return Some(Err(
                         SourceError::SourceOutOfBounds(std::any::type_name_of_val(source).to_string())
                             .into()

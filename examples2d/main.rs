@@ -78,11 +78,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
-    let mut pipeline = FdtdLossyPipeline::new(
-        &backend,
-        boundary_conditions,
-        sim_speed,
-    )?;
+    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
     let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
 
@@ -189,18 +185,10 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Set up DFT plots
     let frequency_scale = Some(1e-9); // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis;
     let mut plot_window = PlotWindow::new("Power Flux DFT", Some("Frequency (GHz)"), None);
-    let mut flux_plot = DftPlotLine::new(
-        "Power Flux",
-        &flux_func,
-        &flux_dft_read,
-        frequency_scale
-    )?.with_color(Color32::RED);
-    let mut src_plot = DftPlotLine::new(
-        "Source",
-        &src_func,
-        &src_dft_read,
-        frequency_scale
-    )?.with_color(Color32::GREEN);
+    let mut flux_plot = DftPlotLine::new("Power Flux", &flux_func, &flux_dft_read, frequency_scale)?
+        .with_color(Color32::RED);
+    let mut src_plot = DftPlotLine::new("Source", &src_func, &src_dft_read, frequency_scale)?
+        .with_color(Color32::GREEN);
 
     // Render simulation with viewer
     println!("Running on backend: {}", backend_name(&backend));
@@ -213,12 +201,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         let instantaneous_flux = power_readback.get_power(&flux_monitor).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
 
-        flux_dft_read.read_back(&backend)?;
-        flux_dft_read.request_copy(&backend, &flux_dft_states)?;
-        flux_plot.update_points(&flux_dft_read)?;
-        src_dft_read.read_back(&backend)?;
-        src_dft_read.request_copy(&backend, &src_dft_states)?;
-        src_plot.update_points(&src_dft_read)?;
+        flux_plot.update_points(&backend, &flux_dft_states, &mut flux_dft_read)?;
+        src_plot.update_points(&backend, &src_dft_states, &mut src_dft_read)?;
         plot_window.show(&mut testbed, vec![src_plot.create_line(), flux_plot.create_line()])?;
 
         let mut encoder = backend.begin_encoding();
