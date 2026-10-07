@@ -83,7 +83,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
+        pipeline.simulate(&backend, &mut state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;

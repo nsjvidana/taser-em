@@ -90,11 +90,16 @@ impl FdtdLossySimulation {
         self
     }
 
-    pub fn finalize<BCx: BoundaryCondition<X>, BCy: BoundaryCondition<Y>, BCz: BoundaryCondition<Z>>(
+    pub fn finalize<
+        BCx: BoundaryCondition<X>,
+        BCy: BoundaryCondition<Y>,
+        BCz: BoundaryCondition<Z>,
+        Hooks: FdtdLossyHook,
+    >(
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-        pipeline: &mut FdtdLossyPipeline<BCx, BCy, BCz>
+        pipeline: &mut FdtdLossyPipeline<BCx, BCy, BCz, Hooks>,
     ) -> TaserResult<FdtdLossyState> {
         let mut state = self.finalize_no_init(backend, stability)?;
 
@@ -331,14 +336,19 @@ impl Default for GridSizingMode {
 }
 
 /// The shader pipeline for running diagonal anisotropy simulation with UPML.
-pub struct FdtdLossyPipeline<BCx, BCy, BCz>
+pub struct FdtdLossyPipeline<BCx, BCy, BCz, Hooks>
 where
     BCx: BoundaryCondition<X>,
     BCy: BoundaryCondition<Y>,
     BCz: BoundaryCondition<Z>,
+    Hooks: FdtdLossyHook,
 {
-    init_pec: InitPec,
     boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
+    /// Additional functionality for the simulation.
+    ///
+    /// Use [`apply_pipeline_hooks`] to change a pipeline's hooks to a different type.s
+    pub hooks: Hooks,
+    init_pec: InitPec,
     source_pipeline: SourcePipeline,
     h_update: GpuLossyHUpdate,
     dn_en_update: GpuLossyDnEnUpdate,
@@ -346,12 +356,13 @@ where
     pub num_steps_per_submission: usize,
 }
 
-impl<BCx, BCy, BCz> FdtdLossyPipeline<BCx, BCy, BCz>
+impl<BCx, BCy, BCz> FdtdLossyPipeline<BCx, BCy, BCz, ()>
 where
     BCx: BoundaryCondition<X>,
     BCy: BoundaryCondition<Y>,
     BCz: BoundaryCondition<Z>,
 {
+    /// Create a new pipeline for running FDTD simulation.
     pub fn new(
         backend: &GpuBackend,
         boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
@@ -365,27 +376,19 @@ where
             dn_en_update: GpuLossyDnEnUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             power_flux_pipeline: PowerFluxPipeline::new(backend)?,
             num_steps_per_submission,
+            hooks: (),
         })
     }
+}
 
-    /// Create new pipeline and dispatch initialization shaders to the GPU at the same time (calls [`FdtdLossyPipeline::initialize`]).
-    pub fn new_initialized(
-        backend: &GpuBackend,
-        boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
-        num_steps_per_submission: usize,
-        state: &mut FdtdLossyState
-    ) -> TaserResult<Self> {
-        let mut pipeline = Self::new(backend, boundary_conditions, num_steps_per_submission)?;
-
-        let mut encoder = backend.begin_encoding();
-        let mut pass = encoder.begin_pass("2d fdtd example", None);
-        pipeline.initialize(&mut pass, state)?;
-        drop(pass);
-        backend.submit(encoder)?;
-
-        Ok(pipeline)
-    }
-
+impl<BCx, BCy, BCz, Hooks> FdtdLossyPipeline<BCx, BCy, BCz, Hooks>
+where
+    BCx: BoundaryCondition<X>,
+    BCy: BoundaryCondition<Y>,
+    BCz: BoundaryCondition<Z>,
+    Hooks: FdtdLossyHook,
+{
+    /// Initialize buffers
     pub fn initialize(
         &mut self,
         pass: &mut GpuPass,
@@ -404,6 +407,9 @@ where
             &mut state.en,
             &state.pml_coeffs
         )?;
+
+        self.hooks.initialize(pass, state)?;
+
         Ok(())
     }
 
@@ -419,11 +425,10 @@ where
         &mut self,
         backend: &GpuBackend,
         state: &mut FdtdLossyState,
-        aux_f: impl FnMut(&mut GpuPass, &mut FdtdLossyState) -> TaserResult<()>
     ) -> TaserResult<()> {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("__fdtd_lossy_simulation", None);
-        self.dispatch_steps_aux(&mut pass, state, aux_f)?;
+        self.dispatch_steps_aux(&mut pass, state)?;
         drop(pass);
         backend.submit(encoder)?;
         Ok(())
@@ -433,7 +438,6 @@ where
         &mut self,
         pass: &mut GpuPass,
         state: &mut FdtdLossyState,
-        mut aux_f: impl FnMut(&mut GpuPass, &mut FdtdLossyState) -> TaserResult<()>
     ) -> TaserResult<()> {
         for _ in 0..self.num_steps_per_submission {
             self.source_pipeline.dispatch_step(pass, state)?;
@@ -469,12 +473,66 @@ where
 
             self.power_flux_pipeline.dispatch_steps(pass, state)?;
 
-            aux_f(pass, state)?;
+            self.hooks.dispatch_step(pass, state)?;
         }
         Ok(())
     }
 }
 
+/// Set [`FdtdLossyHook`] for running FDTD simulation with additional functionality.
+pub fn apply_pipeline_hooks<
+    BCx: BoundaryCondition<X>,
+    BCy: BoundaryCondition<Y>,
+    BCz: BoundaryCondition<Z>,
+    Hooks: FdtdLossyHook,
+    NewHooks: FdtdLossyHook,
+>(pipeline: FdtdLossyPipeline<BCx, BCy, BCz, Hooks>, hooks: NewHooks) -> FdtdLossyPipeline<BCx, BCy, BCz, NewHooks> {
+    FdtdLossyPipeline {
+        boundary_conditions: pipeline.boundary_conditions,
+        hooks,
+        init_pec: pipeline.init_pec,
+        source_pipeline: pipeline.source_pipeline,
+        h_update: pipeline.h_update,
+        dn_en_update: pipeline.dn_en_update,
+        power_flux_pipeline: pipeline.power_flux_pipeline,
+        num_steps_per_submission: pipeline.num_steps_per_submission,
+    }
+}
+
+/// Adds extra functionality to the [`FdtdLossyPipeline`].
+///
+/// You can make a hook as a tuple of hooks: ``(Hook1::new(), Hook2::new())``
+/// Each hook would be applied to the simulation.
+///
+/// If you want more than two hooks, just make a nested tuple of hooks.
+pub trait FdtdLossyHook {
+    /// Initialize the simulation `state` or the state of the hook.
+    fn initialize(&mut self, _pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> { Ok(()) }
+
+    /// Called at the end of each FDTD iteration (not every submission). Meaning that it may be called multiple
+    /// times depending on [`FdtdLossySimulation::num_steps_per_submission`].
+    fn dispatch_step(&mut self, _pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> { Ok(()) }
+}
+
+impl FdtdLossyHook for () {}
+
+impl<A, B> FdtdLossyHook for (A, B)
+where
+    A: FdtdLossyHook,
+    B: FdtdLossyHook,
+{
+    fn initialize(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+        let (a, b) = (&mut self.0, &mut self.1);
+        a.initialize(pass, state)?;
+        b.initialize(pass, state)
+    }
+
+    fn dispatch_step(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+        let (a, b) = (&mut self.0, &mut self.1);
+        a.dispatch_step(pass, state)?;
+        b.dispatch_step(pass, state)
+    }
+}
 macro_rules! request_copy_fn {
     ($name:ident, $read:ident, $buf:ident) => {
         #[inline]

@@ -48,8 +48,6 @@ impl PowerFluxFunction {
 }
 
 impl ToDft for PowerFluxFunction {
-    type GpuStateType = PowerFluxStates;
-
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {
         let ptr = Arc::new(self);
         Ok((Dft::new(frequencies, ptr.clone())?, ptr))
@@ -57,8 +55,11 @@ impl ToDft for PowerFluxFunction {
 
     fn get_value_position(&self) -> usize { self.monitor_idx() }
 
-    fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real> {
-        &state.monitor_power
+    fn get_value_buffer(state: &FdtdLossyState) -> TaserResult<&GpuBuffer<Real>> {
+        let flux_states = state.power_flux_states
+            .as_ref()
+            .ok_or(PowerFluxError::NoMonitors)?;
+        Ok(&flux_states.monitor_power)
     }
 }
 
@@ -201,4 +202,6 @@ impl PowerFluxStates {
 pub enum PowerFluxError {
     #[error("The following monitor couldn't be found in the simulation: {0:?}")]
     MissingMonitor(Arc<PowerFluxMonitor>),
+    #[error("Tried accessing data of a monitor but none are in the simulation")]
+    NoMonitors
 }

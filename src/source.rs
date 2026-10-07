@@ -84,8 +84,6 @@ impl<S: SourceType> SourceFunction<S> {
 }
 
 impl<S: SourceType> ToDft for SourceFunction<S> {
-    type GpuStateType = SourceStates;
-
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {
         let func = Arc::new(self);
         Ok((Dft::new(frequencies, func.clone())?, func))
@@ -95,9 +93,9 @@ impl<S: SourceType> ToDft for SourceFunction<S> {
         self.val_pos
     }
 
-    fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real> {
-        S::get_value_buffer(state)
-            .unwrap_or_else(|| panic!("{} source type must exist in the simulation to run a DFT on it", std::any::type_name::<S>()))
+    fn get_value_buffer(state: &FdtdLossyState) -> TaserResult<&GpuBuffer<Real>> {
+        S::get_value_buffer(&state.source_states)
+                .ok_or(SourceError::NoSourceInstance(std::any::type_name::<S>().to_string()).into())
     }
 }
 

@@ -1,12 +1,11 @@
 use std::ops::Range;
 use crate::gpu_util::*;
-use crate::prelude::TaserResult;
+use crate::prelude::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use std::sync::Arc;
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
-use crate::fdtd::FdtdLossyState;
 
 /// Describes the DFT of some function.
 ///
@@ -30,6 +29,34 @@ impl<Func: ToDft> Dft<Func> {
     pub fn get_frequencies(&self) -> &Vec<Real> { &self.frequencies }
 
     pub fn get_function(&self) -> &Arc<Func> { &self.function }
+}
+
+/// [`FdtdLossyHook`] applied to [`FdtdLossyPipeline`] for running DFTs of a function in the simulation.
+///
+/// Use [`DftHook::states`] to fetch the [`DftStates`] of this DFT.
+pub struct DftHook<Func: ToDft> {
+    pipeline: DftPipeline,
+    states: DftStates<Func>,
+}
+
+impl<Func: ToDft> DftHook<Func> {
+    pub fn new(backend: &GpuBackend, dfts: impl Into<Vec<Dft<Func>>>, sim_state: &FdtdLossyState) -> TaserResult<Self> {
+        let pipeline = DftPipeline::new(backend)?;
+        let states = DftStates::new(backend, dfts, sim_state, &pipeline)?;
+        Ok(Self { pipeline, states })
+    }
+
+    pub fn states(&self) -> &DftStates<Func> { &self.states }
+}
+
+impl<Func: ToDft> FdtdLossyHook for DftHook<Func> {
+    fn initialize(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+        self.pipeline.initialize_states(pass, &state.grid, &mut self.states)
+    }
+
+    fn dispatch_step(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+        self.pipeline.dispatch_step(pass, &state, &mut self.states)
+    }
 }
 
 pub struct DftPipeline {
@@ -72,16 +99,15 @@ impl DftPipeline {
     pub fn dispatch_step<Func: ToDft>(
         &self,
         pass: &mut GpuPass,
-        time_step: &GpuBuffer<u32>,
-        function_state: &Func::GpuStateType,
+        sim_state: &FdtdLossyState,
         dft_states: &mut DftStates<Func>
     ) -> TaserResult<()> {
         self.dft_shader.call(
             pass,
             DispatchGrid::Grid(dft_states.workgroups),
-            time_step,
+            &sim_state.t_idx,
             &dft_states.function_value_positions,
-            Func::get_value_buffer(function_state),
+            Func::get_value_buffer(sim_state)?,
             &dft_states.func_dfts,
             &dft_states.dft_kernels,
             &mut dft_states.dft_outputs
@@ -180,14 +206,14 @@ impl<Func: ToDft> DftStates<Func> {
 }
 
 pub trait ToDft {
-    type GpuStateType;
-
     /// Convert this [`ToDft`] into a [`Dft`] with the specified `frequencies`.
     fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)>;
 
+    /// Gets the index of this function's current value in the buffer obtained by [`ToDft::get_value_position`]
     fn get_value_position(&self) -> usize;
 
-    fn get_value_buffer(state: &Self::GpuStateType) -> &GpuBuffer<Real>;
+    /// Gets the buffer that this function's current value is stored in
+    fn get_value_buffer(state: &FdtdLossyState) -> TaserResult<&GpuBuffer<Real>>;
 }
 
 pub struct DftReadback<Func: ToDft> {
@@ -198,7 +224,11 @@ pub struct DftReadback<Func: ToDft> {
 }
 
 impl<Func: ToDft> DftReadback<Func> {
-    pub async fn new(backend: &GpuBackend, dft_states: &DftStates<Func>) -> TaserResult<Self> {
+    pub async fn new(backend: &GpuBackend, hooks: &DftHook<Func>) -> TaserResult<Self> {
+        Self::from_states(backend, &hooks.states).await
+    }
+
+    pub async fn from_states(backend: &GpuBackend, dft_states: &DftStates<Func>) -> TaserResult<Self> {
         let mut gpu_dfts = vec![GpuFunctionDft::default(); dft_states.func_dfts.len()];
         backend.slow_read_buffer(&dft_states.func_dfts, &mut gpu_dfts).await?;
         let func_ranges = gpu_dfts.into_iter()

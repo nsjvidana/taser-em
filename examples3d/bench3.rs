@@ -75,7 +75,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
 
     // Run simulation
     for _ in 0..WARMUP {
-        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
+        pipeline.simulate(&backend, &mut state)?;
         backend.synchronize()?;
     }
 
@@ -83,7 +83,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
 
     let start = std::time::Instant::now();
     for _ in 0..BENCH {
-        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
+        pipeline.simulate(&backend, &mut state)?;
         backend.synchronize()?;
     }
     let elapsed = start.elapsed();

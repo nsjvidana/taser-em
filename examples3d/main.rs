@@ -107,7 +107,7 @@ pub async fn cube() -> anyhow::Result<()> {
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
+        pipeline.simulate(&backend, &mut state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;
@@ -189,7 +189,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
     while testbed.render_frame(&backend, &state, &mut readback).await? {
-        pipeline.simulate(&backend, &mut state, |_,_| Ok(()))?;
+        pipeline.simulate(&backend, &mut state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;
