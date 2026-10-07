@@ -83,7 +83,10 @@ pub struct DftPlotLine<Func: ToDft> {
     pub color: Option<egui::Color32>,
     func: Arc<Func>,
     frequencies: Vec<Real>,
-    pts: Vec<PlotPoint>,
+    /// Values of the DFT read back from the simulation
+    pub dft: Vec<Complex32>,
+    /// The [`PlotPoint`]s of the `egui` plot.
+    pub pts: Vec<PlotPoint>,
 }
 
 impl<Func: ToDft> DftPlotLine<Func> {
@@ -105,6 +108,7 @@ impl<Func: ToDft> DftPlotLine<Func> {
             color: None,
             func: func.clone(),
             frequencies,
+            dft: vec![Complex32::ZERO; n_freqs],
             pts: vec![PlotPoint::new(0., 0.); n_freqs],
         })
     }
@@ -119,10 +123,24 @@ impl<Func: ToDft> DftPlotLine<Func> {
         self
     }
 
+    pub fn frequencies(&self) -> &Vec<Real> { &self.frequencies }
+
     /// Read back and update DFT plot values.
     ///
     /// Also calls [`DftReadback::request_copy`].
-    pub fn update_points(
+    pub fn update_dft_and_points(
+        &mut self,
+        backend: &GpuBackend,
+        dft_state: &DftStates<Func>,
+        readback: &mut DftReadback<Func>,
+    ) -> TaserResult<()> {
+        self.update_dft(backend, dft_state, readback)?;
+        self.update_points_no_read();
+        Ok(())
+    }
+
+    /// Update the DFT stored in this plot line with readback.
+    pub fn update_dft(
         &mut self,
         backend: &GpuBackend,
         dft_state: &DftStates<Func>,
@@ -130,18 +148,17 @@ impl<Func: ToDft> DftPlotLine<Func> {
     ) -> TaserResult<()> {
         readback.read_back(backend)?;
         readback.request_copy(backend, dft_state)?;
-        self.update_points_no_read(readback)
+        self.dft = readback.get_dft(&self.func).ok_or(DftError::CannotFindFunction)?;
+        Ok(())
     }
 
-    /// Similar to [`DftPlotLine::update_points`], but doesn't do readback.
-    pub fn update_points_no_read(&mut self, readback: &DftReadback<Func>) -> TaserResult<()> {
-        self.pts = readback.get_dft(&self.func)
-            .ok_or(DftError::CannotFindFunction)?
-            .into_iter()
-            .zip(self.frequencies.iter())
-            .map(|(c, f)| PlotPoint::new(*f, self.mode.get_dft_val(c)))
+    /// Similar to [`DftPlotLine::update_dft_and_points`], but doesn't do readback.
+    pub fn update_points_no_read(&mut self) {
+        self.pts = self.dft.iter()
+            .copied()
+            .zip(self.frequencies.iter().copied())
+            .map(|(c, f)| PlotPoint::new(f, self.mode.get_dft_val(c)))
             .collect::<Vec<_>>();
-        Ok(())
     }
 }
 

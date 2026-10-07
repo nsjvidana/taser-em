@@ -104,7 +104,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let dft_resolution = 100;
+    let dft_resolution = 200;
     let sim_speed = 2;
 
     // Simulation parameters w/ 30 cells-per-wavelength
@@ -132,7 +132,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         );
 
     // Source injection in antenna feed gap
-    let source_values = Source::sin_cycle(freq, dt).repeat(10);
+    let source_values = Source::gaussian_max_f(freq, 1., dt);
     let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let dipole = simulation.add_dipole(dipole, source_values);
 
@@ -199,8 +199,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         println!("Instantaneous power flux: {instantaneous_flux}");
 
         let (flux_dft, src_dft) = &pipeline.hooks;
-        flux_plot.update_points(&backend, flux_dft.states(), &mut flux_dft_read)?;
-        src_plot.update_points(&backend, src_dft.states(), &mut src_dft_read)?;
+        src_plot.update_dft_and_points(&backend, src_dft.states(), &mut src_dft_read)?;
+        flux_plot.update_dft_and_points(&backend, flux_dft.states(), &mut flux_dft_read)?;
         plot_window.show(&mut testbed, vec![src_plot.create_line(), flux_plot.create_line()])?;
 
         pipeline.simulate(&backend, &mut state)?;
