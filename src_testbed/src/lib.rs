@@ -354,12 +354,13 @@ impl VisualizationMode {
         n_cells: GridIndex,
         cell_size: Vect,
     ) {
-        let mut cell_positions = vec![Vec3::ZERO; n_cells.element_product() as _];
-        for idx_tuple in grid_cells_iter(n_cells) {
-            let cell_idx = GridIndex::from_index_array(idx_tuple.into());
-            let flat_idx = cell_idx.to_flat_idx(n_cells);
-            cell_positions[flat_idx as usize] = (cell_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
-        }
+        let cell_count = n_cells.element_product();
+        let cell_positions = into_par_iter!(0..cell_count)
+            .map(|flat_idx| {
+                let cell_idx = GridIndex::from_flat_idx(flat_idx, n_cells);
+                (cell_idx.as_vect() * cell_size).to_3d(Vec3::ZERO)
+            })
+            .collect::<Vec<_>>();
 
         #[cfg(feature = "dim1")]
         {

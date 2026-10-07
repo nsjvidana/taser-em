@@ -230,9 +230,7 @@ impl YeeGridMaterials {
         let n_cells = self.n_cells.div_ceil(GridIndex::splat(downscale_factor));
         let cell_size = self.cell_size * downscale_factor as f32;
 
-        let kernel_cells = grid_cells_iter(GridIndex::from_index_array([downscale_factor; DIM]))
-            .map(|t| GridIndex::from_index_array(t.into()))
-            .collect::<Vec<_>>();
+        let kernel_cells = grid_cells_iter(GridIndex::splat(downscale_factor)).collect::<Vec<_>>();
         let fine_n_cells = self.n_cells;
         let fine_n_cells3 = fine_n_cells.n_cells_to_3d();
         let cell_count = n_cells.element_product() as usize;

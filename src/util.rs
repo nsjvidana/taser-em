@@ -1,6 +1,7 @@
 use khal::backend::GpuBackend;
 use taser_em_shaders::math::*;
 
+/// Does rayon `into_par_iter` if `rayon` feature is enabled, `into_iter` otherwise.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! into_par_iter {
@@ -12,6 +13,7 @@ macro_rules! into_par_iter {
     };
 }
 
+/// Does rayon `par_iter_mut` if `rayon` feature is enabled, `iter_mut` otherwise.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! par_iter_mut {
@@ -81,30 +83,13 @@ pub fn backend_name(backend: &GpuBackend) -> &'static str {
     }
 }
 
-#[cfg(feature = "dim1")]
-pub trait GridCellsIter: Iterator<Item = (Index,)> {}
-
-#[cfg(feature = "dim2")]
-pub trait GridCellsIter: Iterator<Item = (Index, Index,)> {}
-
-#[cfg(feature = "dim3")]
-pub trait GridCellsIter: Iterator<Item = (Index, Index, Index,)> {}
-
-#[cfg(feature = "dim1")]
-impl<T> GridCellsIter for T where T: Iterator<Item = (Index,)> {}
-
-#[cfg(feature = "dim2")]
-impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index,)> {}
-
-#[cfg(feature = "dim3")]
-impl<T> GridCellsIter for T where T: Iterator<Item = (Index, Index, Index,)> {}
-
 /// Constructs an iterator of all cell positions in a grid of dimensions `n_cells`.
 /// The cell positions are given as tuples but AREN'T IN ORDER
-pub fn grid_cells_iter(n_cells: GridIndex) -> impl GridCellsIter {
-    cfg_select! {
+pub fn grid_cells_iter(n_cells: GridIndex) -> impl Iterator<Item = GridIndex> {
+    let iter = cfg_select! {
         feature = "dim1" => itertools::iproduct!(0..n_cells),
         feature = "dim2" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y]),
         feature = "dim3" => itertools::iproduct!(0..n_cells[SpatialAxis::X], 0..n_cells[SpatialAxis::Y], 0..n_cells[SpatialAxis::Z]),
-    }
+    };
+    iter.map(|tuple| GridIndex::from_index_array(tuple.into()))
 }
