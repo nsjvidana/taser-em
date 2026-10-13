@@ -31,6 +31,7 @@ khal-std.workspace = true
 num-complex.workspace = true
 bitflags.workspace = true
 bytemuck.workspace = true
+derive_more.workspace = true
 
 [target.'cfg(target_arch = "spirv")'.dependencies]
 spirv-std.workspace = true

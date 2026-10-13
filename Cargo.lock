@@ -4063,6 +4063,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
+ "derive_more",
  "khal",
  "khal-std",
  "num-complex",
@@ -4075,6 +4076,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
+ "derive_more",
  "khal",
  "khal-std",
  "num-complex",
@@ -4087,6 +4089,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
+ "derive_more",
  "khal",
  "khal-std",
  "num-complex",

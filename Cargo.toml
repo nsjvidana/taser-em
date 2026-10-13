@@ -45,6 +45,7 @@ bytemuck = "1"
 itertools = "0.15"
 include_dir = "0.7"
 thiserror = { version = "2", default-features = false, features = ["std"] }
+derive_more = { version = "2", default-features = false, features = ["full"] }
 derivative = "2"
 anyhow = "1"
 
