@@ -2,12 +2,13 @@ cfg_cpu! {
     use khal::ShaderArgsType;
 }
 
-use crate::fdtd::GridParameters;
+use crate::fdtd::{fdtd_lossy_workgroups, GridParameters};
 use crate::math::*;
 use bytemuck::{Pod, Zeroable};
+use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
-use num_complex::Complex32;
+use num_complex::{Complex, Complex32};
 use crate::{cfg_cpu, workgroup_counts};
 
 /// Calculates DFT kernels that will be used by the DFT shader. You only need to dispatch this
@@ -105,5 +106,170 @@ impl GpuFunctionDft {
     #[inline]
     pub fn global_kernel_idx(&self, kernel_idx: u32) -> u32 {
         self.kernels_start + kernel_idx
+    }
+}
+
+#[spirv_bindgen]
+#[spirv(compute(threads(64, 1, 1)))]
+pub fn gpu_init_dft_regions(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] regions: &mut [GpuDftRegion],
+) {
+    let region_idx = id.x as usize;
+    if region_idx >= regions.len() { return; }
+    let region = regions.at_mut(region_idx);
+    region.kernel = Complex32::from_polar(1., -core::f32::consts::TAU * region.freq * grid.dt);
+}
+
+cfg_cpu! {
+    pub fn init_dft_workgroups(regions_params: &GpuDftRegionsParams) -> [u32; 3] {
+        workgroup_counts!([regions_params.n_regions, 1, 1], GpuInitDftRegionsArgs::WORKGROUP_SIZE)
+    }
+}
+
+// One GpuDftRegion per region frequency.
+// the grid in this shader is a maximum region grid repeated on the Z axis for each gpu region.
+#[spirv_bindgen]
+#[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
+#[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
+#[cfg_attr(feature = "dim3", spirv(compute(threads(4, 4, 4))))]
+pub fn gpu_dft_regions_update(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] params: &GpuDftRegionsParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] time_step: &u32,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &[Vec4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] regions: &[GpuDftRegion],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h_dfts: &mut [ComplexVec3],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] en_dfts: &mut [ComplexVec3],
+) {
+    let region_idx = id.z / params.max_region_n_cells.z;
+    let region = regions.read(region_idx as usize);
+    let local_cell_idx = id.with_z(id.z - region_idx * params.max_region_n_cells.z);
+    if local_cell_idx.cmpge(region.n_cells3).any() { return; }
+
+    let idx_dft = (region.region_start_idx + grid_idx3_to_flat_idx(local_cell_idx, region.n_cells3)) as usize;
+    let cell_idx = GridIndex::from_uvec3(region.cell_idx_min + local_cell_idx);
+    let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
+
+    let step = *time_step as Real;
+    let k_h = region.kernel.powf(step + 0.5);
+    let k = region.kernel.powf(step);
+    *h_dfts.at_mut(idx_dft) += k_h * ComplexVec3::from_real(h.read(idx).xyz());
+    *en_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(en.read(idx).xyz());
+}
+
+cfg_cpu! {
+    pub fn dft_regions_workgroups(regions_params: &GpuDftRegionsParams) -> [u32; 3] {
+        let thread_count = regions_params.max_region_n_cells
+            .with_z(regions_params.max_region_n_cells.z * regions_params.n_regions)
+            .to_array();
+        workgroup_counts!(thread_count, GpuDftRegionsUpdateArgs::WORKGROUP_SIZE)
+    }
+}
+
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
+pub struct GpuDftRegionsParams {
+    pub max_region_n_cells: UVec3,
+    pub n_regions: u32,
+    /// Same as [`GridParameters::n_cells3`]
+    pub n_cells3: UVec3,
+}
+
+impl GpuDftRegionsParams {
+    pub fn new(n_cells3: UVec3, dft_regions: &[GpuDftRegion]) -> Self {
+        let mut max_region_n_cells = UVec3::ZERO;
+        for region in dft_regions {
+            max_region_n_cells = max_region_n_cells.max(region.n_cells3);
+        }
+        Self {
+            max_region_n_cells,
+            n_regions: dft_regions.len() as u32,
+            n_cells3,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
+pub struct GpuDftRegion {
+    pub cell_idx_min: UVec3,
+    pub region_start_idx: u32,
+    pub n_cells3: UVec3,
+    pub freq: Real,
+    pub kernel: Complex32,
+}
+
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Pod, Zeroable, Default)]
+    #[repr(C)]
+    pub struct DftFields: u32 {
+        const H = 1 << 0;
+        // TODO: const DN = 1 << 1;
+        const EN = 1 << 2;
+        // TODO: const SN = Self::H.bits() | Self::EN.bits() | (1 << 3); ...power.
+        //       don't forget to update DftMask functions after adding these, if necessary
+    }
+}
+
+impl DftFields {
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        self.intersects(Self::H | Self::EN)
+    }
+}
+
+#[derive(Add, AddAssign, Sub, SubAssign, Mul, MulAssign, Div, DivAssign)]
+#[mul(forward)]
+#[mul_assign(forward)]
+#[div(forward)]
+#[div_assign(forward)]
+#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct ComplexVec3 {
+    pub x: Complex32,
+    pub y: Complex32,
+    pub z: Complex32,
+}
+
+impl ComplexVec3 {
+    #[inline]
+    pub const fn splat(v: Complex<f32>) -> Self {
+        Self { x: v, y: v, z: v, }
+    }
+
+    #[inline]
+    pub const fn from_real(real: Vec3) -> Self {
+        Self {
+            x: Complex32::new(real.x, 0.),
+            y: Complex32::new(real.y, 0.),
+            z: Complex32::new(real.z, 0.),
+        }
+    }
+}
+
+impl core::ops::Mul<Complex32> for ComplexVec3 {
+    type Output = Self;
+
+    fn mul(self, rhs: Complex32) -> Self::Output {
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+
+impl core::ops::Mul<ComplexVec3> for Complex32 {
+    type Output = ComplexVec3;
+
+    fn mul(self, rhs: ComplexVec3) -> Self::Output {
+        ComplexVec3 {
+            x: self * rhs.x,
+            y: self * rhs.y,
+            z: self * rhs.z,
+        }
     }
 }
