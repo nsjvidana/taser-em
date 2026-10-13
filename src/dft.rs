@@ -55,7 +55,7 @@ impl<Func: ToDft> FdtdLossyHook for DftHook<Func> {
     }
 
     fn dispatch_step(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
-        self.pipeline.dispatch_step(pass, &state, &mut self.states)
+        self.pipeline.dispatch_step(pass, state, &mut self.states)
     }
 }
 

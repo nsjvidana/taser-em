@@ -24,7 +24,7 @@ pub struct FdtdLossySimulation {
     pub background_material: ElectricMaterial,
     pub dipoles: Vec<Source<Dipole>>,
     pub tfsf_sources: Vec<Source<Tfsf>>,
-    pub power_flux_monitors: Vec<Arc<PowerFluxMonitor>>,
+    pub power_flux_sensors: Vec<Arc<PowerFluxSensor>>,
 }
 
 impl FdtdLossySimulation {
@@ -42,7 +42,7 @@ impl FdtdLossySimulation {
             background_material: ElectricMaterial::FREE_SPACE,
             dipoles: vec![],
             tfsf_sources: vec![],
-            power_flux_monitors: vec![],
+            power_flux_sensors: vec![],
         }
     }
 
@@ -64,9 +64,9 @@ impl FdtdLossySimulation {
         ptr
     }
 
-    pub fn add_flux_monitor(&mut self, power_flux_monitor: PowerFluxMonitor) -> Arc<PowerFluxMonitor> {
-        let ptr = Arc::new(power_flux_monitor);
-        self.power_flux_monitors.push(ptr.clone());
+    pub fn add_flux_sensor(&mut self, power_flux_sensor: PowerFluxSensor) -> Arc<PowerFluxSensor> {
+        let ptr = Arc::new(power_flux_sensor);
+        self.power_flux_sensors.push(ptr.clone());
         ptr
     }
 
@@ -826,7 +826,7 @@ pub struct FdtdLossyState {
     pub update_source_terms_workgroups: [u32; 3],
     pub int_terms: GpuBuffer<PmlIntegrals>,
     pub pml_coeffs: GpuBuffer<PmlCoefficients>,
-    // Monitors & DFTs
+    // Sensors & DFTs
     pub power_flux_states: Option<PowerFluxStates>,
     // Misc data
     pub workgroup_count: [u32; 3],

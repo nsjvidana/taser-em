@@ -26,19 +26,19 @@ pub fn gpu_power_flux(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_previous: &[Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &[Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &[Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_monitors: &[GpuPowerFluxMonitor],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] monitor_power: &mut [Real],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_sensors: &[GpuPowerFluxSensor],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] sensor_power: &mut [Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Real], // flat 3d array, element for every workgroup
 ) {
-    let monitor_idx = thread_id.z as usize;
-    let monitor = flux_monitors.read(monitor_idx);
+    let sensor_idx = thread_id.z as usize;
+    let sensor = flux_sensors.read(sensor_idx);
 
     // TODO: try a "cell flat idx buffer" instead of calculating flat idx each invocation
     //       also compare performance to see if it's worth the memory...
     let mut cell_idx3 = UVec3::ZERO;
-    cell_idx3.dyn_insert(monitor.axis, monitor.position);
-    cell_idx3.dyn_insert(monitor.axis1, thread_id.x);
-    cell_idx3.dyn_insert(monitor.axis2, thread_id.y);
+    cell_idx3.dyn_insert(sensor.axis, sensor.position);
+    cell_idx3.dyn_insert(sensor.axis1, thread_id.x);
+    cell_idx3.dyn_insert(sensor.axis2, thread_id.y);
 
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
@@ -76,7 +76,7 @@ pub fn gpu_power_flux(
     let h_avg_fut = h_avg(grid, idx, h);
     let h_avg = (h_avg_prev + h_avg_fut) * 0.5;
     let p = en_avg.cross(h_avg);
-    let power = p.dot(monitor.da);
+    let power = p.dot(sensor.da);
 
     let enable_f = idx_enable as Real;
     let local_pwr_idx = grid_idx3_to_flat_idx(local_idx3, FLUX_WORKGROUP_SIZE) as usize;
@@ -92,25 +92,25 @@ pub fn gpu_power_flux(
     }
     wg_summations.write(wg_flat_idx, wg_power_sum);
 
-    // Merge workgroup sums for each monitor
-    if thread_id.x != 0 || thread_id.y != 0 { return; }; // one invocation per monitor
+    // Merge workgroup sums for each sensor
+    if thread_id.x != 0 || thread_id.y != 0 { return; }; // one invocation per sensor
     let mut power_integral = wg_power_sum;
     for plane_wg_idx in wg_flat_idx..(wg_flat_idx + (n_workgroups.x * n_workgroups.y) as usize) {
         power_integral += wg_summations.read(plane_wg_idx);
     }
-    monitor_power.write(monitor_idx, power_integral);
+    sensor_power.write(sensor_idx, power_integral);
 }
 
 cfg_cpu! {
-    pub fn flux_workgroups(n_cells: GridIndex, n_flux_monitors: Index) -> [u32; 3] {
+    pub fn flux_workgroups(n_cells: GridIndex, n_flux_sensors: Index) -> [u32; 3] {
         let max_n = n_cells.max_element();
-        workgroup_counts!([max_n, max_n, n_flux_monitors], GpuPowerFluxArgs::WORKGROUP_SIZE)
+        workgroup_counts!([max_n, max_n, n_flux_sensors], GpuPowerFluxArgs::WORKGROUP_SIZE)
     }
 }
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
-pub struct GpuPowerFluxMonitor {
+pub struct GpuPowerFluxSensor {
     /// Magnitude-direction of `da` vector used in power flux integral.
     pub da: Vec3,
     pub axis: Axis,

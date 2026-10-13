@@ -102,7 +102,7 @@ impl FdtdTestbedViewer {
         selff.add_region_meshes(&simulation.material_regions, sim_offset);
 
         selff.add_flux_planes(
-            simulation.power_flux_monitors.iter().map(|rc| rc.as_ref())
+            simulation.power_flux_sensors.iter().map(|rc| rc.as_ref())
         );
 
         Ok(selff)
@@ -192,11 +192,11 @@ impl FdtdTestbedViewer {
         }
     }
 
-    pub fn add_flux_planes<'a>(&mut self, flux_monitors: impl Iterator<Item=&'a PowerFluxMonitor>) {
+    pub fn add_flux_planes<'a>(&mut self, flux_sensors: impl Iterator<Item=&'a PowerFluxSensor>) {
         let grid_dims = self.grid_bb_max - self.grid_bb_min;
         let grid_center = self.grid_bb_min + grid_dims * 0.5;
-        for monitor in flux_monitors {
-            let axis = Axis::from(monitor.axis);
+        for sensor in flux_sensors {
+            let axis = Axis::from(sensor.axis);
             let axis1 = axis.permute();
             let axis2 = axis1.permute();
 
@@ -205,11 +205,11 @@ impl FdtdTestbedViewer {
             let axis2_v = axis2.to_vec3();
             let pose = Pose3 {
                 rotation: Rot3::from_mat3(&Mat3::from_cols(axis1_v, axis2_v, normal)),
-                translation: grid_center + normal * monitor.position,
+                translation: grid_center + normal * sensor.position,
                 padding: 0,
             };
 
-            let d_axis = self.cell_size[monitor.axis];
+            let d_axis = self.cell_size[sensor.axis];
             let widths = (self.n_cells.as_vect() * self.cell_size)
                 .to_3d(Vec3::splat(d_axis));
             self.scene
@@ -217,7 +217,7 @@ impl FdtdTestbedViewer {
                 .set_pose(pose)
                 .enable_backface_culling(false)
                 .set_color(
-                    match monitor.direction {
+                    match sensor.direction {
                         Direction::Positive => RED,
                         Direction::None => WHITE,
                         Direction::Negative => CYAN

@@ -136,9 +136,9 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let dipole = simulation.add_dipole(dipole, source_values);
 
-    // Power flux monitor for reading back power flux
-    let flux_monitor = simulation.add_flux_monitor(
-        PowerFluxMonitor {
+    // Power flux sensor for reading back power flux
+    let flux_sensor = simulation.add_flux_sensor(
+        PowerFluxSensor {
             axis: SpatialAxis::X,
             position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
             direction: Direction::Negative,
@@ -161,7 +161,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Set up power flux and source DFTs
     let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-    let (flux_dft, flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
+    let (flux_dft, flux_func) = PowerFluxFunction::new(&flux_sensor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
     let flux_dft_hook = DftHook::new(&backend, [flux_dft], &state)?;
     let (src_dft, src_func) = SourceFunction::new(&dipole, &state.source_states)?
@@ -171,7 +171,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
-        .expect("we added a flux monitor to the simulation, so readback must be possible");
+        .expect("we added a flux sensor to the simulation, so readback must be possible");
     let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_hook).await?;
     let mut src_dft_read = DftReadback::new(&backend, &src_dft_hook).await?;
 
@@ -195,7 +195,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
-        let instantaneous_flux = power_readback.get_power(&flux_monitor).unwrap();
+        let instantaneous_flux = power_readback.get_power(&flux_sensor).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
 
         let (flux_dft, src_dft) = &pipeline.hooks;
@@ -253,9 +253,9 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
     let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let dipole = simulation.add_dipole(dipole, source_values);
 
-    // Power flux monitor for reading back power flux
-    let flux_monitor = simulation.add_flux_monitor(
-        PowerFluxMonitor {
+    // Power flux sensor for reading back power flux
+    let flux_sensor = simulation.add_flux_sensor(
+        PowerFluxSensor {
             axis: SpatialAxis::X,
             position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
             direction: Direction::Negative,
@@ -278,7 +278,7 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
 
     // Set up power flux & source DFT
     let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-    let (dft, _flux_func) = PowerFluxFunction::new(&flux_monitor, state.power_flux_states.as_ref().unwrap())?
+    let (dft, _flux_func) = PowerFluxFunction::new(&flux_sensor, state.power_flux_states.as_ref().unwrap())?
         .to_dft(frequencies.clone())?;
     let flux_dft_hook = DftHook::new(&backend, [dft], &state)?;
     let (dft, _src_func) = SourceFunction::new(&dipole, &state.source_states)?
@@ -288,7 +288,7 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
     // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
-        .expect("we added a flux monitor to the simulation, so readback must be possible");
+        .expect("we added a flux sensor to the simulation, so readback must be possible");
     let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_hook).await?;
     let mut src_dft_read = DftReadback::new(&backend, &src_dft_hook).await?;
 

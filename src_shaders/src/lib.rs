@@ -5,7 +5,7 @@ pub mod math;
 pub mod fdtd;
 pub mod boundary;
 pub mod dft;
-pub mod monitor;
+pub mod sensor;
 pub mod source;
 
 #[macro_export]

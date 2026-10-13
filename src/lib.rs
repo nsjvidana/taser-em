@@ -16,7 +16,7 @@ pub mod mesh_loading;
 pub mod util;
 pub mod gpu_util;
 pub mod error;
-pub mod monitor;
+pub mod sensor;
 pub mod dft;
 
 pub mod re_exports {
@@ -42,7 +42,7 @@ pub mod prelude {
     pub use crate::mesh_loading::*;
     pub use crate::util::*;
     pub use crate::error::Error;
-    pub use crate::monitor::*;
+    pub use crate::sensor::*;
     pub use crate::dft::*;
     pub use taser_em_shaders::math::*;
     pub use taser_em_shaders::source::DipoleType;

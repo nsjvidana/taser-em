@@ -2,7 +2,7 @@ use std::sync::Arc;
 use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use taser_em_shaders::math::*;
-use taser_em_shaders::monitor::*;
+use taser_em_shaders::sensor::*;
 use crate::dft::{Dft, ToDft};
 use crate::gpu_util::CreateGpuBuffer;
 use crate::prelude::TaserResult;
@@ -10,10 +10,10 @@ use crate::prelude::TaserResult;
 /// Measure Poynting Flux flowing through a plane perpendicular to `axis`, stretching to the edges
 /// of the grid
 ///
-/// Cuts into spacer regions, meaning spacer regions won't wrap around [`PowerFluxMonitor`]s.
-/// If the monitor ends up outside the grid, an error will be returned.
+/// Cuts into spacer regions, meaning spacer regions won't wrap around [`PowerFluxSensor`]s.
+/// If the sensor ends up outside the grid, an error will be returned.
 #[derive(Clone, Debug)]
-pub struct PowerFluxMonitor {
+pub struct PowerFluxSensor {
     pub axis: SpatialAxis,
     /// Position of plane along `axis` in world-space.
     pub position: Real,
@@ -25,26 +25,26 @@ pub struct PowerFluxMonitor {
 
 #[derive(Clone)]
 pub struct PowerFluxFunction {
-    obj: Arc<PowerFluxMonitor>,
-    monitor_idx: usize,
+    obj: Arc<PowerFluxSensor>,
+    sensor_idx: usize,
 }
 
 impl PowerFluxFunction {
-    pub fn new(monitor: &Arc<PowerFluxMonitor>, flux_state: &PowerFluxStates) -> TaserResult<Self> {
-        let (monitor_idx, _) = flux_state.monitors.iter()
+    pub fn new(sensor: &Arc<PowerFluxSensor>, flux_state: &PowerFluxStates) -> TaserResult<Self> {
+        let (sensor_idx, _) = flux_state.sensors.iter()
             .enumerate()
-            .find(|(_, m)| Arc::ptr_eq(m, monitor))
-            .ok_or_else(|| PowerFluxError::MissingMonitor(monitor.clone()))?;
+            .find(|(_, m)| Arc::ptr_eq(m, sensor))
+            .ok_or_else(|| PowerFluxError::MissingSensor(sensor.clone()))?;
 
         Ok(Self {
-            obj: monitor.clone(),
-            monitor_idx,
+            obj: sensor.clone(),
+            sensor_idx,
         })
     }
 
-    pub fn get_monitor_ref(&self) -> &Arc<PowerFluxMonitor> { &self.obj }
+    pub fn get_sensor_ref(&self) -> &Arc<PowerFluxSensor> { &self.obj }
 
-    pub fn monitor_idx(&self) -> usize { self.monitor_idx }
+    pub fn sensor_idx(&self) -> usize { self.sensor_idx }
 }
 
 impl ToDft for PowerFluxFunction {
@@ -53,37 +53,37 @@ impl ToDft for PowerFluxFunction {
         Ok((Dft::new(frequencies, ptr.clone())?, ptr))
     }
 
-    fn get_value_position(&self) -> usize { self.monitor_idx() }
+    fn get_value_position(&self) -> usize { self.sensor_idx() }
 
     fn get_value_buffer(state: &FdtdLossyState) -> TaserResult<&GpuBuffer<Real>> {
         let flux_states = state.power_flux_states
             .as_ref()
-            .ok_or(PowerFluxError::NoMonitors)?;
-        Ok(&flux_states.monitor_power)
+            .ok_or(PowerFluxError::NoSensors)?;
+        Ok(&flux_states.sensor_power)
     }
 }
 
 pub struct PowerFluxReadback {
-    monitors: Vec<Arc<PowerFluxMonitor>>,
-    monitor_power: Vec<Real>,
-    monitor_power_read: GpuReadback<Real>
+    sensors: Vec<Arc<PowerFluxSensor>>,
+    sensor_power: Vec<Real>,
+    sensor_power_read: GpuReadback<Real>
 }
 
 impl PowerFluxReadback {
     pub fn new(backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<Option<Self>> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(None); };
-        let n_powers = flux_state.monitor_power.len();
+        let n_powers = flux_state.sensor_power.len();
         Ok(Some(Self {
-            monitors: flux_state.monitors.clone(),
-            monitor_power: vec![0.; n_powers],
-            monitor_power_read: GpuReadback::new(backend, n_powers)?,
+            sensors: flux_state.sensors.clone(),
+            sensor_power: vec![0.; n_powers],
+            sensor_power_read: GpuReadback::new(backend, n_powers)?,
         }))
     }
 
     pub fn request_copy(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(()); };
-        if self.monitor_power_read.is_idle() {
-        self.monitor_power_read.request_copy(backend, &flux_state.monitor_power, 0)?;
+        if self.sensor_power_read.is_idle() {
+        self.sensor_power_read.request_copy(backend, &flux_state.sensor_power, 0)?;
         }
         Ok(())
     }
@@ -95,13 +95,13 @@ impl PowerFluxReadback {
     }
 
     pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
-        self.monitor_power_read.try_take(backend, &mut self.monitor_power)
+        self.sensor_power_read.try_take(backend, &mut self.sensor_power)
     }
 
-    pub fn get_power(&self, monitor: &Arc<PowerFluxMonitor>) -> Option<Real> {
-        self.monitors.iter()
-            .zip(self.monitor_power.iter())
-            .find(|(m, _)| Arc::ptr_eq(m, monitor))
+    pub fn get_power(&self, sensor: &Arc<PowerFluxSensor>) -> Option<Real> {
+        self.sensors.iter()
+            .zip(self.sensor_power.iter())
+            .find(|(m, _)| Arc::ptr_eq(m, sensor))
             .map(|(_, pwr)| *pwr)
     }
 }
@@ -129,8 +129,8 @@ impl PowerFluxPipeline {
             &sim_state.h_previous,
             &sim_state.h,
             &sim_state.en,
-            &flux_state.flux_monitors,
-            &mut flux_state.monitor_power,
+            &flux_state.flux_sensors,
+            &mut flux_state.sensor_power,
             &mut flux_state.wg_summations,
         )?;
 
@@ -139,9 +139,9 @@ impl PowerFluxPipeline {
 }
 
 pub struct PowerFluxStates {
-    pub monitors: Vec<Arc<PowerFluxMonitor>>,
-    pub flux_monitors: GpuBuffer<GpuPowerFluxMonitor>,
-    pub monitor_power: GpuBuffer<Real>,
+    pub sensors: Vec<Arc<PowerFluxSensor>>,
+    pub flux_sensors: GpuBuffer<GpuPowerFluxSensor>,
+    pub sensor_power: GpuBuffer<Real>,
     pub wg_summations: GpuBuffer<Real>,
     pub workgroups: [u32; 3],
 }
@@ -153,24 +153,24 @@ impl PowerFluxStates {
         n_cells: GridIndex,
         sim_offset: &Vec3
     ) -> TaserResult<Option<Self>> {
-        if sim.power_flux_monitors.is_empty() {
+        if sim.power_flux_sensors.is_empty() {
             return Ok(None);
         }
 
-        let workgroups = flux_workgroups(n_cells, sim.power_flux_monitors.len() as _);
+        let workgroups = flux_workgroups(n_cells, sim.power_flux_sensors.len() as _);
 
         let cell_size3_one = sim.fdtd_parameters.cell_size
             .to_3d(Vec3::ONE);
 
-        let (monitors, flux_monitors) = sim.power_flux_monitors.iter()
-            .map(|monitor| {
-                let axis = Axis::from(monitor.axis);
+        let (sensors, flux_sensors) = sim.power_flux_sensors.iter()
+            .map(|sensor| {
+                let axis = Axis::from(sensor.axis);
                 let axis1 = axis.permute();
                 let axis2 = axis1.permute();
 
-                let da = axis.to_vec3() * monitor.direction as i32 as Real;
-                let position = ((sim_offset[axis] + monitor.position) / cell_size3_one[axis]) as u32;
-                let gpu_monitor = GpuPowerFluxMonitor {
+                let da = axis.to_vec3() * sensor.direction as i32 as Real;
+                let position = ((sim_offset[axis] + sensor.position) / cell_size3_one[axis]) as u32;
+                let gpu_sensor = GpuPowerFluxSensor {
                     da,
                     axis,
                     axis1,
@@ -178,30 +178,30 @@ impl PowerFluxStates {
                     position,
                     _padding0: 0,
                 };
-                (monitor.clone(), gpu_monitor)
+                (sensor.clone(), gpu_sensor)
             })
             .collect::<(Vec<_>, Vec<_>)>();
 
-        let monitor_power = vec![0.; sim.power_flux_monitors.len()].create_gpu_buffer(backend)?;
+        let sensor_power = vec![0.; sim.power_flux_sensors.len()].create_gpu_buffer(backend)?;
         let wg_summations = vec![0.; workgroups.iter().product::<u32>() as usize]
             .create_gpu_buffer(backend)?;
 
         Ok(Some(Self {
-            monitors,
-            flux_monitors: flux_monitors.create_gpu_buffer(backend)?,
-            monitor_power,
+            sensors,
+            flux_sensors: flux_sensors.create_gpu_buffer(backend)?,
+            sensor_power,
             wg_summations,
             workgroups,
         }))
     }
 }
 
-// TODO: probe monitor (measures at one point)
+// TODO: probe sensor (measures at one point)
 
 #[derive(thiserror::Error, Debug)]
 pub enum PowerFluxError {
-    #[error("The following monitor couldn't be found in the simulation: {0:?}")]
-    MissingMonitor(Arc<PowerFluxMonitor>),
-    #[error("Tried accessing data of a monitor but none are in the simulation")]
-    NoMonitors
+    #[error("The following sensor couldn't be found in the simulation: {0:?}")]
+    MissingSensor(Arc<PowerFluxSensor>),
+    #[error("Tried accessing data of a sensor but none are in the simulation")]
+    NoSensors
 }
