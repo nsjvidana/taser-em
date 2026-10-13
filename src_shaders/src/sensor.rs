@@ -50,32 +50,8 @@ pub fn gpu_power_flux(
     let idx = cell_idx.to_flat_idx(n_cells) as usize * idx_enable;
 
     let en_self = en.read(idx);
-    let en_pyz = en.read(idx + (grid.flat_idx_incrs.y + grid.flat_idx_incrs.z) as usize);
-    let en_pzx = en.read(idx + (grid.flat_idx_incrs.z + grid.flat_idx_incrs.x) as usize);
-    let en_pxy = en.read(idx + (grid.flat_idx_incrs.x + grid.flat_idx_incrs.y) as usize);
-    let en_avg = Vec3 {
-        x: (en_self.x + en_pyz.x) * 0.5,
-        y: (en_self.y + en_pzx.y) * 0.5,
-        z: (en_self.z + en_pxy.z) * 0.5,
-    };
-
-    fn h_avg(grid: &GridParameters, idx: usize, h: &[Vec4]) -> Vec3 {
-        let h_self = h.read(idx);
-        let h_px = h.read(idx + grid.flat_idx_incrs.x as usize);
-        let h_py = h.read(idx + grid.flat_idx_incrs.y as usize);
-        let h_pz = h.read(idx + grid.flat_idx_incrs.z as usize);
-        Vec3 {
-            x: (h_self.x + h_px.x) * 0.5,
-            y: (h_self.y + h_py.y) * 0.5,
-            z: (h_self.z + h_pz.z) * 0.5,
-        }
-    }
-
-    // Compute power at cell
-    let h_avg_prev = h_avg(grid, idx, h_previous);
-    let h_avg_fut = h_avg(grid, idx, h);
-    let h_avg = (h_avg_prev + h_avg_fut) * 0.5;
-    let p = en_avg.cross(h_avg);
+    let h_self = h.read(idx);
+    let p = compute_poynting(grid, h_previous, h, en, idx, &en_self, &h_self);
     let power = p.dot(sensor.da);
 
     let enable_f = idx_enable as Real;
@@ -118,4 +94,40 @@ pub struct GpuPowerFluxSensor {
     pub axis2: Axis,
     pub position: u32,
     pub _padding0: u32,
+}
+
+fn compute_poynting(
+    grid: &GridParameters,
+    h_previous: &[Vec4],
+    h: &[Vec4],
+    en: &[Vec4],
+    idx: usize,
+    en_self: &Vec4,
+    h_self: &Vec4,
+) -> Vec3 {
+    let en_pyz = en.read(idx + (grid.flat_idx_incrs.y + grid.flat_idx_incrs.z) as usize);
+    let en_pzx = en.read(idx + (grid.flat_idx_incrs.z + grid.flat_idx_incrs.x) as usize);
+    let en_pxy = en.read(idx + (grid.flat_idx_incrs.x + grid.flat_idx_incrs.y) as usize);
+    let en_avg = Vec3 {
+        x: (en_self.x + en_pyz.x) * 0.5,
+        y: (en_self.y + en_pzx.y) * 0.5,
+        z: (en_self.z + en_pxy.z) * 0.5,
+    };
+
+    fn h_avg(grid: &GridParameters, idx: usize, h: &[Vec4], h_self: &Vec4) -> Vec3 {
+        let h_px = h.read(idx + grid.flat_idx_incrs.x as usize);
+        let h_py = h.read(idx + grid.flat_idx_incrs.y as usize);
+        let h_pz = h.read(idx + grid.flat_idx_incrs.z as usize);
+        Vec3 {
+            x: (h_self.x + h_px.x) * 0.5,
+            y: (h_self.y + h_py.y) * 0.5,
+            z: (h_self.z + h_pz.z) * 0.5,
+        }
+    }
+
+    // Compute power at cell
+    let h_avg_prev = h_avg(grid, idx, h_previous, h_self);
+    let h_avg_fut = h_avg(grid, idx, h, h_self);
+    let h_avg = (h_avg_prev + h_avg_fut) * 0.5;
+    en_avg.cross(h_avg)
 }
