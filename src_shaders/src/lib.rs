@@ -35,6 +35,7 @@ macro_rules! cfg_cpu {
     };
 }
 
+/// Creates workgroup counts from thread counts, given the workgroup size as an array.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! workgroup_counts {

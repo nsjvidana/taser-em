@@ -191,7 +191,7 @@ impl FdtdLossySimulation {
             pml_coeffs: pml_coeffs.coeffs.create_gpu_buffer(backend)?,
             // Misc data
             power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
-            thread_count: n_cells.n_cells_to_3d().to_array(),
+            workgroup_count: fdtd_lossy_workgroups(n_cells),
             n_cells,
         };
         Ok(state)
@@ -400,7 +400,7 @@ where
 
         self.init_pec.call(
             pass,
-            DispatchGrid::ThreadCount(state.thread_count),
+            DispatchGrid::Grid(state.workgroup_count),
             &state.grid,
             &mut state.h,
             &mut state.dn,
@@ -446,7 +446,7 @@ where
 
             self.h_update.call(
                 pass,
-                DispatchGrid::ThreadCount(state.thread_count),
+                DispatchGrid::Grid(state.workgroup_count),
                 &state.grid,
                 &mut state.h_previous,
                 &mut state.h,
@@ -460,7 +460,7 @@ where
 
             self.dn_en_update.call(
                 pass,
-                DispatchGrid::ThreadCount(state.thread_count),
+                DispatchGrid::Grid(state.workgroup_count),
                 &state.grid,
                 &mut state.t_idx,
                 &mut state.h,
@@ -829,7 +829,7 @@ pub struct FdtdLossyState {
     // Monitors & DFTs
     pub power_flux_states: Option<PowerFluxStates>,
     // Misc data
-    pub thread_count: [u32; 3], // TODO: turn this into a workgroups count
+    pub workgroup_count: [u32; 3],
     pub n_cells: GridIndex,
 }
 

@@ -167,7 +167,7 @@ macro_rules! impl_pec_boundary {
             fn initialize(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
                 self.init_kernel.call(
                     pass,
-                    DispatchGrid::ThreadCount(state.thread_count),
+                    DispatchGrid::Grid(state.workgroup_count),
                     &state.grid,
                     &mut state.pml_coeffs
                 )?;
@@ -204,7 +204,7 @@ macro_rules! periodic_boundary {
             ) -> TaserResult<()> {
                 Ok(self.en_kernel.call(
                     pass,
-                    DispatchGrid::ThreadCount(state.thread_count),
+                    DispatchGrid::Grid(state.workgroup_count),
                     &state.grid,
                     &mut state.en,
                 )?)
@@ -217,7 +217,7 @@ macro_rules! periodic_boundary {
             ) -> TaserResult<()> {
                 Ok(self.h_kernel.call(
                     pass,
-                    DispatchGrid::ThreadCount(state.thread_count),
+                    DispatchGrid::Grid(state.workgroup_count),
                     &state.grid,
                     &mut state.h,
                 )?)

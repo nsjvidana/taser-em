@@ -6,7 +6,7 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, Visual
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::DipoleAntenna;
+    let example = Example::BenchAll;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),

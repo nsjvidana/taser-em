@@ -1,13 +1,18 @@
 #![allow(clippy::needless_range_loop)]
+
+cfg_cpu! {
+    use khal::ShaderArgsType;
+}
+#[allow(unused_imports)]
+use khal_std::num_traits::Float;
+
 use crate::math::*;
 use crate::source::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::glamx::{UVec3, Vec3, Vec4};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
-
-#[allow(unused_imports)]
-use khal_std::num_traits::Float;
+use crate::{cfg_cpu, workgroup_counts};
 
 /// Initialize field vectors inside perfect electric conductors to be zero.
 #[spirv_bindgen]
@@ -218,6 +223,13 @@ pub fn gpu_lossy_dn_en_update(
 
     if cell_idx == GridIndex::ONE {
         *steps += 1;
+    }
+}
+
+cfg_cpu! {
+    /// Compute workgroup count for main simulation from grid dimensions
+    pub fn fdtd_lossy_workgroups(n_cells: GridIndex) -> [u32; 3] {
+        workgroup_counts!(n_cells.to_3d(UVec3::ONE).to_array(), GpuLossyHUpdateArgs::WORKGROUP_SIZE)
     }
 }
 
