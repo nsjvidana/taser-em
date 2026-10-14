@@ -40,6 +40,7 @@ egui = "0.34"
 glamx = { version = "0.3", features = ["bytemuck"] }
 num-complex = { version = "0.4.6", default-features = false, features = ["bytemuck", "libm"] }
 mesh-loader = { version = "0.1.13", features = ["stl", "collada", "obj"] }
+ndarray = "0.17.2"
 bitflags = { version = "2.13.0", default-features = false, features = ["bytemuck"] }
 bytemuck = "1"
 itertools = "0.15"
