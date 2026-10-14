@@ -154,6 +154,7 @@ pub fn gpu_dft_regions_update(
     let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
 
     let k = region.kernel.powu(*time_step);
+    // TODO: post-process H DFTs with e^(-jw*dt/2)
     *h_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(h.read(idx).xyz());
     *en_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(en.read(idx).xyz());
 }
@@ -201,11 +202,12 @@ pub struct GpuDftRegion {
     pub n_cells3: UVec3,
     pub freq: Real,
     pub kernel: Complex32,
-    pub _padding0: [u32; 2],
+    pub cell_count: u32,
+    pub _padding0: u32,
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone, Pod, Zeroable, Default)]
+    #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
     #[repr(C)]
     pub struct DftFields: u32 {
         const H = 1 << 0;
@@ -223,6 +225,7 @@ impl DftFields {
     }
 }
 
+// TODO: move this to math module
 #[derive(Add, AddAssign, Sub, SubAssign, Mul, MulAssign, Div, DivAssign)]
 #[mul(forward)]
 #[mul_assign(forward)]
@@ -277,3 +280,4 @@ impl core::ops::Mul<ComplexVec3> for Complex32 {
         }
     }
 }
+

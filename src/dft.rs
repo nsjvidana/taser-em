@@ -4,6 +4,7 @@ use crate::prelude::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use std::sync::Arc;
 use itertools::Itertools;
+use ndarray::IxDyn;
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
@@ -32,7 +33,7 @@ impl<Func: ToDft> Dft<Func> {
     pub fn get_function(&self) -> &Arc<Func> { &self.function }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DftRegion {
     pub frequencies: Vec<Real>,
     pub bb_min: Vect,
@@ -99,6 +100,68 @@ impl FdtdLossyHook for DftRegionsHook {
     }
 }
 
+pub struct DftRegionReadback {
+    refs: Vec<DftRegionRef>,
+    h_dfts: Vec<ComplexVec3>,
+    en_dfts: Vec<ComplexVec3>,
+    h_dfts_read: GpuReadback<ComplexVec3>,
+    en_dfts_read: GpuReadback<ComplexVec3>,
+}
+
+impl DftRegionReadback {
+    pub fn new(backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<Self> {
+        Ok(Self {
+            refs: state.region_refs.clone(),
+            h_dfts: vec![ComplexVec3::ZERO; state.h_dfts.len()],
+            en_dfts: vec![ComplexVec3::ZERO; state.en_dfts.len()],
+            h_dfts_read: GpuReadback::new(backend, state.h_dfts.len())?,
+            en_dfts_read: GpuReadback::new(backend, state.en_dfts.len())?,
+        })
+    }
+
+    pub fn get_h(&self, region: &Arc<DftRegion>, freq_idx: u32) -> TaserResult<ndarray::ArrayD<ComplexVec3>> {
+        let Some(region) = self.refs.iter()
+            .find(|r| Arc::ptr_eq(&r.ptr, region))
+            .map(|r| &r.desc)
+        else {
+            return Err(DftError::CannotFindRegion(region.clone()).into());
+        };
+
+        let start = (region.dft_start_idx + region.cell_count * freq_idx) as usize;
+        let h = self.h_dfts.get(start..(start + region.cell_count as usize))
+            .expect("freq_idx must be a valid frequency index");
+        let dims = region.n_cells3.as_usizevec3().to_array();
+        Ok(ndarray::ArrayD::from_shape_vec(IxDyn(&dims), h.to_vec())
+                .expect("regions were initialized properly"))
+    }
+
+    pub fn update_cycle(&mut self, backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<()> {
+        self.read_back(backend)?;
+        self.request_copy(backend, state)
+    }
+
+    pub fn read_back(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back(backend);
+        Ok(())
+    }
+
+    pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
+        self.h_dfts_read.try_take(backend, &mut self.h_dfts) &&
+            self.en_dfts_read.try_take(backend, &mut self.en_dfts)
+    }
+
+    pub fn request_copy(&mut self, backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<()> {
+        if self.h_dfts_read.is_idle() {
+            self.h_dfts_read.request_copy(backend, &state.h_dfts, 0)?;
+        }
+        if self.en_dfts_read.is_idle() {
+            self.en_dfts_read.request_copy(backend, &state.en_dfts, 0)?;
+        }
+        Ok(())
+    }
+}
+
 pub struct DftRegionStates {
     region_refs: Vec<DftRegionRef>,
     params: GpuBuffer<GpuDftRegionsParams>,
@@ -132,6 +195,7 @@ impl DftRegionStates {
                     n_cells3,
                     freq: 0., // This specific region will be stored on gpu for reference, so frequency can be zero
                     kernel: Complex32::ZERO,
+                    cell_count,
                     _padding0: Default::default(),
                 };
                 DftRegionRef { ptr: region.clone(), desc: region_gpu_desc }
@@ -164,6 +228,7 @@ impl DftRegionStates {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct DftRegionRef {
     pub ptr: Arc<DftRegion>,
     pub desc: GpuDftRegion,
@@ -455,5 +520,7 @@ pub enum DftError {
     #[error("Couldn't find DFT function")]
     CannotFindFunction,
     #[error("At least one DFT region must be provided")]
-    NoRegions
+    NoRegions,
+    #[error("Couldn't find DFT region {0:?}")]
+    CannotFindRegion(Arc<DftRegion>),
 }
