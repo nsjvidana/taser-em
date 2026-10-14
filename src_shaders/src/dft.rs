@@ -2,7 +2,7 @@ cfg_cpu! {
     use khal::ShaderArgsType;
 }
 
-use crate::fdtd::{fdtd_lossy_workgroups, GridParameters};
+use crate::fdtd::GridParameters;
 use crate::math::*;
 use bytemuck::{Pod, Zeroable};
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
@@ -153,10 +153,8 @@ pub fn gpu_dft_regions_update(
     let cell_idx = GridIndex::from_uvec3(region.cell_idx_min + local_cell_idx);
     let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
 
-    let step = *time_step as Real;
-    let k_h = region.kernel.powf(step + 0.5);
-    let k = region.kernel.powf(step);
-    *h_dfts.at_mut(idx_dft) += k_h * ComplexVec3::from_real(h.read(idx).xyz());
+    let k = region.kernel.powu(*time_step);
+    *h_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(h.read(idx).xyz());
     *en_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(en.read(idx).xyz());
 }
 
@@ -203,6 +201,7 @@ pub struct GpuDftRegion {
     pub n_cells3: UVec3,
     pub freq: Real,
     pub kernel: Complex32,
+    pub _padding0: [u32; 2],
 }
 
 bitflags::bitflags! {
@@ -238,6 +237,8 @@ pub struct ComplexVec3 {
 }
 
 impl ComplexVec3 {
+    pub const ZERO: Self = Self::splat(Complex32::ZERO);
+
     #[inline]
     pub const fn splat(v: Complex<f32>) -> Self {
         Self { x: v, y: v, z: v, }
