@@ -3,6 +3,7 @@ use crate::gpu_util::*;
 use crate::prelude::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use std::sync::Arc;
+use itertools::Itertools;
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
@@ -29,6 +30,143 @@ impl<Func: ToDft> Dft<Func> {
     pub fn get_frequencies(&self) -> &Vec<Real> { &self.frequencies }
 
     pub fn get_function(&self) -> &Arc<Func> { &self.function }
+}
+
+#[derive(Clone)]
+pub struct DftRegion {
+    pub frequencies: Vec<Real>,
+    pub bb_min: Vect,
+    pub bb_max: Vect,
+    pub fields: DftFields,
+}
+
+impl DftRegion {
+    pub fn new(frequencies: Vec<Real>, bb_min: Vect, bb_max: Vect, fields: DftFields) -> DftRegion {
+        Self { frequencies, bb_min, bb_max, fields }
+    }
+}
+
+pub struct DftRegionsHook {
+    init_kernels: GpuInitDftRegions,
+    update: GpuDftRegionsUpdate,
+    state: DftRegionStates, // TODO: make states into an input for hooks
+}
+
+impl DftRegionsHook {
+    pub fn new(backend: &GpuBackend, state: DftRegionStates) -> TaserResult<Self> {
+        Ok(Self {
+            init_kernels: GpuInitDftRegions::from_dir(backend, &crate::SPIRV_DIR)?,
+            update: GpuDftRegionsUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            state,
+        })
+    }
+}
+
+impl FdtdLossyHook for DftRegionsHook {
+    fn initialize(&mut self, pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> {
+        let DftRegionStates {
+            params, regions, init_workgroups, ..
+        } = &mut self.state;
+        self.init_kernels.call(
+            pass,
+            DispatchGrid::Grid(*init_workgroups),
+            params,
+            regions
+        )?;
+        Ok(())
+    }
+
+    fn dispatch_step(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
+        let DftRegionStates {
+            params, regions,
+            h_dfts,en_dfts,
+            update_workgroups, ..
+        } = &mut self.state;
+
+        // TODO: defer this shader by cloning En & H into separate buffer
+        self.update.call(
+            pass,
+            DispatchGrid::Grid(*update_workgroups),
+            params,
+            &sim_state.t_idx,
+            &sim_state.h,
+            &sim_state.en,
+            regions,
+            h_dfts,
+            en_dfts
+        )?;
+        Ok(())
+    }
+}
+
+pub struct DftRegionStates {
+    region_refs: Vec<DftRegionRef>,
+    params: GpuBuffer<GpuDftRegionsParams>,
+    regions: GpuBuffer<GpuDftRegion>,
+    h_dfts: GpuBuffer<ComplexVec3>,
+    en_dfts: GpuBuffer<ComplexVec3>,
+    init_workgroups: [u32; 3],
+    update_workgroups: [u32; 3],
+}
+
+impl DftRegionStates {
+    pub fn new(backend: &GpuBackend, sim: &FdtdLossyState, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
+        if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
+
+        let mut n_dfts = 0;
+        let region_refs = region_objs.iter()
+            .map(|region| {
+                let bb_min_offset = region.bb_min + Vect::from_vec3(sim.grid_sizing.sim_offset);
+                let cell_idx_min = (bb_min_offset / sim.cell_size).as_grid_index().cell_idx_to_3d();
+                let dft_start_idx = n_dfts;
+                let n_cells3 = ((region.bb_max - region.bb_min) / sim.cell_size)
+                    .as_grid_index()
+                    .n_cells_to_3d();
+
+                let cell_count = n_cells3.element_product();
+                n_dfts += cell_count * region.frequencies.len() as u32;
+
+                let region_gpu_desc = GpuDftRegion {
+                    cell_idx_min,
+                    dft_start_idx,
+                    n_cells3,
+                    freq: 0., // This specific region will be stored on gpu for reference, so frequency can be zero
+                    kernel: Complex32::ZERO,
+                    _padding0: Default::default(),
+                };
+                DftRegionRef { ptr: region.clone(), desc: region_gpu_desc }
+            })
+            .collect::<Vec<_>>();
+        let dfts_zeroed = vec![ComplexVec3::ZERO; n_dfts as usize];
+
+        let regions = region_refs.iter()
+            .map(|r| {
+                let regions = r.ptr.frequencies.iter()
+                    .copied()
+                    .map(|freq| GpuDftRegion { freq, ..r.desc })
+                    .collect::<Vec<_>>();
+                if regions.is_empty() { return Err(DftError::NoFrequencies) }
+                Ok(regions)
+            })
+            .flatten_ok()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let params = GpuDftRegionsParams::new(sim.n_cells.n_cells_to_3d(), sim.dt, &regions);
+        Ok(Self {
+            region_refs,
+            params: params.create_gpu_uniform(backend)?,
+            regions: regions.create_gpu_buffer(backend)?,
+            h_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
+            en_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
+            init_workgroups: init_dft_workgroups(&params),
+            update_workgroups: dft_regions_update_workgroups(&params),
+        })
+    }
+}
+
+pub(crate) struct DftRegionRef {
+    pub ptr: Arc<DftRegion>,
+    pub desc: GpuDftRegion,
 }
 
 /// [`FdtdLossyHook`] applied to [`FdtdLossyPipeline`] for running DFTs of a function in the simulation.
@@ -316,4 +454,6 @@ pub enum DftError {
     NoDfts,
     #[error("Couldn't find DFT function")]
     CannotFindFunction,
+    #[error("At least one DFT region must be provided")]
+    NoRegions
 }
