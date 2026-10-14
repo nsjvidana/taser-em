@@ -113,13 +113,13 @@ impl GpuFunctionDft {
 #[spirv(compute(threads(64, 1, 1)))]
 pub fn gpu_init_dft_regions(
     #[spirv(global_invocation_id)] id: UVec3,
-    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] params: &GpuDftRegionsParams,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] regions: &mut [GpuDftRegion],
 ) {
     let region_idx = id.x as usize;
     if region_idx >= regions.len() { return; }
     let region = regions.at_mut(region_idx);
-    region.kernel = Complex32::from_polar(1., -core::f32::consts::TAU * region.freq * grid.dt);
+    region.kernel = Complex32::from_polar(1., -core::f32::consts::TAU * region.freq * params.dt);
 }
 
 cfg_cpu! {
@@ -149,7 +149,7 @@ pub fn gpu_dft_regions_update(
     let local_cell_idx = id.with_z(id.z - region_idx * params.max_region_n_cells.z);
     if local_cell_idx.cmpge(region.n_cells3).any() { return; }
 
-    let idx_dft = (region.region_start_idx + grid_idx3_to_flat_idx(local_cell_idx, region.n_cells3)) as usize;
+    let idx_dft = (region.dft_start_idx + grid_idx3_to_flat_idx(local_cell_idx, region.n_cells3)) as usize;
     let cell_idx = GridIndex::from_uvec3(region.cell_idx_min + local_cell_idx);
     let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
 
@@ -161,7 +161,7 @@ pub fn gpu_dft_regions_update(
 }
 
 cfg_cpu! {
-    pub fn dft_regions_workgroups(regions_params: &GpuDftRegionsParams) -> [u32; 3] {
+    pub fn dft_regions_update_workgroups(regions_params: &GpuDftRegionsParams) -> [u32; 3] {
         let thread_count = regions_params.max_region_n_cells
             .with_z(regions_params.max_region_n_cells.z * regions_params.n_regions)
             .to_array();
@@ -176,11 +176,13 @@ pub struct GpuDftRegionsParams {
     pub n_regions: u32,
     /// Same as [`GridParameters::n_cells3`]
     pub n_cells3: UVec3,
+    /// Same as [`GridParameters::dt`]
+    pub dt: Real
 }
 
 impl GpuDftRegionsParams {
-    pub fn new(n_cells3: UVec3, dft_regions: &[GpuDftRegion]) -> Self {
-        let mut max_region_n_cells = UVec3::ZERO;
+    pub fn new(n_cells3: UVec3, dt: Real, dft_regions: &[GpuDftRegion]) -> Self {
+        let mut max_region_n_cells = UVec3::MIN;
         for region in dft_regions {
             max_region_n_cells = max_region_n_cells.max(region.n_cells3);
         }
@@ -188,6 +190,7 @@ impl GpuDftRegionsParams {
             max_region_n_cells,
             n_regions: dft_regions.len() as u32,
             n_cells3,
+            dt,
         }
     }
 }
@@ -196,7 +199,7 @@ impl GpuDftRegionsParams {
 #[repr(C)]
 pub struct GpuDftRegion {
     pub cell_idx_min: UVec3,
-    pub region_start_idx: u32,
+    pub dft_start_idx: u32,
     pub n_cells3: UVec3,
     pub freq: Real,
     pub kernel: Complex32,
