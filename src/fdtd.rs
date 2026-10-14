@@ -121,9 +121,8 @@ impl FdtdLossySimulation {
             cell_size, dt, ..
         } = self.fdtd_parameters;
 
-        let GridSizing {
-            n_cells, sim_offset
-        } = self.compute_grid_sizing(stability);
+        let grid_sizing = self.compute_grid_sizing(stability);
+        let GridSizing { n_cells, sim_offset } = grid_sizing;
         let n_cells3 = n_cells.n_cells_to_3d();
 
         let grid_mats = self.create_material_grid(sim_offset, n_cells);
@@ -193,6 +192,9 @@ impl FdtdLossySimulation {
             power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
             workgroup_count: fdtd_lossy_workgroups(n_cells),
             n_cells,
+            cell_size,
+            grid_sizing,
+            dt,
         };
         Ok(state)
     }
@@ -831,6 +833,9 @@ pub struct FdtdLossyState {
     // Misc data
     pub workgroup_count: [u32; 3],
     pub n_cells: GridIndex,
+    pub cell_size: Vect,
+    pub grid_sizing: GridSizing,
+    pub dt: Real,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation
