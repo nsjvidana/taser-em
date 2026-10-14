@@ -35,6 +35,7 @@ khal.workspace = true
 taser-em-shaders = { package = "taser-em-shaders1d", path = "../taser-em-shaders1d" }
 glamx.workspace = true
 mesh-loader.workspace = true
+ndarray.workspace = true
 rayon = { workspace = true, optional = true }
 itertools.workspace = true
 include_dir.workspace = true
