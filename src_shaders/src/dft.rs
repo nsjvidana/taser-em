@@ -240,6 +240,26 @@ pub struct ComplexVec3 {
 }
 
 impl ComplexVec3 {
+    /// Complex cross product
+    pub fn cross(self, rhs: Self) -> Self {
+        Self {
+            x: self.y * rhs.z - rhs.y * self.z,
+            y: self.z * rhs.x - rhs.z * self.x,
+            z: self.x * rhs.y - rhs.x * self.y
+        }
+    }
+
+    /// Complex conjugate of vector
+    pub fn conj(self) -> Self {
+        Self {
+            x: self.x.conj(),
+            y: self.y.conj(),
+            z: self.z.conj(),
+        }
+    }
+}
+
+impl ComplexVec3 {
     pub const ZERO: Self = Self::splat(Complex32::ZERO);
 
     #[inline]
@@ -281,3 +301,46 @@ impl core::ops::Mul<ComplexVec3> for Complex32 {
     }
 }
 
+impl core::ops::Mul<Real> for ComplexVec3 {
+    type Output = Self;
+
+    fn mul(self, rhs: Real) -> Self::Output {
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+
+impl core::ops::Mul<ComplexVec3> for Real {
+    type Output = ComplexVec3;
+
+    fn mul(self, rhs: ComplexVec3) -> Self::Output {
+        ComplexVec3 {
+            x: self * rhs.x,
+            y: self * rhs.y,
+            z: self * rhs.z,
+        }
+    }
+}
+
+impl GpuDynamicIndex<Axis> for ComplexVec3 {
+    type Output = Complex32;
+
+    fn dyn_idx(&self, index: Axis) -> Self::Output {
+        match index {
+            Axis::X => self.x,
+            Axis::Y => self.y,
+            Axis::Z => self.z,
+        }
+    }
+
+    fn dyn_insert(&mut self, index: Axis, val: Self::Output) {
+        match index {
+            Axis::X => self.x = val,
+            Axis::Y => self.y = val,
+            Axis::Z => self.z = val,
+        }
+    }
+}
