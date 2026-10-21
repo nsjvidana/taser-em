@@ -36,7 +36,9 @@ impl<Func: ToDft> Dft<Func> {
 #[derive(Clone, Debug)]
 pub struct DftRegion {
     pub frequencies: Vec<Real>,
+    /// Minimum point of region bounding box in world coordinates
     pub bb_min: Vect,
+    /// Maximum point of region bounding box in world coordinates
     pub bb_max: Vect,
     pub fields: DftFields,
 }
@@ -61,6 +63,8 @@ impl DftRegionsHook {
             state,
         })
     }
+    
+    pub fn state(&self) -> &DftRegionStates { &self.state }
 }
 
 impl FdtdLossyHook for DftRegionsHook {
@@ -179,6 +183,7 @@ impl DftRegionStates {
         let mut n_dfts = 0;
         let region_refs = region_objs.iter()
             .map(|region| {
+                // TODO: return error if out of bounds
                 let bb_min_offset = region.bb_min + Vect::from_vec3(sim.grid_sizing.sim_offset);
                 let cell_idx_min = (bb_min_offset / sim.cell_size).as_grid_index().cell_idx_to_3d();
                 let dft_start_idx = n_dfts;
@@ -225,6 +230,21 @@ impl DftRegionStates {
             init_workgroups: init_dft_workgroups(&params),
             update_workgroups: dft_regions_update_workgroups(&params),
         })
+    }
+
+    pub fn h_dfts(&self) -> &GpuBuffer<ComplexVec3> { &self.h_dfts }
+
+    pub fn en_dfts(&self) -> &GpuBuffer<ComplexVec3> { &self.en_dfts }
+
+    pub fn regions(&self) -> &GpuBuffer<GpuDftRegion> { &self.regions }
+
+    pub fn get_all_region_descs(&self) -> Vec<GpuDftRegion> {
+        self.region_refs.iter().map(|r| r.desc).collect()
+    }
+
+    pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> Option<&GpuDftRegion> {
+        self.region_refs.iter()
+            .find_map(|v| Arc::ptr_eq(&v.ptr, region).then_some(&v.desc))
     }
 }
 
