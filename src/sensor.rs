@@ -1,12 +1,150 @@
 use std::sync::Arc;
 use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
+use taser_em_shaders::dft::DftFields;
 use taser_em_shaders::math::*;
 use taser_em_shaders::sensor::*;
-use crate::dft::{Dft, ToDft};
+use crate::dft::{Dft, DftError, DftRegion, DftRegionStates, DftRegionsHook, ToDft};
 use crate::gpu_util::CreateGpuBuffer;
 use crate::prelude::TaserResult;
 
+#[derive(Clone, Debug)]
+pub struct PowerFluxDftSensor {
+    /// Axis that's normal to the flux measurement plane
+    pub axis: SpatialAxis,
+    /// Position of the center of measurement plane in world coordinates
+    pub position: Vect,
+    /// Size of power flux measurement plane. Make this [`None`] if you want to measure
+    /// along an entire slice of the grid.
+    ///
+    /// This field does nothing in 1D.
+    pub size: Option<Vect>,
+    /// The direction to measure flow in.
+    ///
+    /// This matters when measuring transmittance / reflection.
+    pub direction: Direction,
+    pub frequencies: Vec<Real>,
+}
+
+// TODO: interop w/ external DftRegionsHook instead?
+//        maybe works with a DftRegionsHook builder struct...
+pub struct PowerFluxDftHook {
+    // TODO: /// If all [`PowerFluxDftSensor`]s should be updated in the next step.
+    //       pub update_dfts: bool,
+    #[allow(dead_code)]
+    region_objs: Vec<Arc<DftRegion>>,
+    states: PowerFluxDftStates,
+    update: GpuPowerFluxDft,
+    dft_regions_hook: DftRegionsHook,
+}
+
+impl PowerFluxDftHook {
+    pub fn new(backend: &GpuBackend, sim: &FdtdLossyState, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
+        if sensors.is_empty() { return Err(PowerFluxError::NoSensors.into()) }
+        let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
+        let grid_extents = sim.n_cells.as_vect() * sim.cell_size;
+
+        let region_objs = sensors.iter()
+            .map(|sensor| {
+                // snap pos to grid on axis
+                let mut pos = sensor.position + sim_offset;
+                pos[sensor.axis] = ((pos[sensor.axis] / sim.cell_size[sensor.axis]).floor() + 0.5)
+                    * sim.cell_size[sensor.axis];
+                pos -= sim_offset;
+                // clamp size to grid edges, with thickness of 1 cell
+                let mut size = sensor.size.unwrap_or(grid_extents).abs();
+                size[sensor.axis] = sim.cell_size[sensor.axis];
+                let plane_min = (pos - size * 0.5).max(Vect::ZERO);
+                let plane_max = (pos + size * 0.5).min(grid_extents);
+
+                Arc::new(DftRegion {
+                    frequencies: sensor.frequencies.clone(),
+                    bb_min: plane_min,
+                    bb_max: plane_max,
+                    fields: DftFields::SN,
+                })
+            })
+            .collect::<Vec<_>>();
+        let dft_region_states = DftRegionStates::new(backend, sim, &region_objs)?;
+
+        let flux_sensors = sensors.iter()
+            .map(|sensor| {
+                let axis = Axis::from(sensor.axis);
+                let axis1 = axis.permute();
+                let axis2 = axis1.permute();
+                // TODO: use a dft_region_offset uniform field instead of storing region indices
+                let gpu_sensor = GpuPowerFluxDftSensor {
+                    axis,
+                    axis1,
+                    axis2,
+                    direction: sensor.direction,
+                    gpu_dft_region_idx: u32::MAX, // temporary value.
+                };
+                (!sensor.frequencies.is_empty())
+                    .then(|| {
+                        std::iter::repeat_n(gpu_sensor, sensor.frequencies.len())
+                            .collect::<Vec<_>>()
+                    })
+                    .ok_or(DftError::NoFrequencies.into())
+            })
+            .collect::<TaserResult<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(i, s)| GpuPowerFluxDftSensor { gpu_dft_region_idx: i as u32, ..s })
+            .collect::<Vec<_>>();
+
+        let sensor_power = vec![Complex32::ZERO; flux_sensors.len()];
+
+        let gpu_regions = dft_region_states.get_all_region_descs();
+        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, &gpu_regions);
+        let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
+
+        Ok(Self {
+            region_objs,
+            states: PowerFluxDftStates {
+                flux_sensors: flux_sensors.create_gpu_buffer(backend)?,
+                sensor_power: sensor_power.create_gpu_buffer(backend)?,
+                wg_summations: wg_summations.create_gpu_buffer(backend)?,
+                flux_dft_workgroups,
+            },
+            update: GpuPowerFluxDft::from_dir(backend, &crate::SPIRV_DIR)?,
+            dft_regions_hook: DftRegionsHook::new(backend, dft_region_states)?,
+        })
+    }
+}
+
+impl FdtdLossyHook for PowerFluxDftHook {
+    fn initialize(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+        self.dft_regions_hook.initialize(pass, state)
+    }
+
+    fn dispatch_step(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+        self.dft_regions_hook.dispatch_step(pass, state)?;
+
+        self.update.call(
+            pass,
+            DispatchGrid::Grid(self.states.flux_dft_workgroups),
+            &state.grid,
+            self.dft_regions_hook.state().h_dfts(),
+            self.dft_regions_hook.state().en_dfts(),
+            self.dft_regions_hook.state().regions(),
+            &self.states.flux_sensors,
+            &mut self.states.sensor_power,
+            &mut self.states.wg_summations,
+        )?;
+        Ok(())
+    }
+}
+
+pub struct PowerFluxDftStates {
+    flux_sensors: GpuBuffer<GpuPowerFluxDftSensor>,
+    sensor_power: GpuBuffer<Complex32>,
+    wg_summations: GpuBuffer<Complex32>,
+    flux_dft_workgroups: [u32; 3],
+}
+
+// TODO: rename this to instantaneous
 /// Measure Poynting Flux flowing through a plane perpendicular to `axis`, stretching to the edges
 /// of the grid
 ///

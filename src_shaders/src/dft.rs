@@ -212,9 +212,9 @@ bitflags::bitflags! {
     pub struct DftFields: u32 {
         const H = 1 << 0;
         // TODO: const DN = 1 << 1;
-        const EN = 1 << 2;
-        // TODO: const SN = Self::H.bits() | Self::EN.bits() | (1 << 3); ...power.
         //       don't forget to update DftMask functions after adding these, if necessary
+        const EN = 1 << 2;
+        const SN = Self::H.bits() | Self::EN.bits() | (1 << 3);
     }
 }
 

@@ -140,34 +140,34 @@ pub fn gpu_power_flux_dft(
     #[spirv(local_invocation_id)] local_idx3: UVec3,
     #[spirv(workgroup_id)] workgroup_id: UVec3,
     #[spirv(num_workgroups)] n_workgroups: UVec3,
-    #[spirv(workgroup)] local_s: &mut [
+    #[spirv(workgroup)] wg_s: &mut [
         Complex32; (FLUX_WORKGROUP_SIZE.x * FLUX_WORKGROUP_SIZE.y * FLUX_WORKGROUP_SIZE.z) as usize
     ],
     #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_dfts: &[ComplexVec3],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en_dfts: &[ComplexVec3],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] flux_sensors: &[GpuPowerFluxDftSensor],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] dft_regions: &[GpuDftRegion],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] sensor_power: &mut [Complex32], // one elem for each sensor
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dft_regions: &[GpuDftRegion],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_sensors: &[GpuPowerFluxDftSensor],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] sensor_power: &mut [Complex32], // one elem for each gpu sensor
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Complex32], // flat 3d array, element for every workgroup
 ) {
     let sensor_idx = id.z as usize;
     let sensor = flux_sensors.read(sensor_idx);
     let region = dft_regions.read(sensor.gpu_dft_region_idx as usize);
 
-    let mut local_cell_idx3 = UVec3::ZERO;
+    let mut local_cell_idx3 = UVec3::ZERO; // local to the flux plane
     local_cell_idx3.dyn_insert(sensor.axis1, id.x);
     local_cell_idx3.dyn_insert(sensor.axis2, id.y);
 
     let cell_idx3 = region.cell_idx_min + local_cell_idx3;
     let n_cells = GridIndex::from_uvec3(grid.n_cells3);
     let cell_idx = GridIndex::from_uvec3(cell_idx3);
-
-    let idx = cell_idx.to_flat_idx(n_cells) as usize;
     let out_of_bounds = local_cell_idx3.cmpge(region.n_cells3).any();
-    let enable = (idx < grid.cell_count as usize || out_of_bounds) as usize;
-    let idx = idx * enable;
-    let idx_dft = (region.dft_start_idx + grid_idx3_to_flat_idx(local_cell_idx3, region.n_cells3)) as usize;
+    let enable = !out_of_bounds as usize;
+
+    let idx = cell_idx.to_flat_idx(n_cells) as usize * enable;
+    let idx_dft = (region.dft_start_idx + grid_idx3_to_flat_idx(local_cell_idx3, region.n_cells3)) as usize
+        * enable;
 
     // Power calculation for this cell (includes DFT finalization terms)
     let en_self = en_dfts.read(idx);
@@ -176,19 +176,19 @@ pub fn gpu_power_flux_dft(
     let h_self = h_dfts.read(idx);
     let h_m = h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, grid.flat_idx_incrs)
         * Complex32::from_polar(grid.dt, -core::f32::consts::TAU * (region.freq * 0.5 * grid.dt));
-    let ds = Complex32::new(0.5, 0.) * en_m.cross(h_m.conj());
-    let ds_dot = ds.dyn_idx(sensor.axis) * sensor.direction as i32 as Real;
+    let ds = 0.5 * en_m.cross(h_m.conj());
+    let ds_dot = ds.dyn_idx(sensor.axis);
 
     let local_pwr_idx = grid_idx3_to_flat_idx(local_idx3, FLUX_WORKGROUP_SIZE) as usize;
-    local_s.write(local_pwr_idx, ds_dot * enable as Real);
+    wg_s.write(local_pwr_idx, ds_dot * enable as Real);
     workgroup_memory_barrier_with_group_sync();
 
     // Sum up power at each workgroup
     if local_pwr_idx != 0 { return; }; // one invocation per workgroup
     let wg_flat_idx = grid_idx3_to_flat_idx(workgroup_id, n_workgroups) as usize;
     let mut wg_power_sum = ds_dot;
-    for i in 1..local_s.len() { // workgroup sums
-        wg_power_sum += local_s.read(i);
+    for i in 1..wg_s.len() { // workgroup sums
+        wg_power_sum += wg_s.read(i);
     }
     wg_summations.write(wg_flat_idx, wg_power_sum);
 
@@ -198,7 +198,7 @@ pub fn gpu_power_flux_dft(
     for plane_wg_idx in wg_flat_idx..(wg_flat_idx + (n_workgroups.x * n_workgroups.y) as usize) {
         power_integral += wg_summations.read(plane_wg_idx);
     }
-    sensor_power.write(sensor_idx, power_integral);
+    sensor_power.write(sensor_idx, power_integral * sensor.direction as i32 as Real);
 }
 
 cfg_cpu! {
@@ -249,9 +249,9 @@ en_spatial_avg_impl!(en_cmplx_spatial_avg, ComplexVec3);
 macro_rules! h_spatial_avg_impl {
     ($name:ident, $v:ident) => {
         fn $name(h: &[$v], h_self: $v, idx: usize, flat_idx_incrs: UVec3) -> $v {
-            let h_px = h.read(idx + grid.flat_idx_incrs.x as usize);
-            let h_py = h.read(idx + grid.flat_idx_incrs.y as usize);
-            let h_pz = h.read(idx + grid.flat_idx_incrs.z as usize);
+            let h_px = h.read(idx + flat_idx_incrs.x as usize);
+            let h_py = h.read(idx + flat_idx_incrs.y as usize);
+            let h_pz = h.read(idx + flat_idx_incrs.z as usize);
             $v {
                 x: (h_self.x + h_px.x) * 0.5,
                 y: (h_self.y + h_py.y) * 0.5,
