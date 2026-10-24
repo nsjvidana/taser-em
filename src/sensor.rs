@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use itertools::Itertools;
 use crate::fdtd::*;
 use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use taser_em_shaders::dft::DftFields;
@@ -46,17 +47,19 @@ impl PowerFluxDftHook {
 
         let region_objs = sensors.iter()
             .map(|sensor| {
-                // snap pos to grid on axis
-                let mut pos = sensor.position + sim_offset;
-                pos[sensor.axis] = ((pos[sensor.axis] / sim.cell_size[sensor.axis]).floor() + 0.5)
-                    * sim.cell_size[sensor.axis];
-                pos -= sim_offset;
-                // clamp size to grid edges, with thickness of 1 cell
-                let mut size = sensor.size.unwrap_or(grid_extents).abs();
-                size[sensor.axis] = sim.cell_size[sensor.axis];
-                let plane_min = (pos - size * 0.5).max(Vect::ZERO);
-                let plane_max = (pos + size * 0.5).min(grid_extents);
-
+                let (plane_min, plane_max) = {
+                    // temporarily move into grid space & snap pos to center of a grid cell along axis
+                    let mut pos = sensor.position + sim_offset;
+                    pos[sensor.axis] = ((pos[sensor.axis] / sim.cell_size[sensor.axis]).floor() + 0.5)
+                        * sim.cell_size[sensor.axis];
+                    // clamp plane dimensions to grid edges, with a thickness of 1 cell
+                    let mut size = sensor.size.unwrap_or(grid_extents).abs();
+                    size[sensor.axis] = sim.cell_size[sensor.axis];
+                    let plane_min = (pos - size * 0.5).max(Vect::ZERO);
+                    let plane_max = (pos + size * 0.5).min(grid_extents);
+                    // move back into world space since dft regions takes world space inputs
+                    (plane_min - sim_offset, plane_max - sim_offset)
+                };
                 Arc::new(DftRegion {
                     frequencies: sensor.frequencies.clone(),
                     bb_min: plane_min,
@@ -67,42 +70,51 @@ impl PowerFluxDftHook {
             .collect::<Vec<_>>();
         let dft_region_states = DftRegionStates::new(backend, sim, &region_objs)?;
 
-        let flux_sensors = sensors.iter()
+        let descriptions = sensors.iter()
             .map(|sensor| {
                 let axis = Axis::from(sensor.axis);
                 let axis1 = axis.permute();
                 let axis2 = axis1.permute();
-                // TODO: use a dft_region_offset uniform field instead of storing region indices
-                let gpu_sensor = GpuPowerFluxDftSensor {
+                PowerFluxDftDescription {
+                    ptr: sensor.clone(),
                     axis,
                     axis1,
                     axis2,
                     direction: sensor.direction,
-                    gpu_dft_region_idx: u32::MAX, // temporary value.
-                };
-                (!sensor.frequencies.is_empty())
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // TODO: use a offset of region buf instead of gpu_dft_region_idx for each sensor?
+        let flux_sensors = descriptions.iter()
+            .map(|desc| {
+                let gpu_sensor = desc.gpu_desc_uninit();
+                let freqs = &desc.ptr.frequencies;
+                (!freqs.is_empty())
                     .then(|| {
-                        std::iter::repeat_n(gpu_sensor, sensor.frequencies.len())
-                            .collect::<Vec<_>>()
+                        std::iter::repeat_n(gpu_sensor, freqs.len()).collect::<Vec<_>>()
                     })
                     .ok_or(DftError::NoFrequencies.into())
             })
+            .flatten_ok()
             .collect::<TaserResult<Vec<_>>>()?
             .into_iter()
-            .flatten()
             .enumerate()
-            .map(|(i, s)| GpuPowerFluxDftSensor { gpu_dft_region_idx: i as u32, ..s })
+            .map(|(i, s)| { // flux_sensors buffer is parallel to dft region buffer (for now)
+                GpuPowerFluxDftSensor { gpu_dft_region_idx: i as u32, ..s }
+            })
             .collect::<Vec<_>>();
 
         let sensor_power = vec![Complex32::ZERO; flux_sensors.len()];
 
-        let gpu_regions = dft_region_states.get_all_region_descs();
+        let gpu_regions = dft_region_states.gpu_descs_uninit();
         let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, &gpu_regions);
         let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
 
         Ok(Self {
             region_objs,
             states: PowerFluxDftStates {
+                descriptions,
                 flux_sensors: flux_sensors.create_gpu_buffer(backend)?,
                 sensor_power: sensor_power.create_gpu_buffer(backend)?,
                 wg_summations: wg_summations.create_gpu_buffer(backend)?,
@@ -138,10 +150,32 @@ impl FdtdLossyHook for PowerFluxDftHook {
 }
 
 pub struct PowerFluxDftStates {
+    descriptions: Vec<PowerFluxDftDescription>,
     flux_sensors: GpuBuffer<GpuPowerFluxDftSensor>,
     sensor_power: GpuBuffer<Complex32>,
     wg_summations: GpuBuffer<Complex32>,
     flux_dft_workgroups: [u32; 3],
+}
+
+#[derive(Clone)]
+pub struct PowerFluxDftDescription {
+    pub ptr: Arc<PowerFluxDftSensor>,
+    pub axis: Axis,
+    pub axis1: Axis,
+    pub axis2: Axis,
+    pub direction: Direction,
+}
+
+impl PowerFluxDftDescription {
+    pub fn gpu_desc_uninit(&self) -> GpuPowerFluxDftSensor {
+        GpuPowerFluxDftSensor {
+            axis: self.axis,
+            axis1: self.axis1,
+            axis2: self.axis2,
+            direction: self.direction,
+            gpu_dft_region_idx: u32::MAX,
+        }
+    }
 }
 
 // TODO: rename this to instantaneous

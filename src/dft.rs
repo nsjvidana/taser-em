@@ -105,7 +105,7 @@ impl FdtdLossyHook for DftRegionsHook {
 }
 
 pub struct DftRegionReadback {
-    refs: Vec<DftRegionRef>,
+    refs: Vec<DftRegionDescription>,
     h_dfts: Vec<ComplexVec3>,
     en_dfts: Vec<ComplexVec3>,
     h_dfts_read: GpuReadback<ComplexVec3>,
@@ -115,7 +115,7 @@ pub struct DftRegionReadback {
 impl DftRegionReadback {
     pub fn new(backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<Self> {
         Ok(Self {
-            refs: state.region_refs.clone(),
+            refs: state.region_descs.clone(),
             h_dfts: vec![ComplexVec3::ZERO; state.h_dfts.len()],
             en_dfts: vec![ComplexVec3::ZERO; state.en_dfts.len()],
             h_dfts_read: GpuReadback::new(backend, state.h_dfts.len())?,
@@ -124,19 +124,21 @@ impl DftRegionReadback {
     }
 
     pub fn get_h(&self, region: &Arc<DftRegion>, freq_idx: u32) -> TaserResult<ndarray::ArrayD<ComplexVec3>> {
-        let Some(region) = self.refs.iter()
-            .find(|r| Arc::ptr_eq(&r.ptr, region))
-            .map(|r| &r.desc)
-        else {
-            return Err(DftError::CannotFindRegion(region.clone()).into());
+        let region = self.get_region_desc(region)?;
+        let idx_range = {
+            let start = (region.dft_start_idx + region.cell_count * freq_idx) as usize;
+            start..(start + region.cell_count as usize)
         };
-
-        let start = (region.dft_start_idx + region.cell_count * freq_idx) as usize;
-        let h = self.h_dfts.get(start..(start + region.cell_count as usize))
-            .expect("freq_idx must be a valid frequency index");
+        let h = self.h_dfts.get(idx_range).expect("freq_idx must be a valid frequency index");
         let dims = region.n_cells3.as_usizevec3().to_array();
         Ok(ndarray::ArrayD::from_shape_vec(IxDyn(&dims), h.to_vec())
                 .expect("regions were initialized properly"))
+    }
+
+    pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> TaserResult<&DftRegionDescription> {
+        self.refs.iter()
+            .find(|r| Arc::ptr_eq(&r.ptr, region))
+            .ok_or(DftError::CannotFindRegion(region.clone()).into())
     }
 
     pub fn update_cycle(&mut self, backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<()> {
@@ -167,7 +169,7 @@ impl DftRegionReadback {
 }
 
 pub struct DftRegionStates {
-    region_refs: Vec<DftRegionRef>,
+    region_descs: Vec<DftRegionDescription>,
     params: GpuBuffer<GpuDftRegionsParams>,
     regions: GpuBuffer<GpuDftRegion>,
     h_dfts: GpuBuffer<ComplexVec3>,
@@ -181,7 +183,7 @@ impl DftRegionStates {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
 
         let mut n_dfts = 0;
-        let region_refs = region_objs.iter()
+        let region_descs = region_objs.iter()
             .map(|region| {
                 // TODO: return error if out of bounds
                 let bb_min_offset = region.bb_min + Vect::from_vec3(sim.grid_sizing.sim_offset);
@@ -190,39 +192,36 @@ impl DftRegionStates {
                 let n_cells3 = ((region.bb_max - region.bb_min) / sim.cell_size)
                     .as_grid_index()
                     .n_cells_to_3d();
-
                 let cell_count = n_cells3.element_product();
                 n_dfts += cell_count * region.frequencies.len() as u32;
 
-                let region_gpu_desc = GpuDftRegion {
+                DftRegionDescription {
+                    ptr: region.clone(),
                     cell_idx_min,
                     dft_start_idx,
                     n_cells3,
-                    freq: 0., // This specific region will be stored on gpu for reference, so frequency can be zero
-                    kernel: Complex32::ZERO,
                     cell_count,
-                    _padding0: Default::default(),
-                };
-                DftRegionRef { ptr: region.clone(), desc: region_gpu_desc }
+                }
             })
             .collect::<Vec<_>>();
         let dfts_zeroed = vec![ComplexVec3::ZERO; n_dfts as usize];
-
-        let regions = region_refs.iter()
-            .map(|r| {
-                let regions = r.ptr.frequencies.iter()
+        
+        let regions = region_descs.iter()
+            .map(|r_desc| {
+                let uninit = r_desc.gpu_desc_uninit();
+                let gpu_regions = r_desc.ptr.frequencies.iter()
                     .copied()
-                    .map(|freq| GpuDftRegion { freq, ..r.desc })
+                    .map(|freq| GpuDftRegion { freq, ..uninit })
                     .collect::<Vec<_>>();
-                if regions.is_empty() { return Err(DftError::NoFrequencies) }
-                Ok(regions)
+                if gpu_regions.is_empty() { Err(DftError::NoFrequencies.into()) }
+                else { Ok(gpu_regions) }
             })
             .flatten_ok()
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<TaserResult<Vec<_>>>()?;
 
         let params = GpuDftRegionsParams::new(sim.n_cells.n_cells_to_3d(), sim.dt, &regions);
         Ok(Self {
-            region_refs,
+            region_descs,
             params: params.create_gpu_uniform(backend)?,
             regions: regions.create_gpu_buffer(backend)?,
             h_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
@@ -238,20 +237,37 @@ impl DftRegionStates {
 
     pub fn regions(&self) -> &GpuBuffer<GpuDftRegion> { &self.regions }
 
-    pub fn get_all_region_descs(&self) -> Vec<GpuDftRegion> {
-        self.region_refs.iter().map(|r| r.desc).collect()
+    pub(crate) fn gpu_descs_uninit(&self) -> Vec<GpuDftRegion> {
+        self.region_descs.iter().map(|r| r.gpu_desc_uninit()).collect()
     }
 
-    pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> Option<&GpuDftRegion> {
-        self.region_refs.iter()
-            .find_map(|v| Arc::ptr_eq(&v.ptr, region).then_some(&v.desc))
+    pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> Option<&DftRegionDescription> {
+        self.region_descs.iter()
+            .find_map(|v| Arc::ptr_eq(&v.ptr, region).then_some(v))
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct DftRegionRef {
+pub struct DftRegionDescription {
     pub ptr: Arc<DftRegion>,
-    pub desc: GpuDftRegion,
+    pub cell_idx_min: UVec3,
+    pub dft_start_idx: u32,
+    pub n_cells3: UVec3,
+    pub cell_count: u32,
+}
+
+impl DftRegionDescription {
+    pub fn gpu_desc_uninit(&self) -> GpuDftRegion {
+        GpuDftRegion {
+            cell_idx_min: self.cell_idx_min,
+            dft_start_idx: self.dft_start_idx,
+            n_cells3: self.n_cells3,
+            freq: 0.0,
+            kernel: Default::default(),
+            cell_count: self.cell_count,
+            _padding0: 0,
+        }
+    }
 }
 
 /// [`FdtdLossyHook`] applied to [`FdtdLossyPipeline`] for running DFTs of a function in the simulation.
