@@ -16,7 +16,7 @@ pub struct PowerFluxDftSensor {
     /// Position of the center of measurement plane in world coordinates
     pub position: Vect,
     /// Size of power flux measurement plane. Make this [`None`] if you want to measure
-    /// along an entire slice of the grid.
+    /// along an entire slice of the grid (plane size becomes infinite).
     ///
     /// This field does nothing in 1D.
     pub size: Option<Vect>,
@@ -45,15 +45,33 @@ impl PowerFluxDftHook {
         let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
         let grid_extents = sim.n_cells.as_vect() * sim.cell_size;
 
-        let region_objs = sensors.iter()
+        let descriptions = sensors.iter()
             .map(|sensor| {
+                let axis = Axis::from(sensor.axis);
+                let axis1 = axis.permute();
+                let axis2 = axis1.permute();
+                PowerFluxDftDescription {
+                    ptr: sensor.clone(),
+                    axis,
+                    axis1,
+                    axis2,
+                    direction: sensor.direction,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let region_objs = descriptions.iter()
+            .map(|desc| {
+                let sensor = &*desc.ptr;
                 let (plane_min, plane_max) = {
                     // temporarily move into grid space & snap pos to center of a grid cell along axis
                     let mut pos = sensor.position + sim_offset;
                     pos[sensor.axis] = ((pos[sensor.axis] / sim.cell_size[sensor.axis]).floor() + 0.5)
                         * sim.cell_size[sensor.axis];
                     // clamp plane dimensions to grid edges, with a thickness of 1 cell
-                    let mut size = sensor.size.unwrap_or(grid_extents).abs();
+                    let mut size = sensor.size
+                        .unwrap_or(Vect::splat(Real::INFINITY))
+                        .abs();
                     size[sensor.axis] = sim.cell_size[sensor.axis];
                     let plane_min = (pos - size * 0.5).max(Vect::ZERO);
                     let plane_max = (pos + size * 0.5).min(grid_extents);
@@ -69,21 +87,6 @@ impl PowerFluxDftHook {
             })
             .collect::<Vec<_>>();
         let dft_region_states = DftRegionStates::new(backend, sim, &region_objs)?;
-
-        let descriptions = sensors.iter()
-            .map(|sensor| {
-                let axis = Axis::from(sensor.axis);
-                let axis1 = axis.permute();
-                let axis2 = axis1.permute();
-                PowerFluxDftDescription {
-                    ptr: sensor.clone(),
-                    axis,
-                    axis1,
-                    axis2,
-                    direction: sensor.direction,
-                }
-            })
-            .collect::<Vec<_>>();
 
         // TODO: use a offset of region buf instead of gpu_dft_region_idx for each sensor?
         let flux_sensors = descriptions.iter()
@@ -124,6 +127,10 @@ impl PowerFluxDftHook {
             dft_regions_hook: DftRegionsHook::new(backend, dft_region_states)?,
         })
     }
+
+    pub fn states(&self) -> &PowerFluxDftStates {
+        &self.states
+    }
 }
 
 impl FdtdLossyHook for PowerFluxDftHook {
@@ -146,6 +153,62 @@ impl FdtdLossyHook for PowerFluxDftHook {
             &mut self.states.wg_summations,
         )?;
         Ok(())
+    }
+}
+
+pub struct PowerFluxDftReadback {
+    ptrs: Vec<Arc<PowerFluxDftSensor>>,
+    sensor_power: Vec<Complex32>,
+    sensor_power_read: GpuReadback<Complex32>,
+}
+
+impl PowerFluxDftReadback {
+    /// Create new readback for a given [`PowerFluxDftStates`].
+    ///
+    /// If using [`PowerFluxDftHook`], use [`PowerFluxDftHook::states()`] for the `states` parameter.
+    /// This applies to all other functions of this struct.
+    pub fn new(backend: &GpuBackend, states: &PowerFluxDftStates) -> TaserResult<Self> {
+        let len = states.sensor_power.len();
+        Ok(Self {
+            ptrs: states.descriptions
+                .iter()
+                .map(|d| d.ptr.clone())
+                .collect(),
+            sensor_power: vec![Complex32::ZERO; len],
+            sensor_power_read: GpuReadback::new(backend, len)?,
+        })
+    }
+
+    /// Synchronizes the backend and reads back data and updates what's stored on the CPU.
+    pub fn sync(&mut self, backend: &GpuBackend, states: &PowerFluxDftStates) -> TaserResult<()> {
+        self.read_back(backend)?;
+        self.request_copy(backend, states)
+    }
+
+    /// Same as [`PowerFluxDftReadback::sync`], but doesn't synchronize
+    /// the backend. Won't do anything if backend is still busy executing something / isn't synced.
+    pub fn try_sync(&mut self, backend: &GpuBackend, states: &PowerFluxDftStates) -> TaserResult<()> {
+        if self.try_read_back(backend) {
+            self.request_copy(backend, states)?;
+        }
+        Ok(())
+    }
+
+    pub fn request_copy(&mut self, backend: &GpuBackend, state: &PowerFluxDftStates) -> TaserResult<()> {
+        if self.sensor_power_read.is_idle() {
+            self.sensor_power_read.request_copy(backend, &state.sensor_power, 0)?;
+        }
+        Ok(())
+    }
+
+    pub fn read_back(&mut self, backend: &GpuBackend) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_read_back(backend);
+        Ok(())
+    }
+
+    pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
+        self.sensor_power_read.try_take(backend, &mut self.sensor_power)
     }
 }
 

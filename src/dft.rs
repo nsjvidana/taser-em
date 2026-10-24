@@ -181,15 +181,17 @@ pub struct DftRegionStates {
 impl DftRegionStates {
     pub fn new(backend: &GpuBackend, sim: &FdtdLossyState, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
+        let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
 
         let mut n_dfts = 0;
         let region_descs = region_objs.iter()
             .map(|region| {
                 // TODO: return error if out of bounds
-                let bb_min_offset = region.bb_min + Vect::from_vec3(sim.grid_sizing.sim_offset);
+                let bb_min_offset = region.bb_min + sim_offset;
                 let cell_idx_min = (bb_min_offset / sim.cell_size).as_grid_index().cell_idx_to_3d();
                 let dft_start_idx = n_dfts;
                 let n_cells3 = ((region.bb_max - region.bb_min) / sim.cell_size)
+                    .ceil()
                     .as_grid_index()
                     .n_cells_to_3d();
                 let cell_count = n_cells3.element_product();
