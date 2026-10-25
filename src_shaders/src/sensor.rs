@@ -177,11 +177,10 @@ pub fn gpu_power_flux_dft(
 
     // Power calculation for this cell (includes DFT finalization terms)
     let en_self = en_dfts.read(idx_dft);
-    let en_m = en_cmplx_spatial_avg(en_dfts, en_self, idx_dft, region.flat_idx_incrs)
-        * grid.dt;
+    let en_m = en_cmplx_spatial_avg(en_dfts, en_self, idx_dft, region.flat_idx_incrs);
     let h_self = h_dfts.read(idx_dft);
     let h_m = h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, region.flat_idx_incrs)
-        * Complex32::from_polar(grid.dt, -core::f32::consts::TAU * region.freq * 0.5 * grid.dt);
+        * Complex32::from_polar(1., -core::f32::consts::TAU * region.freq * 0.5 * grid.dt);
     let ds = en_m.cross(h_m.conj()) * 0.5;
     let ds_dot = ds.dyn_idx(sensor.s_axis);
 

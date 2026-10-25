@@ -10,6 +10,7 @@ use std::sync::Arc;
 use taser_em_shaders::fdtd::{GridParameters, PmlCoefficients};
 use taser_em_shaders::source::*;
 
+#[derive(Clone)]
 pub struct Source<S: SourceType> {
     /// Reference to the struct describing this source
     pub src_ref: Arc<S>,

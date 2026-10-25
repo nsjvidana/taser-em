@@ -5,6 +5,7 @@ use crate::prelude::TaserResult;
 use itertools::Itertools;
 use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use std::sync::Arc;
+use ndarray::IxDyn;
 use taser_em_shaders::dft::DftFields;
 use taser_em_shaders::math::*;
 use taser_em_shaders::sensor::*;
@@ -200,13 +201,13 @@ impl PowerFluxDftReadback {
         Ok(())
     }
 
-    pub fn get_flux_dfts(&self, sensor: &Arc<PowerFluxDftSensor>, states: &PowerFluxDftStates) -> Option<&[Complex32]> {
+    pub fn get_flux_dfts(&self, sensor: &Arc<PowerFluxDftSensor>, states: &PowerFluxDftStates) -> Option<ndarray::Array1<Complex32>> {
         states.descriptions
             .iter()
             .find(|d| Arc::ptr_eq(&d.ptr, sensor))
             .map(|desc| {
                 let range = desc.sensor_power_start..(desc.sensor_power_start + sensor.frequencies.len());
-                &self.sensor_power[range]
+                ndarray::Array1::from_vec(self.sensor_power[range].to_vec())
             })
     }
 

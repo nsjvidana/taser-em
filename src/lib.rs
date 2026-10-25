@@ -21,6 +21,7 @@ pub mod dft;
 
 pub mod re_exports {
     pub use glamx;
+    pub use ndarray;
     pub use khal;
     pub use anyhow;
 }

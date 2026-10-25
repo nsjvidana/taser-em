@@ -231,6 +231,8 @@ impl DftPlot {
                 }
             });
     }
+
+    pub fn plot_points(&self) -> &[PlotPoint] { self.pts.as_slice() }
 }
 
 impl PlotLine for DftPlot {

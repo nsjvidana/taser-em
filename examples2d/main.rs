@@ -168,13 +168,13 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     );
     let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
 
-    // Create GPU simulation state
+    // Create simulation state buffers
     let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
 
-    // Set up DFT power flux
+    // Set up DFT power flux hook
     let flux_dft_hook = PowerFluxDftHook::new(&backend, &mut state, &[flux_dft.clone()])?;
 
-    // Set up readback
+    // Set up readbacks
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
         .expect("we added a flux sensor to the simulation, so readback must be possible");
@@ -187,7 +187,21 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Set up DFT plots
     let frequency_scale = Some(1e-9); // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis;
     let mut plot_window = PlotWindow::new("Power Flux DFT", Some("Frequency (GHz)"), None);
-    let mut flux_dft_plot = DftPlot::new("Power Flux", &flux_dft.frequencies, frequency_scale)?;
+    let mut flux_plot = DftPlot::new("Power Flux", &flux_dft.frequencies, frequency_scale)?;
+    let mut src_flux_plot = DftPlot::new("Power Flux (Source)", &flux_dft.frequencies, frequency_scale)?;
+    let mut normalized_plot = DftPlot::new("Power Flux Normalized", &flux_dft.frequencies, frequency_scale)?;
+
+    // Source-only simulation for normalizing DFTs (same process, but with a different simulation state)
+    let src_sim = simulation.sources_only();
+    let src_boundary_conditions = BoundaryConditions::new(
+        PECBoundaryX::from_backend(&backend)?,
+        PECBoundaryY::from_backend(&backend)?,
+    );
+    let mut src_pipeline = FdtdLossyPipeline::new(&backend, src_boundary_conditions, sim_speed)?;
+    let mut src_state = src_sim.finalize(&backend, &stability, &mut src_pipeline)?;
+    let src_flux_dft_hook = PowerFluxDftHook::new(&backend, &mut src_state, &[flux_dft.clone()])?;
+    let mut src_flux_dft_read = PowerFluxDftReadback::new(&backend, src_flux_dft_hook.states())?;
+    let mut src_pipeline = apply_pipeline_hooks(src_pipeline, src_flux_dft_hook);
 
     // Run & render simulation with viewer
     println!("Running on backend: {}", backend_name(&backend));
@@ -200,13 +214,27 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         let instantaneous_flux = power_readback.get_power(&flux).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
 
-        let power_flux_dft_hook = &pipeline.hooks;
-        flux_dft_read.sync(&backend, power_flux_dft_hook.states())?;
-        let dfts = flux_dft_read.get_flux_dfts(&flux_dft, power_flux_dft_hook.states()).unwrap();
-        flux_dft_plot.update(dfts);
-        plot_window.show(&mut testbed, vec![flux_dft_plot.create_line()])?;
+        let flux_dft_hook = &pipeline.hooks;
+        let src_flux_dft_hook = &src_pipeline.hooks;
+        flux_dft_read.sync(&backend, flux_dft_hook.states())?;
+        src_flux_dft_read.sync(&backend, src_flux_dft_hook.states())?;
+        let new_dfts = flux_dft_read.get_flux_dfts(&flux_dft, flux_dft_hook.states()).unwrap();
+        let src_dfts = src_flux_dft_read.get_flux_dfts(&flux_dft, src_flux_dft_hook.states()).unwrap();
+        let mut dfts_normalized = new_dfts.clone();
+        dfts_normalized
+            .zip_mut_with(&src_dfts, |to_normalize, src| *to_normalize /= src);
+        flux_plot.update(new_dfts.as_slice().unwrap());
+        src_flux_plot.update(src_dfts.as_slice().unwrap());
+        if dfts_normalized.iter().all(|dft| dft.is_finite()) {
+            normalized_plot.update(dfts_normalized.as_slice().unwrap());
+        }
+        plot_window.show(
+            &mut testbed,
+            vec![flux_plot.create_line(), src_flux_plot.create_line(), normalized_plot.create_line()]
+        )?;
 
         pipeline.simulate(&backend, &mut state)?;
+        src_pipeline.simulate(&backend, &mut src_state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;

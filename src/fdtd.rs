@@ -9,6 +9,7 @@ use khal::backend::*;
 use parry3d::bounding_volume::Aabb;
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::{NonZeroI32, NonZeroU32};
+use std::ops::Deref;
 use std::sync::Arc;
 use taser_em_shaders::fdtd::*;
 use taser_em_shaders::math::*;
@@ -262,6 +263,7 @@ impl FdtdLossySimulation {
 
     /// Compute the bounding box surrounding all objects and sources in the simulation.
     pub fn compute_bounding_box(&self) -> Aabb {
+        // TODO: remove sources from bounding box computation
         let mut regions_bb = self.material_regions.compute_bounding_box();
         let regions_center = regions_bb.center();
         let source_pts = self.dipoles.iter()
@@ -289,6 +291,30 @@ impl FdtdLossySimulation {
             .iter_spatial_axes()
             .for_each(|(s_axis, w)| problem_space_max[s_axis] -= w.hi);
         (problem_space_min, problem_space_max)
+    }
+
+    /// Makes a clone of this simulation where only sources exist. Typically used with DFTs for normalizing
+    /// DFTs.
+    ///
+    /// Everything but material regions stay the same. Material regions are modified to have their
+    /// materials set to `background_material`, effectively making a source-only simulation.
+    pub fn sources_only(&self) -> Self {
+        let mut material_regions = self.material_regions.clone();
+        material_regions.regions
+            .iter_mut()
+            .for_each(|r| r.material = self.background_material);
+
+        Self {
+            fdtd_parameters: self.fdtd_parameters.clone(),
+            pml_parameters: self.pml_parameters.clone(),
+            tfsf_parameters: self.tfsf_parameters.clone(),
+            grid_sizing_mode: self.grid_sizing_mode,
+            material_regions,
+            background_material: self.background_material,
+            dipoles: self.dipoles.clone(),
+            tfsf_sources: self.tfsf_sources.clone(),
+            power_flux_sensors: self.power_flux_sensors.clone(),
+        }
     }
 }
 
@@ -348,7 +374,7 @@ where
     boundary_conditions: BoundaryConditions<BCx, BCy, BCz>,
     /// Additional functionality for the simulation.
     ///
-    /// Use [`apply_pipeline_hooks`] to change a pipeline's hooks to a different type.s
+    /// See [`apply_pipeline_hooks`] for changing a pipeline's hooks to a different type.
     pub hooks: Hooks,
     init_pec: InitPec,
     source_pipeline: SourcePipeline,
@@ -483,6 +509,18 @@ where
 
 /// Construct a [`FdtdLossyPipeline`] with `hooks` applied for additional functionality,
 /// consuming `pipeline` to ensure static typing.
+///
+/// # Example
+/// ```
+/// use taser_em2d::prelude::*;
+/// let flux_dft_hook = PowerFluxDftHook::new(&backend, &mut state, &[flux_dft.clone()])?;
+/// let pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
+/// let pipeline = apply_pipeline_hooks(pipeline, flux_dft_hook); // Hook type is now PowerFluxDftHook
+///
+/// // Can also use nested tuples for multiple hooks (or make your own struct implementing FdtdLossyHook
+/// // with other hooks in it).
+/// let pipeline = apply_pipeline_hooks(pipeline, (pipeline.hooks, (epic_hook, amazing_hook)));
+/// ```
 #[must_use]
 pub fn apply_pipeline_hooks<
     BCx: BoundaryCondition<X>,
