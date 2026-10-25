@@ -1,6 +1,5 @@
-use std::sync::Arc;
-use kiss3d::egui::Color32;
 use kiss3d::glamx::Vec3;
+use std::sync::Arc;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::plot::*;
 use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode, re_exports::anyhow};
@@ -134,8 +133,10 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Source injection in antenna feed gap
     let source_values = Source::gaussian_max_f(freq, 1., dt);
-    let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
-    let dipole = simulation.add_dipole(dipole, source_values);
+    let _dipole = simulation.add_dipole(
+        Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y),
+        source_values
+    );
 
     // Instantaneous and time-averaged power flux sensors
     let flux = simulation.add_flux_sensor(
@@ -202,7 +203,6 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         let power_flux_dft_hook = &pipeline.hooks;
         flux_dft_read.sync(&backend, power_flux_dft_hook.states())?;
         let dfts = flux_dft_read.get_flux_dfts(&flux_dft, power_flux_dft_hook.states()).unwrap();
-        println!("{dfts:?}");
         flux_dft_plot.update(dfts);
         plot_window.show(&mut testbed, vec![flux_dft_plot.create_line()])?;
 

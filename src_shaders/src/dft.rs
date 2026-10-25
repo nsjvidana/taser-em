@@ -109,25 +109,6 @@ impl GpuFunctionDft {
     }
 }
 
-#[spirv_bindgen]
-#[spirv(compute(threads(64, 1, 1)))]
-pub fn gpu_init_dft_regions(
-    #[spirv(global_invocation_id)] id: UVec3,
-    #[spirv(uniform, descriptor_set = 0, binding = 0)] params: &GpuDftRegionsParams,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] regions: &mut [GpuDftRegion],
-) {
-    let region_idx = id.x as usize;
-    if region_idx >= regions.len() { return; }
-    let region = regions.at_mut(region_idx);
-    region.kernel = Complex32::from_polar(1., -core::f32::consts::TAU * region.freq * params.dt);
-}
-
-cfg_cpu! {
-    pub fn init_dft_workgroups(regions_params: &GpuDftRegionsParams) -> [u32; 3] {
-        workgroup_counts!([regions_params.n_regions, 1, 1], GpuInitDftRegionsArgs::WORKGROUP_SIZE)
-    }
-}
-
 // One GpuDftRegion per region frequency.
 // the grid in this shader is a maximum region grid repeated on the Z axis for each gpu region.
 #[spirv_bindgen]

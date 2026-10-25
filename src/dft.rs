@@ -50,7 +50,6 @@ impl DftRegion {
 }
 
 pub struct DftRegionsHook {
-    init_kernels: GpuInitDftRegions,
     update: GpuDftRegionsUpdate,
     state: DftRegionStates, // TODO: make states into an input for hooks
 }
@@ -58,7 +57,6 @@ pub struct DftRegionsHook {
 impl DftRegionsHook {
     pub fn new(backend: &GpuBackend, state: DftRegionStates) -> TaserResult<Self> {
         Ok(Self {
-            init_kernels: GpuInitDftRegions::from_dir(backend, &crate::SPIRV_DIR)?,
             update: GpuDftRegionsUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
             state,
         })
@@ -68,19 +66,6 @@ impl DftRegionsHook {
 }
 
 impl FdtdLossyHook for DftRegionsHook {
-    fn initialize(&mut self, pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> {
-        let DftRegionStates {
-            params, dft_regions: regions, init_workgroups, ..
-        } = &mut self.state;
-        self.init_kernels.call(
-            pass,
-            DispatchGrid::Grid(*init_workgroups),
-            params,
-            regions
-        )?;
-        Ok(())
-    }
-
     fn dispatch_step(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
         let DftRegionStates {
             params, dft_regions: regions,
@@ -175,7 +160,6 @@ pub struct DftRegionStates {
     dft_regions: GpuBuffer<GpuDftRegion>,
     h_dfts: GpuBuffer<ComplexVec3>,
     en_dfts: GpuBuffer<ComplexVec3>,
-    init_workgroups: [u32; 3],
     update_workgroups: [u32; 3],
 }
 
@@ -234,7 +218,6 @@ impl DftRegionStates {
                         GpuDftRegion {
                             freq,
                             dfts_start_idx,
-                            // TODO: remove init kernel
                             kernel: Complex32::from_polar(1., -core::f32::consts::TAU * freq * sim.dt),
                             ..uninit_region_gpu
                         }
@@ -261,7 +244,6 @@ impl DftRegionStates {
             dft_regions: dft_regions_buf,
             h_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
             en_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
-            init_workgroups: init_dft_workgroups(&params),
             update_workgroups: dft_regions_update_workgroups(&params),
         })
     }
