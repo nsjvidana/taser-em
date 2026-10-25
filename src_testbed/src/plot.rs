@@ -182,6 +182,63 @@ impl<Func: ToDft> PlotLine for DftPlotLine<Func> {
     }
 }
 
+pub struct DftPlot {
+    pub name: String,
+    pub mode: DftPlotMode,
+    pub color: Option<egui::Color32>,
+    pts: Vec<PlotPoint>,
+    /// Number multiplied to frequency values of X axis.
+    pub freq_scale: f64,
+    frequencies: Vec<f64>,
+}
+
+impl DftPlot {
+    pub fn new(name: &str, frequencies: &[Real], freq_scale: Option<Real>) -> TaserResult<Self> {
+        if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) }
+        let mut selff = Self {
+            name: name.to_string(),
+            mode: DftPlotMode::Magnitude,
+            color: None,
+            pts: vec![PlotPoint::new(0., 0.); frequencies.len()],
+            freq_scale: freq_scale.unwrap_or(1.) as _,
+            frequencies: vec![],
+        };
+        selff.set_frequencies(frequencies)?;
+        Ok(selff)
+    }
+
+    pub fn set_frequencies(&mut self, frequencies: &[Real]) -> TaserResult<()> {
+        if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) }
+        self.frequencies = frequencies
+            .into_iter()
+            .map(|f| *f as _)
+            .collect();
+        self.pts
+            .iter_mut()
+            .zip(self.frequencies.iter())
+            .for_each(|(pt, f)| pt.x = (f * self.freq_scale) as _);
+        Ok(())
+    }
+
+    pub fn update(&mut self, dft: &[Complex32]) {
+        self.pts
+            .iter_mut()
+            .zip(dft.iter().copied())
+            .for_each(|(pt, y)| {
+                pt.y = match self.mode {
+                    DftPlotMode::Magnitude => y.norm() as _,
+                    DftPlotMode::Phase => y.arg() as _,
+                }
+            });
+    }
+}
+
+impl PlotLine for DftPlot {
+    fn create_line(&self) -> Line<'_> {
+        Line::new(&self.name, PlotPoints::Borrowed(&self.pts))
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum DftPlotMode {
     Magnitude,

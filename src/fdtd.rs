@@ -481,7 +481,9 @@ where
     }
 }
 
-/// Set [`FdtdLossyHook`] for running FDTD simulation with additional functionality.
+/// Construct a [`FdtdLossyPipeline`] with `hooks` applied for additional functionality,
+/// consuming `pipeline` to ensure static typing.
+#[must_use]
 pub fn apply_pipeline_hooks<
     BCx: BoundaryCondition<X>,
     BCy: BoundaryCondition<Y>,

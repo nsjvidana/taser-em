@@ -149,7 +149,7 @@ pub fn gpu_dft_regions_update(
     let local_cell_idx = id.with_z(id.z - region_idx * params.max_region_n_cells.z);
     if local_cell_idx.cmpge(region.n_cells3).any() { return; }
 
-    let idx_dft = (region.dft_start_idx + grid_idx3_to_flat_idx(local_cell_idx, region.n_cells3)) as usize;
+    let idx_dft = (region.dfts_start_idx + grid_idx3_to_flat_idx(local_cell_idx, region.n_cells3)) as usize;
     let cell_idx = GridIndex::from_uvec3(region.cell_idx_min + local_cell_idx);
     let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
 
@@ -198,12 +198,13 @@ impl GpuDftRegionsParams {
 #[repr(C)]
 pub struct GpuDftRegion {
     pub cell_idx_min: UVec3,
-    pub dft_start_idx: u32,
+    pub dfts_start_idx: u32,
     pub n_cells3: UVec3,
     pub freq: Real,
-    pub kernel: Complex32,
+    pub flat_idx_incrs: UVec3,
     pub cell_count: u32,
-    pub _padding0: u32,
+    pub kernel: Complex32,
+    pub _padding0: [u32; 2],
 }
 
 bitflags::bitflags! {
@@ -231,7 +232,7 @@ impl DftFields {
 #[mul_assign(forward)]
 #[div(forward)]
 #[div_assign(forward)]
-#[derive(Copy, Clone, Pod, Zeroable, Default)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct ComplexVec3 {
     pub x: Complex32,

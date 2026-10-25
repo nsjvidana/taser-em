@@ -70,7 +70,7 @@ impl DftRegionsHook {
 impl FdtdLossyHook for DftRegionsHook {
     fn initialize(&mut self, pass: &mut GpuPass, _state: &mut FdtdLossyState) -> TaserResult<()> {
         let DftRegionStates {
-            params, regions, init_workgroups, ..
+            params, dft_regions: regions, init_workgroups, ..
         } = &mut self.state;
         self.init_kernels.call(
             pass,
@@ -83,7 +83,7 @@ impl FdtdLossyHook for DftRegionsHook {
 
     fn dispatch_step(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
         let DftRegionStates {
-            params, regions,
+            params, dft_regions: regions,
             h_dfts,en_dfts,
             update_workgroups, ..
         } = &mut self.state;
@@ -123,14 +123,14 @@ impl DftRegionReadback {
         })
     }
 
-    pub fn get_h(&self, region: &Arc<DftRegion>, freq_idx: u32) -> TaserResult<ndarray::ArrayD<ComplexVec3>> {
-        let region = self.get_region_desc(region)?;
+    pub fn get_h(&self, region: &Arc<DftRegion>, freq_idx: usize) -> TaserResult<ndarray::ArrayD<ComplexVec3>> {
+        let desc = self.get_region_desc(region)?;
         let idx_range = {
-            let start = (region.dft_start_idx + region.cell_count * freq_idx) as usize;
-            start..(start + region.cell_count as usize)
+            let start = desc.freq_buf_offset(freq_idx);
+            start..(start + desc.cell_count as usize)
         };
         let h = self.h_dfts.get(idx_range).expect("freq_idx must be a valid frequency index");
-        let dims = region.n_cells3.as_usizevec3().to_array();
+        let dims = desc.n_cells3.as_usizevec3().to_array();
         Ok(ndarray::ArrayD::from_shape_vec(IxDyn(&dims), h.to_vec())
                 .expect("regions were initialized properly"))
     }
@@ -170,8 +170,9 @@ impl DftRegionReadback {
 
 pub struct DftRegionStates {
     region_descs: Vec<DftRegionDescription>,
+    gpu_dft_regions: Vec<GpuDftRegion>,
     params: GpuBuffer<GpuDftRegionsParams>,
-    regions: GpuBuffer<GpuDftRegion>,
+    dft_regions: GpuBuffer<GpuDftRegion>,
     h_dfts: GpuBuffer<ComplexVec3>,
     en_dfts: GpuBuffer<ComplexVec3>,
     init_workgroups: [u32; 3],
@@ -183,49 +184,81 @@ impl DftRegionStates {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
         let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
 
-        let mut n_dfts = 0;
-        let region_descs = region_objs.iter()
-            .map(|region| {
+        let region_descs = region_objs
+            .iter()
+            .scan(0, |total_dfts, region| {
                 // TODO: return error if out of bounds
                 let bb_min_offset = region.bb_min + sim_offset;
                 let cell_idx_min = (bb_min_offset / sim.cell_size).as_grid_index().cell_idx_to_3d();
-                let dft_start_idx = n_dfts;
-                let n_cells3 = ((region.bb_max - region.bb_min) / sim.cell_size)
-                    .ceil()
-                    .as_grid_index()
-                    .n_cells_to_3d();
-                let cell_count = n_cells3.element_product();
-                n_dfts += cell_count * region.frequencies.len() as u32;
+                let n_cells = ((region.bb_max - region.bb_min) / sim.cell_size)
+                    .as_grid_index();
+                let n_cells3 = n_cells.n_cells_to_3d();
+                let cell_count = n_cells.element_product();
 
-                DftRegionDescription {
+                let dft_start_buf_offset = *total_dfts;
+                *total_dfts += cell_count as usize * region.frequencies.len();
+
+                let flat_idx_incrs = {
+                    let mut incrs = UVec3::ZERO;
+                    for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
+                        .zip(SpatialAxis::ALL_AXES)
+                    {
+                        let mut grid_incr = GridIndex::ZERO;
+                        grid_incr[spatial_axis] = 1;
+                        incrs[axis] = grid_incr.to_flat_idx(n_cells);
+                    }
+                    incrs
+                };
+                Some(DftRegionDescription {
                     ptr: region.clone(),
                     cell_idx_min,
-                    dft_start_idx,
+                    flat_idx_incrs,
+                    dft_start_buf_offset,
                     n_cells3,
                     cell_count,
-                }
+                })
             })
             .collect::<Vec<_>>();
-        let dfts_zeroed = vec![ComplexVec3::ZERO; n_dfts as usize];
-        
-        let regions = region_descs.iter()
-            .map(|r_desc| {
-                let uninit = r_desc.gpu_desc_uninit();
-                let gpu_regions = r_desc.ptr.frequencies.iter()
+
+        let dft_regions = region_descs.iter()
+            .map(|desc| {
+                let frequencies = &desc.ptr.frequencies;
+                if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) }
+                let uninit_region_gpu = desc.gpu_desc_uninit();
+                let gpu_regions = frequencies
+                    .iter()
                     .copied()
-                    .map(|freq| GpuDftRegion { freq, ..uninit })
+                    .enumerate()
+                    .map(|(i, freq)| {
+                        let dfts_start_idx = desc.freq_buf_offset(i) as u32;
+                        GpuDftRegion {
+                            freq,
+                            dfts_start_idx,
+                            // TODO: remove init kernel
+                            kernel: Complex32::from_polar(1., -core::f32::consts::TAU * freq * sim.dt),
+                            ..uninit_region_gpu
+                        }
+                    })
                     .collect::<Vec<_>>();
-                if gpu_regions.is_empty() { Err(DftError::NoFrequencies.into()) }
-                else { Ok(gpu_regions) }
+                Ok(gpu_regions)
             })
             .flatten_ok()
             .collect::<TaserResult<Vec<_>>>()?;
+        let dft_count = region_descs
+            .last()
+            .map(|d| d.freq_buf_offset(d.ptr.frequencies.len()))
+            .unwrap();
+        let diff = dft_count - dft_regions.last().unwrap().dfts_start_idx as usize ;
+        println!("{diff}, {}", dft_regions.last().unwrap().cell_count);
+        let dfts_zeroed = vec![ComplexVec3::ZERO; dft_count];
 
-        let params = GpuDftRegionsParams::new(sim.n_cells.n_cells_to_3d(), sim.dt, &regions);
+        let params = GpuDftRegionsParams::new(sim.n_cells.n_cells_to_3d(), sim.dt, &dft_regions);
+        let dft_regions_buf = dft_regions.create_gpu_buffer(backend)?;
         Ok(Self {
             region_descs,
+            gpu_dft_regions: dft_regions,
             params: params.create_gpu_uniform(backend)?,
-            regions: regions.create_gpu_buffer(backend)?,
+            dft_regions: dft_regions_buf,
             h_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
             en_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
             init_workgroups: init_dft_workgroups(&params),
@@ -237,10 +270,10 @@ impl DftRegionStates {
 
     pub fn en_dfts(&self) -> &GpuBuffer<ComplexVec3> { &self.en_dfts }
 
-    pub fn regions(&self) -> &GpuBuffer<GpuDftRegion> { &self.regions }
+    pub fn regions(&self) -> &GpuBuffer<GpuDftRegion> { &self.dft_regions }
 
-    pub(crate) fn gpu_descs_uninit(&self) -> Vec<GpuDftRegion> {
-        self.region_descs.iter().map(|r| r.gpu_desc_uninit()).collect()
+    pub(crate) fn gpu_region_descs(&self) -> &Vec<GpuDftRegion> {
+        &self.gpu_dft_regions
     }
 
     pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> Option<&DftRegionDescription> {
@@ -253,21 +286,28 @@ impl DftRegionStates {
 pub struct DftRegionDescription {
     pub ptr: Arc<DftRegion>,
     pub cell_idx_min: UVec3,
-    pub dft_start_idx: u32,
+    pub flat_idx_incrs: UVec3,
     pub n_cells3: UVec3,
     pub cell_count: u32,
+    /// Index of the start of this region's DFTs
+    pub dft_start_buf_offset: usize,
 }
 
 impl DftRegionDescription {
+    pub fn freq_buf_offset(&self, freq_idx: usize) -> usize {
+        self.dft_start_buf_offset + self.cell_count as usize * freq_idx
+    }
+
     pub fn gpu_desc_uninit(&self) -> GpuDftRegion {
         GpuDftRegion {
             cell_idx_min: self.cell_idx_min,
-            dft_start_idx: self.dft_start_idx,
+            dfts_start_idx: u32::MAX,
             n_cells3: self.n_cells3,
-            freq: 0.0,
-            kernel: Default::default(),
+            freq: Real::NAN,
+            flat_idx_incrs: self.flat_idx_incrs,
+            kernel: Complex32::new(Real::NAN, Real::NAN),
             cell_count: self.cell_count,
-            _padding0: 0,
+            _padding0: Default::default(),
         }
     }
 }

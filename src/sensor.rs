@@ -1,13 +1,13 @@
-use std::sync::Arc;
-use itertools::Itertools;
+use crate::dft::{Dft, DftError, DftRegion, DftRegionStates, DftRegionsHook, ToDft};
 use crate::fdtd::*;
-use khal::backend::{Backend, Buffer, DispatchGrid, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
+use crate::gpu_util::CreateGpuBuffer;
+use crate::prelude::TaserResult;
+use itertools::Itertools;
+use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
+use std::sync::Arc;
 use taser_em_shaders::dft::DftFields;
 use taser_em_shaders::math::*;
 use taser_em_shaders::sensor::*;
-use crate::dft::{Dft, DftError, DftRegion, DftRegionStates, DftRegionsHook, ToDft};
-use crate::gpu_util::CreateGpuBuffer;
-use crate::prelude::TaserResult;
 
 #[derive(Clone, Debug)]
 pub struct PowerFluxDftSensor {
@@ -40,23 +40,27 @@ pub struct PowerFluxDftHook {
 }
 
 impl PowerFluxDftHook {
-    pub fn new(backend: &GpuBackend, sim: &FdtdLossyState, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
+    pub fn new(backend: &GpuBackend, sim: &mut FdtdLossyState, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
+        let mut uninit = Self::new_uninit(backend, sim, sensors)?;
+        let mut encoder = backend.begin_encoding();
+        let mut pass = encoder.begin_pass("__power_flux_dft_init", None);
+        uninit.initialize(&mut pass, sim)?;
+        Ok(uninit)
+    }
+
+    pub fn new_uninit(backend: &GpuBackend, sim: &FdtdLossyState, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
         if sensors.is_empty() { return Err(PowerFluxError::NoSensors.into()) }
         let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
         let grid_extents = sim.n_cells.as_vect() * sim.cell_size;
 
         let descriptions = sensors.iter()
-            .map(|sensor| {
-                let axis = Axis::from(sensor.axis);
-                let axis1 = axis.permute();
-                let axis2 = axis1.permute();
-                PowerFluxDftDescription {
+            .scan(0, |freq_count, sensor| {
+                let sensor_power_start = *freq_count;
+                *freq_count += sensor.frequencies.len();
+                Some(PowerFluxDftDescription {
                     ptr: sensor.clone(),
-                    axis,
-                    axis1,
-                    axis2,
-                    direction: sensor.direction,
-                }
+                    sensor_power_start,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -72,7 +76,7 @@ impl PowerFluxDftHook {
                     let mut size = sensor.size
                         .unwrap_or(Vect::splat(Real::INFINITY))
                         .abs();
-                    size[sensor.axis] = sim.cell_size[sensor.axis];
+                    size[sensor.axis] = 2. * sim.cell_size[sensor.axis];
                     let plane_min = (pos - size * 0.5).max(Vect::ZERO);
                     let plane_max = (pos + size * 0.5).min(grid_extents);
                     // move back into world space since dft regions takes world space inputs
@@ -89,29 +93,25 @@ impl PowerFluxDftHook {
         let dft_region_states = DftRegionStates::new(backend, sim, &region_objs)?;
 
         // TODO: use a offset of region buf instead of gpu_dft_region_idx for each sensor?
-        let flux_sensors = descriptions.iter()
+        let mut flux_sensors = descriptions.iter()
             .map(|desc| {
                 let gpu_sensor = desc.gpu_desc_uninit();
                 let freqs = &desc.ptr.frequencies;
-                (!freqs.is_empty())
-                    .then(|| {
-                        std::iter::repeat_n(gpu_sensor, freqs.len()).collect::<Vec<_>>()
-                    })
-                    .ok_or(DftError::NoFrequencies.into())
+                if freqs.is_empty() { Err(DftError::NoFrequencies.into()) }
+                else { Ok(std::iter::repeat_n(gpu_sensor, freqs.len()).collect::<Vec<_>>()) }
             })
             .flatten_ok()
-            .collect::<TaserResult<Vec<_>>>()?
-            .into_iter()
+            .collect::<TaserResult<Vec<_>>>()?;
+        flux_sensors // flux_sensors buffer is parallel to dft region buffer (for now)
+            .iter_mut()
             .enumerate()
-            .map(|(i, s)| { // flux_sensors buffer is parallel to dft region buffer (for now)
-                GpuPowerFluxDftSensor { gpu_dft_region_idx: i as u32, ..s }
-            })
-            .collect::<Vec<_>>();
+            .for_each(|(i, s)| s.gpu_dft_region_idx = i as u32);
+        debug_assert_eq!(flux_sensors.len(), dft_region_states.regions().len());
 
         let sensor_power = vec![Complex32::ZERO; flux_sensors.len()];
 
-        let gpu_regions = dft_region_states.gpu_descs_uninit();
-        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, &gpu_regions);
+        let gpu_dft_regions = dft_region_states.gpu_region_descs();
+        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, &gpu_dft_regions);
         let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
 
         Ok(Self {
@@ -194,6 +194,16 @@ impl PowerFluxDftReadback {
         Ok(())
     }
 
+    pub fn get_flux_dfts(&self, sensor: &Arc<PowerFluxDftSensor>, states: &PowerFluxDftStates) -> Option<&[Complex32]> {
+        states.descriptions
+            .iter()
+            .find(|d| Arc::ptr_eq(&d.ptr, sensor))
+            .map(|desc| {
+                let range = desc.sensor_power_start..(desc.sensor_power_start + sensor.frequencies.len());
+                &self.sensor_power[range]
+            })
+    }
+
     pub fn request_copy(&mut self, backend: &GpuBackend, state: &PowerFluxDftStates) -> TaserResult<()> {
         if self.sensor_power_read.is_idle() {
             self.sensor_power_read.request_copy(backend, &state.sensor_power, 0)?;
@@ -223,19 +233,19 @@ pub struct PowerFluxDftStates {
 #[derive(Clone)]
 pub struct PowerFluxDftDescription {
     pub ptr: Arc<PowerFluxDftSensor>,
-    pub axis: Axis,
-    pub axis1: Axis,
-    pub axis2: Axis,
-    pub direction: Direction,
+    pub sensor_power_start: usize,
 }
 
 impl PowerFluxDftDescription {
     pub fn gpu_desc_uninit(&self) -> GpuPowerFluxDftSensor {
+        let axis = self.ptr.axis;
+        let axis1 = axis.permute();
+        let axis2 = axis1.permute();
         GpuPowerFluxDftSensor {
-            axis: self.axis,
-            axis1: self.axis1,
-            axis2: self.axis2,
-            direction: self.direction,
+            s_axis: Axis::from(axis),
+            s_axis1: Axis::from(axis1),
+            s_axis2: Axis::from(axis2),
+            direction: self.ptr.direction,
             gpu_dft_region_idx: u32::MAX,
         }
     }

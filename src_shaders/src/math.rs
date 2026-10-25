@@ -492,11 +492,11 @@ unsafe impl Pod for Axis {}
 #[derive(Copy, Clone, Debug)]
 #[repr(u32)]
 pub enum SpatialAxis {
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    #[cfg(not(feature = "dim1"))]
     X = 0,
-    #[cfg(any(feature = "dim2", feature = "dim3"))]
+    #[cfg(not(feature = "dim1"))]
     Y = 1,
-    #[cfg(any(feature = "dim1", feature = "dim3"))]
+    #[cfg(not(feature = "dim2"))]
     Z = if cfg!(feature = "dim1") { 0 } else { 2 },
 }
 
@@ -524,6 +524,29 @@ impl SpatialAxis {
         { matches!(axis, Axis::Z) }
         #[cfg(not(feature = "dim1"))]
         { (axis as usize) < DIM }
+    }
+
+    /// Similar to [`Axis::permute`], but only rotates between spatial axes.
+    ///
+    /// - 1D: Z -> Z -> ...
+    /// - 2D: X -> Y -> X -> ...
+    /// - 3D: X -> Y -> Z -> X -> ...
+    #[inline]
+    pub const fn permute(self) -> Self {
+        match self {
+            #[cfg(not(feature = "dim1"))]
+            Self::X => Self::Y,
+            #[cfg(not(feature = "dim1"))]
+            Self::Y => cfg_select! {
+                feature = "dim2" => Self::X,
+                feature = "dim3" => Self::Z,
+            },
+            #[cfg(not(feature = "dim2"))]
+            Self::Z => cfg_select! {
+                feature = "dim1" => Self::Z,
+                feature = "dim3" => Self::X,
+            },
+        }
     }
 }
 

@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use kiss3d::egui::Color32;
 use kiss3d::glamx::Vec3;
 use taser_em2d::prelude::*;
-use taser_em_testbed2d::plot::{DftPlotLine, PlotLine, PlotWindow};
+use taser_em_testbed2d::plot::*;
 use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode, re_exports::anyhow};
 
 #[kiss3d::main]
@@ -104,7 +105,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let dft_resolution = 200;
+    let dft_resolution = 50;
     let sim_speed = 2;
 
     // Simulation parameters w/ 30 cells-per-wavelength
@@ -136,14 +137,24 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let dipole = simulation.add_dipole(dipole, source_values);
 
-    // Power flux sensor for reading back power flux
-    let flux_sensor = simulation.add_flux_sensor(
+    // Instantaneous and time-averaged power flux sensors
+    let flux = simulation.add_flux_sensor(
         PowerFluxSensor {
             axis: SpatialAxis::X,
             position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
             direction: Direction::Negative,
         }
     );
+    let flux_dft = Arc::new(PowerFluxDftSensor {
+        axis: SpatialAxis::X,
+        position: Vect::new(
+            -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
+            0.
+        ),
+        size: None,
+        direction: Direction::Negative,
+        frequencies: frequencies_from_range((freq * 0.5)..=(freq * 1.5), dft_resolution),
+    });
 
     // Preparing simulation
     // Create instance of backend we will run the simulation with
@@ -159,33 +170,23 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Create GPU simulation state
     let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
 
-    // Set up power flux and source DFTs
-    let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-    let (flux_dft, flux_func) = PowerFluxFunction::new(&flux_sensor, state.power_flux_states.as_ref().unwrap())?
-        .to_dft(frequencies.clone())?;
-    let flux_dft_hook = DftHook::new(&backend, [flux_dft], &state)?;
-    let (src_dft, src_func) = SourceFunction::new(&dipole, &state.source_states)?
-        .to_dft(frequencies)?;
-    let src_dft_hook = DftHook::new(&backend, [src_dft], &state)?;
+    // Set up DFT power flux
+    let flux_dft_hook = PowerFluxDftHook::new(&backend, &mut state, &[flux_dft.clone()])?;
 
     // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
         .expect("we added a flux sensor to the simulation, so readback must be possible");
-    let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_hook).await?;
-    let mut src_dft_read = DftReadback::new(&backend, &src_dft_hook).await?;
+    let mut flux_dft_read = PowerFluxDftReadback::new(&backend, flux_dft_hook.states())?;
 
-    // Apply DFT hooks to pipeline to update DFTs with the main simulation
-    let mut pipeline = apply_pipeline_hooks(pipeline, (flux_dft_hook, src_dft_hook));
+    // Apply hooks
+    let mut pipeline = apply_pipeline_hooks(pipeline, flux_dft_hook);
 
     // Running simulation
     // Set up DFT plots
     let frequency_scale = Some(1e-9); // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis;
     let mut plot_window = PlotWindow::new("Power Flux DFT", Some("Frequency (GHz)"), None);
-    let mut flux_plot = DftPlotLine::new("Power Flux", &flux_func, &flux_dft_read, frequency_scale)?
-        .with_color(Color32::RED);
-    let mut src_plot = DftPlotLine::new("Source", &src_func, &src_dft_read, frequency_scale)?
-        .with_color(Color32::GREEN);
+    let mut flux_dft_plot = DftPlot::new("Power Flux", &flux_dft.frequencies, frequency_scale)?;
 
     // Run & render simulation with viewer
     println!("Running on backend: {}", backend_name(&backend));
@@ -195,13 +196,15 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
-        let instantaneous_flux = power_readback.get_power(&flux_sensor).unwrap();
+        let instantaneous_flux = power_readback.get_power(&flux).unwrap();
         println!("Instantaneous power flux: {instantaneous_flux}");
 
-        let (flux_dft, src_dft) = &pipeline.hooks;
-        src_plot.update_dft_and_points(&backend, src_dft.states(), &mut src_dft_read)?;
-        flux_plot.update_dft_and_points(&backend, flux_dft.states(), &mut flux_dft_read)?;
-        plot_window.show(&mut testbed, vec![src_plot.create_line(), flux_plot.create_line()])?;
+        let power_flux_dft_hook = &pipeline.hooks;
+        flux_dft_read.sync(&backend, power_flux_dft_hook.states())?;
+        let dfts = flux_dft_read.get_flux_dfts(&flux_dft, power_flux_dft_hook.states()).unwrap();
+        println!("{dfts:?}");
+        flux_dft_plot.update(dfts);
+        plot_window.show(&mut testbed, vec![flux_dft_plot.create_line()])?;
 
         pipeline.simulate(&backend, &mut state)?;
     }
