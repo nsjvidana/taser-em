@@ -5,6 +5,7 @@ use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffe
 use std::sync::Arc;
 use itertools::Itertools;
 use ndarray::IxDyn;
+use parry3d::bounding_volume::Aabb;
 use taser_em_shaders::dft::*;
 use taser_em_shaders::fdtd::GridParameters;
 use taser_em_shaders::math::*;
@@ -167,15 +168,22 @@ impl DftRegionStates {
     pub fn new(backend: &GpuBackend, sim: &FdtdLossyState, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
         let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
+        let grid_extents = sim.cell_size * sim.n_cells.as_vect();
 
         let region_descs = region_objs
             .iter()
             .scan(0, |total_dfts, region| {
-                // TODO: return error if out of bounds
-                let bb_min_offset = region.bb_min + sim_offset;
-                let cell_idx_min = (bb_min_offset / sim.cell_size).as_grid_index().cell_idx_to_3d();
-                let n_cells = ((region.bb_max - region.bb_min) / sim.cell_size)
-                    .as_grid_index();
+                let min = region.bb_min.min(region.bb_max) + sim_offset;
+                let max = region.bb_min.max(region.bb_max) + sim_offset;
+                if min.cmplt(Vect::ZERO).any() || max.cmpgt(grid_extents).any() {
+                    return Some(Err(DftError::OutOfBoundsRegion {
+                        region: region.clone(),
+                        grid_extents: Aabb::new(Vec3::ZERO, grid_extents.to_3d(Vec3::ZERO))
+                            .translated(sim_offset.to_3d(Vec3::ZERO)),
+                    }));
+                }
+                let cell_idx_min = (min / sim.cell_size).as_grid_index().cell_idx_to_3d();
+                let n_cells = ((max - min) / sim.cell_size).as_grid_index();
                 let n_cells3 = n_cells.n_cells_to_3d();
                 let cell_count = n_cells.element_product();
 
@@ -193,18 +201,19 @@ impl DftRegionStates {
                     }
                     incrs
                 };
-                Some(DftRegionDescription {
+                Some(Ok(DftRegionDescription {
                     ptr: region.clone(),
                     cell_idx_min,
                     flat_idx_incrs,
                     dft_start_buf_offset,
                     n_cells3,
                     cell_count,
-                })
+                }))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let dft_regions = region_descs.iter()
+        let dft_regions = region_descs
+            .iter()
             .map(|desc| {
                 let frequencies = &desc.ptr.frequencies;
                 if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) }
@@ -231,8 +240,6 @@ impl DftRegionStates {
             .last()
             .map(|d| d.freq_buf_offset(d.ptr.frequencies.len()))
             .unwrap();
-        let diff = dft_count - dft_regions.last().unwrap().dfts_start_idx as usize ;
-        println!("{diff}, {}", dft_regions.last().unwrap().cell_count);
         let dfts_zeroed = vec![ComplexVec3::ZERO; dft_count];
 
         let params = GpuDftRegionsParams::new(sim.n_cells.n_cells_to_3d(), sim.dt, &dft_regions);
@@ -583,4 +590,9 @@ pub enum DftError {
     NoRegions,
     #[error("Couldn't find DFT region {0:?}")]
     CannotFindRegion(Arc<DftRegion>),
+    #[error("Part of DFT region is outside simulation grid. Region: {region:?}, Grid extents: {grid_extents:?}")]
+    OutOfBoundsRegion {
+        region: Arc<DftRegion>,
+        grid_extents: Aabb,
+    },
 }

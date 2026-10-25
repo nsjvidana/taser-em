@@ -30,8 +30,11 @@ pub struct PowerFluxDftSensor {
 // TODO: interop w/ external DftRegionsHook instead?
 //        maybe works with a DftRegionsHook builder struct...
 pub struct PowerFluxDftHook {
-    // TODO: /// If all [`PowerFluxDftSensor`]s should be updated in the next step.
-    //       pub update_dfts: bool,
+    /// Enables / disables updating the power flux integrals.
+    ///
+    /// This is necessary if one wants to run the power flux integrals only once, after steady state fields
+    /// are achieved.
+    pub enable_update: bool,
     #[allow(dead_code)]
     region_objs: Vec<Arc<DftRegion>>,
     states: PowerFluxDftStates,
@@ -115,6 +118,7 @@ impl PowerFluxDftHook {
         let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
 
         Ok(Self {
+            enable_update: true,
             region_objs,
             states: PowerFluxDftStates {
                 descriptions,
@@ -141,17 +145,19 @@ impl FdtdLossyHook for PowerFluxDftHook {
     fn dispatch_step(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
         self.dft_regions_hook.dispatch_step(pass, state)?;
 
-        self.update.call(
-            pass,
-            DispatchGrid::Grid(self.states.flux_dft_workgroups),
-            &state.grid,
-            self.dft_regions_hook.state().h_dfts(),
-            self.dft_regions_hook.state().en_dfts(),
-            self.dft_regions_hook.state().regions(),
-            &self.states.flux_sensors,
-            &mut self.states.sensor_power,
-            &mut self.states.wg_summations,
-        )?;
+        if self.enable_update {
+            self.update.call(
+                pass,
+                DispatchGrid::Grid(self.states.flux_dft_workgroups),
+                &state.grid,
+                self.dft_regions_hook.state().h_dfts(),
+                self.dft_regions_hook.state().en_dfts(),
+                self.dft_regions_hook.state().regions(),
+                &self.states.flux_sensors,
+                &mut self.states.sensor_power,
+                &mut self.states.wg_summations,
+            )?;
+        }
         Ok(())
     }
 }
