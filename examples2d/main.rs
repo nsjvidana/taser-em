@@ -156,6 +156,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         direction: Direction::Negative,
         frequencies: frequencies_from_range((freq * 0.5)..=(freq * 1.5), dft_resolution),
     });
+    let all_flux_dfts = std::slice::from_ref(&flux_dft);
 
     // Preparing simulation
     // Create instance of backend we will run the simulation with
@@ -172,7 +173,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
 
     // Set up DFT power flux hook
-    let flux_dft_hook = PowerFluxDftHook::new(&backend, &mut state, &[flux_dft.clone()])?;
+    let flux_dft_hook = PowerFluxDftHook::new(&backend, &mut state, all_flux_dfts)?;
 
     // Set up readbacks
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
@@ -199,7 +200,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     );
     let mut src_pipeline = FdtdLossyPipeline::new(&backend, src_boundary_conditions, sim_speed)?;
     let mut src_state = src_sim.finalize(&backend, &stability, &mut src_pipeline)?;
-    let src_flux_dft_hook = PowerFluxDftHook::new(&backend, &mut src_state, &[flux_dft.clone()])?;
+    let src_flux_dft_hook = PowerFluxDftHook::new(&backend, &mut src_state, all_flux_dfts)?;
     let mut src_flux_dft_read = PowerFluxDftReadback::new(&backend, src_flux_dft_hook.states())?;
     let mut src_pipeline = apply_pipeline_hooks(src_pipeline, src_flux_dft_hook);
 

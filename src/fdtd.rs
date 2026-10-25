@@ -9,7 +9,6 @@ use khal::backend::*;
 use parry3d::bounding_volume::Aabb;
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::{NonZeroI32, NonZeroU32};
-use std::ops::Deref;
 use std::sync::Arc;
 use taser_em_shaders::fdtd::*;
 use taser_em_shaders::math::*;
@@ -306,7 +305,7 @@ impl FdtdLossySimulation {
 
         Self {
             fdtd_parameters: self.fdtd_parameters.clone(),
-            pml_parameters: self.pml_parameters.clone(),
+            pml_parameters: self.pml_parameters,
             tfsf_parameters: self.tfsf_parameters.clone(),
             grid_sizing_mode: self.grid_sizing_mode,
             material_regions,

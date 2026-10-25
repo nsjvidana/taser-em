@@ -210,7 +210,7 @@ impl DftPlot {
     pub fn set_frequencies(&mut self, frequencies: &[Real]) -> TaserResult<()> {
         if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) }
         self.frequencies = frequencies
-            .into_iter()
+            .iter()
             .map(|f| *f as _)
             .collect();
         self.pts

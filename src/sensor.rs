@@ -5,7 +5,6 @@ use crate::prelude::TaserResult;
 use itertools::Itertools;
 use khal::backend::{Backend, Buffer, DispatchGrid, Encoder, GpuBackend, GpuBuffer, GpuPass, GpuReadback};
 use std::sync::Arc;
-use ndarray::IxDyn;
 use taser_em_shaders::dft::DftFields;
 use taser_em_shaders::math::*;
 use taser_em_shaders::sensor::*;
@@ -115,7 +114,7 @@ impl PowerFluxDftHook {
         let sensor_power = vec![Complex32::ZERO; flux_sensors.len()];
 
         let gpu_dft_regions = dft_region_states.gpu_region_descs();
-        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, &gpu_dft_regions);
+        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, gpu_dft_regions);
         let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
 
         Ok(Self {
@@ -164,7 +163,6 @@ impl FdtdLossyHook for PowerFluxDftHook {
 }
 
 pub struct PowerFluxDftReadback {
-    ptrs: Vec<Arc<PowerFluxDftSensor>>,
     sensor_power: Vec<Complex32>,
     sensor_power_read: GpuReadback<Complex32>,
 }
@@ -177,16 +175,12 @@ impl PowerFluxDftReadback {
     pub fn new(backend: &GpuBackend, states: &PowerFluxDftStates) -> TaserResult<Self> {
         let len = states.sensor_power.len();
         Ok(Self {
-            ptrs: states.descriptions
-                .iter()
-                .map(|d| d.ptr.clone())
-                .collect(),
             sensor_power: vec![Complex32::ZERO; len],
             sensor_power_read: GpuReadback::new(backend, len)?,
         })
     }
 
-    /// Synchronizes the backend and reads back data and updates what's stored on the CPU.
+    /// Synchronizes the backend and reads back data, updating what's stored on the CPU.
     pub fn sync(&mut self, backend: &GpuBackend, states: &PowerFluxDftStates) -> TaserResult<()> {
         self.read_back(backend)?;
         self.request_copy(backend, states)

@@ -267,7 +267,7 @@ impl DftRegionStates {
 
     pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> Option<&DftRegionDescription> {
         self.region_descs.iter()
-            .find_map(|v| Arc::ptr_eq(&v.ptr, region).then_some(v))
+            .find(|v| Arc::ptr_eq(&v.ptr, region))
     }
 }
 
