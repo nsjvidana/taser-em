@@ -231,6 +231,7 @@ impl FdtdLossySimulation {
     /// If `overlay_on_grid` is enabled in the PML parameters, PML widths won't be added to the
     /// grid dimensions.
     pub fn compute_grid_sizing(&self, stability: &FdtdStability) -> GridSizing {
+        let cell_size = self.fdtd_parameters.cell_size;
         let sim_to_n_cells = |n_cells_sim| {
             let mut n_cells = stability.spacer_region_widths.sum_with_n_cells(n_cells_sim);
             if !self.pml_parameters.overlay_on_grid {
@@ -240,24 +241,37 @@ impl FdtdLossySimulation {
         };
 
         macro_rules! auto_sizing {
-            ($custom_bb: expr, $n_cells_rounding_func:ident) => {{
-                let bb = $custom_bb.unwrap_or_else(|| self.compute_bounding_box());
-                let cell_size = self.fdtd_parameters.cell_size;
-                let n_cells3_f = bb.extents() / cell_size.to_3d(Vec3::ONE);
-                let n_cells_sim = Vect::from_vec3(n_cells3_f.$n_cells_rounding_func()).as_grid_index();
-                let n_cells = sim_to_n_cells(n_cells_sim);
-                let sim_offset = YeeGridMaterials::compute_simulation_offset(&bb, n_cells, cell_size);
-                (n_cells, sim_offset)
+            ($custom_bb:expr, $rounding_func:ident) => {{
+                let world_bb = $custom_bb.unwrap_or_else(|| self.compute_bounding_box());
+                let n_cells3_f = world_bb.extents() / cell_size.to_3d(Vec3::ONE);
+                let n_cells_sim = Vect::from_vec3(n_cells3_f.$rounding_func()).as_grid_index();
+                let additional_layers = {
+                    let mut additional_layers = stability.spacer_region_widths;
+                    if !self.pml_parameters.overlay_on_grid {
+                        additional_layers += self.pml_parameters.widths;
+                    }
+                    additional_layers + LayerWidths::splat_spatial(1) // Boundary cells
+                };
+                let grid_pos_offset = {
+                    let arr = SpatialAxis::ALL_SPATIAL.map(|axis| additional_layers[axis].lo);
+                    GridIndex::from_array(arr).as_vect() * cell_size
+                };
+                let grid_pos = (n_cells_sim.as_vect() * cell_size / 2.) + grid_pos_offset;
+                let world_center = Vect::from_vec3(world_bb.center());
+
+                let world_to_grid = (grid_pos - world_center).to_3d(Vec3::ZERO);
+                let n_cells = additional_layers.sum_with_n_cells(n_cells_sim);
+                (n_cells, world_to_grid)
             }};
         }
 
-        let (n_cells, sim_offset) = match self.grid_sizing_mode {
+        let (n_cells, world_to_grid) = match self.grid_sizing_mode {
             GridSizingMode::AutoCeil(custom_bb) => auto_sizing!(custom_bb, ceil),
             GridSizingMode::AutoFloor(custom_bb) => auto_sizing!(custom_bb, floor),
             GridSizingMode::Custom(n_cells) => (n_cells, Vec3::ZERO),
         };
 
-        GridSizing { n_cells, sim_offset, }
+        GridSizing { n_cells, sim_offset: world_to_grid, }
     }
 
     /// Compute the bounding box surrounding all objects and sources in the simulation.
