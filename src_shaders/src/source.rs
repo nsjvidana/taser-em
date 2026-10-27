@@ -321,8 +321,10 @@ pub fn init_tfsf_masks(
         direction,
         tf_min_a, tf_min_a1,tf_min_a2,
         tf_max_a, tf_max_a1, tf_max_a2,
-        vals_start, vals_end, ..
+        vals_start, vals_end,
+        correct_at_injection_only, ..
     } = tfsf_sources.read(src_idx);
+    let is_positive_dir = direction == Direction::Positive;
 
     if vals_start == vals_end { return; } // skip invalid/inactive tfsf sources
 
@@ -332,6 +334,9 @@ pub fn init_tfsf_masks(
     let a1_spatial = SpatialAxis::is_spatial_axis(a1);
     let a2_spatial = SpatialAxis::is_spatial_axis(a2);
 
+    // Similar to Dr. John Brand Schneider's lecture notes, but instead of the TF/SF boundary
+    // splicing into a cell on the hi-end, the boundary surrounds full cells only.
+    // Figure 8.5 is a decent reference for this algorithm either way
     let inside_tf = (cell_idx_a >= tf_min_a && cell_idx_a <= tf_max_a) &&
         (!a1_spatial || (cell_idx_a1 >= tf_min_a1 && cell_idx_a1 <= tf_max_a1)) &&
         (!a2_spatial || (cell_idx_a2 >= tf_min_a2 && cell_idx_a2 <= tf_max_a2));
@@ -364,34 +369,49 @@ pub fn init_tfsf_masks(
     // guaranteed to hit the object.
     #[cfg(feature = "dim1")]
     {
-        if (direction == Direction::Positive && (at_max_sf_edge_a[0] || at_max_tf_edge_a[0])) ||
-            (direction == Direction::Negative && (at_min_sf_edge_a[0] || at_min_tf_edge_a[0]))
+        if (is_positive_dir && (at_max_sf_edge_a[0] || at_max_tf_edge_a[0])) ||
+            (!is_positive_dir && (at_min_sf_edge_a[0] || at_min_tf_edge_a[0]))
         {
             return;
         }
     }
 
-    let not_sf_corner = cfg_select! {
+    let is_sf_corner = cfg_select! {
         feature = "dim1" => true,
         _ => {{
             let mut at_sf_edge_count = 0;
             for i in 0..3 {
                 at_sf_edge_count += at_min_sf_edge_a[i] as usize + at_max_sf_edge_a[i] as usize;
             }
-            at_sf_edge_count < 2
+            at_sf_edge_count >= 2
         }}
     };
 
+    if is_sf_corner { return; }
+
+    let not_inj_only = correct_at_injection_only != 1;
+    // enables boundary corrections along propagation axis
+    // if injection-plane-only, enables if cell is touching the faces of injection plane
+    let h_ma_enable =
+        if not_inj_only { at_min_tf_edge_a[0] || at_max_sf_edge_a[0] }
+        else { (is_positive_dir && at_min_tf_edge_a[0]) || (!is_positive_dir && at_max_sf_edge_a[0]) };
+    let en_pa_enable =
+        if not_inj_only { at_max_tf_edge_a[0] || at_min_sf_edge_a[0] }
+        else { (is_positive_dir && at_min_sf_edge_a[0]) || (!is_positive_dir && at_max_tf_edge_a[0]) };
+    // if not injection-plane-only, enable corrections along axes where wave doesn't propagate
+    // this enables behavior of typical TF/SF used for objects that scatter in all directions.
+    let a1a2_enable = not_inj_only;
+
     let neg = if inside_tf { -1. } else { 1. };
     tfsf_masks.write(idx, TfsfMask {
-        en_src_a2_pa1: (not_sf_corner && (at_max_tf_edge_a[1] || at_min_sf_edge_a[1])) as u32 as Real * neg,
-        en_src_a1_pa2: (not_sf_corner && (at_max_tf_edge_a[2] || at_min_sf_edge_a[2])) as u32 as Real * neg,
-        en_src_a2_pa: (not_sf_corner && (at_max_tf_edge_a[0] || at_min_sf_edge_a[0])) as u32 as Real * neg,
-        en_src_a1_pa: (not_sf_corner && (at_max_tf_edge_a[0] || at_min_sf_edge_a[0])) as u32 as Real * neg,
-        h_src_a2_ma1: (not_sf_corner && (at_min_tf_edge_a[1] || at_max_sf_edge_a[1])) as u32 as Real * neg,
-        h_src_a1_ma2: (not_sf_corner && (at_min_tf_edge_a[2] || at_max_sf_edge_a[2])) as u32 as Real * neg,
-        h_src_a2_ma: (not_sf_corner && (at_min_tf_edge_a[0] || at_max_sf_edge_a[0])) as u32 as Real * neg,
-        h_src_a1_ma: (not_sf_corner && (at_min_tf_edge_a[0] || at_max_sf_edge_a[0])) as u32 as Real * neg,
+        en_src_a2_pa1: (a1a2_enable && (at_max_tf_edge_a[1] || at_min_sf_edge_a[1])) as u32 as Real * neg,
+        en_src_a1_pa2: (a1a2_enable && (at_max_tf_edge_a[2] || at_min_sf_edge_a[2])) as u32 as Real * neg,
+        en_src_a2_pa: en_pa_enable as u32 as Real * neg,
+        en_src_a1_pa: en_pa_enable as u32 as Real * neg,
+        h_src_a2_ma1: (a1a2_enable && (at_min_tf_edge_a[1] || at_max_sf_edge_a[1])) as u32 as Real * neg,
+        h_src_a1_ma2: (a1a2_enable && (at_min_tf_edge_a[2] || at_max_sf_edge_a[2])) as u32 as Real * neg,
+        h_src_a2_ma: h_ma_enable as u32 as Real * neg,
+        h_src_a1_ma: h_ma_enable as u32 as Real * neg,
     });
 }
 
@@ -518,8 +538,8 @@ pub struct GpuTfsf {
     pub a: Axis,
     pub a1: Axis,
     pub a2: Axis,
-
     pub direction: Direction,
+
     /// The smallest index component of a cell that is fully inside the TF/SF boundary.
     ///
     /// (component of cell idx is along `GpuTfsf.a` direction)
@@ -534,6 +554,7 @@ pub struct GpuTfsf {
     pub tf_max_a: u32,
     pub tf_max_a1: u32,
     pub tf_max_a2: u32,
+
     pub grid_start: u32,
 
     pub vals_start: u32,
@@ -545,6 +566,7 @@ pub struct GpuTfsf {
     pub polarization_a2: Real,
     pub corrections_start: u32,
     pub num_correction_cells: u32,
+    pub correct_at_injection_only: u32,
 
     pub inv_d_a: Real,
     pub inv_d_a1: Real,
@@ -557,10 +579,16 @@ pub struct GpuTfsf {
 #[derive(Copy, Clone, Pod, Zeroable, Default, Debug)]
 #[repr(C)]
 pub struct TfsfMask {
+    /// Correction of 3rd En field component along the hi-boundary edge orthogonal to 2nd axis.
+    ///
+    /// `a2` - correction of **3rd** En field component
+    /// `pa1` - correction for cells across TF/SF boundary when accessing them by checking one
+    ///   grid cell over along axis1. So pa1 means "plus axis1". Similarly, ma1 means "minus axis1".
     pub en_src_a2_pa1: Real,
     pub en_src_a1_pa2: Real,
     pub en_src_a2_pa: Real,
     pub en_src_a1_pa: Real,
+    /// Correction of 3rd H field component along the boundary edge orthogonal to 2nd axis.
     pub h_src_a2_ma1: Real,
     pub h_src_a1_ma2: Real,
     pub h_src_a2_ma: Real,

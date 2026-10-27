@@ -391,6 +391,11 @@ pub struct Tfsf {
     ///
     /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
     pub tfsf_buffer_width: LayerWidths,
+    /// If this TF/SF source should only have the source injection plane as a TF/SF boundary.
+    ///
+    /// Enable this if you know the entire plane wave will hit an object. If it does hit the object this way
+    /// and this isn't enabled, you might get random fields injected into your object (very bad!)
+    pub injection_plane_only: bool,
 }
 
 impl SourceType for Tfsf {
@@ -534,7 +539,7 @@ impl TfsfStates {
             .filter_map(|source| {
                 let Tfsf {
                     spatial_axis, direction, t_start,
-                    polarization, tfsf_buffer_width
+                    polarization, tfsf_buffer_width, injection_plane_only
                 } = &*source.src_ref;
                 let vals = &source.data_points;
                 if vals.is_empty() { return None; }
@@ -639,6 +644,7 @@ impl TfsfStates {
                     polarization_a2: (*polarization)[a2],
                     corrections_start,
                     num_correction_cells,
+                    correct_at_injection_only: *injection_plane_only as u32,
                     inv_d_a,
                     inv_d_a1: inv_d[a1],
                     inv_d_a2: inv_d[a2],
