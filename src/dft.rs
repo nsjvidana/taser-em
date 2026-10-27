@@ -98,6 +98,22 @@ pub struct DftRegionReadback {
     en_dfts_read: GpuReadback<ComplexVec3>,
 }
 
+macro_rules! readback_get {
+    ($name:ident, $field:ident) => {
+        pub fn $name(&self, region: &Arc<DftRegion>, freq_idx: usize) -> TaserResult<ndarray::ArrayD<ComplexVec3>> {
+            let desc = self.get_region_desc(region)?;
+            let idx_range = {
+                let start = desc.freq_buf_offset(freq_idx);
+                start..(start + desc.cell_count as usize)
+            };
+            let field = self.$field.get(idx_range).expect("freq_idx must be a valid frequency index");
+            let dims = desc.n_cells3.as_usizevec3().to_array();
+            Ok(ndarray::ArrayD::from_shape_vec(IxDyn(&dims), field.to_vec())
+                    .expect("regions were initialized properly"))
+        }
+    };
+}
+
 impl DftRegionReadback {
     pub fn new(backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<Self> {
         Ok(Self {
@@ -109,17 +125,8 @@ impl DftRegionReadback {
         })
     }
 
-    pub fn get_h(&self, region: &Arc<DftRegion>, freq_idx: usize) -> TaserResult<ndarray::ArrayD<ComplexVec3>> {
-        let desc = self.get_region_desc(region)?;
-        let idx_range = {
-            let start = desc.freq_buf_offset(freq_idx);
-            start..(start + desc.cell_count as usize)
-        };
-        let h = self.h_dfts.get(idx_range).expect("freq_idx must be a valid frequency index");
-        let dims = desc.n_cells3.as_usizevec3().to_array();
-        Ok(ndarray::ArrayD::from_shape_vec(IxDyn(&dims), h.to_vec())
-                .expect("regions were initialized properly"))
-    }
+    readback_get!(get_h, h_dfts);
+    readback_get!(get_en, en_dfts);
 
     pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> TaserResult<&DftRegionDescription> {
         self.refs.iter()
