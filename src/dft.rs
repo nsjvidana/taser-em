@@ -235,6 +235,7 @@ impl DftRegionStates {
                             freq,
                             dfts_start_idx,
                             kernel: Complex32::from_polar(1., -core::f32::consts::TAU * freq * sim.dt),
+                            h_finalize_k: Complex32::from_polar(1., -core::f32::consts::TAU * freq * 0.5 * sim.dt),
                             ..uninit_region_gpu
                         }
                     })
@@ -303,7 +304,7 @@ impl DftRegionDescription {
             flat_idx_incrs: self.flat_idx_incrs,
             kernel: Complex32::new(Real::NAN, Real::NAN),
             cell_count: self.cell_count,
-            _padding0: Default::default(),
+            h_finalize_k: Complex32::new(Real::NAN, Real::NAN),
         }
     }
 }

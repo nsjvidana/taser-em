@@ -149,7 +149,6 @@ impl FdtdLossyHook for PowerFluxDftHook {
             self.update.call(
                 pass,
                 DispatchGrid::Grid(self.states.flux_dft_workgroups),
-                &state.grid,
                 self.dft_regions_hook.state().h_dfts(),
                 self.dft_regions_hook.state().en_dfts(),
                 self.dft_regions_hook.state().regions(),

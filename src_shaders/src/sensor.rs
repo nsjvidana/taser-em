@@ -149,13 +149,12 @@ pub fn gpu_power_flux_dft(
     #[spirv(workgroup)] wg_s: &mut [
         Complex32; (FLUX_DFT_WG_SIZE.x * FLUX_DFT_WG_SIZE.y * FLUX_DFT_WG_SIZE.z) as usize
     ],
-    #[spirv(uniform, descriptor_set = 0, binding = 0)] grid: &GridParameters,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_dfts: &[ComplexVec3],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] en_dfts: &[ComplexVec3],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] dft_regions: &[GpuDftRegion],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_sensors: &[GpuPowerFluxDftSensor],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] sensor_power: &mut [Complex32], // one elem for each gpu sensor
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Complex32], // flat 3d array, element for every workgroup
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] h_dfts: &[ComplexVec3],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] en_dfts: &[ComplexVec3],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] dft_regions: &[GpuDftRegion],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] flux_sensors: &[GpuPowerFluxDftSensor],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] sensor_power: &mut [Complex32], // one elem for each gpu sensor
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] wg_summations: &mut [Complex32], // flat 3d array, element for every workgroup
 ) {
     let sensor_idx = id.z as usize;
     let sensor = flux_sensors.read(sensor_idx);
@@ -175,12 +174,11 @@ pub fn gpu_power_flux_dft(
     let idx_dft = (region.dfts_start_idx + grid_idx3_to_flat_idx(local_cell_idx3, region.n_cells3)) as usize
         * enable;
 
-    // Power calculation for this cell (includes DFT finalization terms)
+    // Power calculation for this cell
     let en_self = en_dfts.read(idx_dft);
     let en_m = en_cmplx_spatial_avg(en_dfts, en_self, idx_dft, region.flat_idx_incrs);
     let h_self = h_dfts.read(idx_dft);
-    let h_m = h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, region.flat_idx_incrs)
-        * Complex32::from_polar(1., -core::f32::consts::TAU * region.freq * 0.5 * grid.dt);
+    let h_m = h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, region.flat_idx_incrs);
     let ds = en_m.cross(h_m.conj()) * 0.5;
     let ds_dot = ds.dyn_idx(sensor.s_axis);
 

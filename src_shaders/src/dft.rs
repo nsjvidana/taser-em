@@ -135,9 +135,15 @@ pub fn gpu_dft_regions_update(
     let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
 
     let k = region.kernel.powu(*time_step);
-    // TODO: post-process H DFTs with e^(-jw*dt/2)
-    *h_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(h.read(idx).xyz());
+    *h_dfts.at_mut(idx_dft) += k * region.h_finalize_k * ComplexVec3::from_real(h.read(idx).xyz());
     *en_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(en.read(idx).xyz());
+
+    // TODO: power (probably when finalizing only)
+    // let en_self = en_dfts.read(idx_dft);
+    // let en_m = crate::sensor::en_cmplx_spatial_avg(en_dfts, en_self, idx_dft, region.flat_idx_incrs);
+    // let h_self = h_dfts.read(idx_dft);
+    // let h_m = crate::sensor::h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, region.flat_idx_incrs);
+    // let ds = en_m.cross(h_m.conj()) * 0.5;
 }
 
 cfg_cpu! {
@@ -157,7 +163,7 @@ pub struct GpuDftRegionsParams {
     /// Same as [`GridParameters::n_cells3`]
     pub n_cells3: UVec3,
     /// Same as [`GridParameters::dt`]
-    pub dt: Real
+    pub dt: Real,
 }
 
 impl GpuDftRegionsParams {
@@ -185,7 +191,7 @@ pub struct GpuDftRegion {
     pub flat_idx_incrs: UVec3,
     pub cell_count: u32,
     pub kernel: Complex32,
-    pub _padding0: [u32; 2],
+    pub h_finalize_k: Complex32,
 }
 
 bitflags::bitflags! {
