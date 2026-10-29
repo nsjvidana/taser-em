@@ -12,6 +12,8 @@ pub struct PlotWindow {
     pub open: bool,
     pub x_axis_title: Option<WidgetText>,
     pub y_axis_title: Option<WidgetText>,
+    pub x_decimals: usize,
+    pub y_decimals: usize,
 }
 
 impl PlotWindow {
@@ -25,6 +27,8 @@ impl PlotWindow {
             open: true,
             x_axis_title: x_axis_title.map(|v| v.into()),
             y_axis_title: y_axis_title.map(|v| v.into()),
+            x_decimals: 3,
+            y_decimals: 3,
         }
     }
 
@@ -41,7 +45,10 @@ impl PlotWindow {
                 .open(&mut self.open)
                 .show(ctx, |ui| {
                     let mut p = Plot::new(self.name.as_str())
-                        .legend(Legend::default());
+                        .legend(Legend::default())
+                        .label_formatter(|_, pt| {
+                            format!("{:.2$}, {:.3$}", pt.x, pt.y, self.x_decimals, self.y_decimals)
+                        });
                     if let Some(x_title) = self.x_axis_title.as_ref() {
                         p = p.custom_x_axes(vec![
                             AxisHints::new_x().label(x_title.clone())
