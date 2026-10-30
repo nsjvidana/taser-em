@@ -551,13 +551,13 @@ impl TfsfStates {
                 let inv_d_a = inv_d[a];
 
                 let buf_width = *tfsf_buffer_width;
-                let tf_min_a = problem_space_min[a] + buf_width[a].lo;
-                let tf_min_a1 = problem_space_min[a1] + buf_width[a1].lo;
-                let tf_min_a2 = problem_space_min[a2] + buf_width[a2].lo;
+                let tf_min_a = problem_space_min[a] + buf_width.get_or_zero(a).lo;
+                let tf_min_a1 = problem_space_min[a1] + buf_width.get_or_zero(a1).lo;
+                let tf_min_a2 = problem_space_min[a2] + buf_width.get_or_zero(a2).lo;
 
-                let tf_max_a = problem_space_max[a] - buf_width[a].hi;
-                let tf_max_a1 = problem_space_max[a1] - buf_width[a1].hi;
-                let tf_max_a2 = problem_space_max[a2] - buf_width[a2].hi;
+                let tf_max_a = problem_space_max[a] - buf_width.get_or_zero(a).hi;
+                let tf_max_a1 = problem_space_max[a1] - buf_width.get_or_zero(a1).hi;
+                let tf_max_a2 = problem_space_max[a2] - buf_width.get_or_zero(a2).hi;
 
                 let num_correction_cells = (tf_max_a - tf_min_a + 1) + 2;
                 let source_cell = 1;

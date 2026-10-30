@@ -1,20 +1,21 @@
-use crate::{into_par_iter, par_iter_mut};
-use crate::prelude::*;
-use glamx::{Pose3, Vec3};
-use parry3d::bounding_volume::{Aabb, BoundingVolume};
-use parry3d::shape::SharedShape;
-use std::num::NonZeroU32;
-use std::path::Path;
-use taser_em_shaders::math::*;
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 use crate::consts::{C_0, EPS_0};
 use crate::fdtd::{ElectricMaterial, PmlParameters};
 use crate::mesh_loading::MeshConverter;
 use crate::prelude::load_from_path;
+use crate::prelude::*;
 use crate::util::grid_cells_iter;
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
+use crate::{into_par_iter, par_iter_mut};
+use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use glamx::{Pose3, Vec3};
+use parry3d::bounding_volume::{Aabb, BoundingVolume};
+use parry3d::shape::SharedShape;
+use std::num::NonZeroU32;
+use std::path::Path;
 use taser_em_shaders::fdtd::PmlCoefficients;
+use taser_em_shaders::math::*;
 
 #[derive(Clone, Debug, Default)]
 /// Regions where a certain [`ElectricMaterial`] is present in a grid, stored as generic shapes.
@@ -370,9 +371,9 @@ impl PmlCoefficientsGrid {
                     if i < lo_end || i > hi_end { return 0. }
                     let lo_dist = i.abs_diff(lo_end) as Real;
                     let hi_dist = i.abs_diff(hi_end) as Real;
-                    let lo_t = (1. - lo_dist / (pml_widths[axis].lo*2) as Real)
+                    let lo_t = (1. - lo_dist / (pml_widths.get_or_zero(axis).lo*2) as Real)
                         .clamp(0., 1.);
-                    let hi_t = (1. - hi_dist / (pml_widths[axis].hi*2) as Real)
+                    let hi_t = (1. - hi_dist / (pml_widths.get_or_zero(axis).hi*2) as Real)
                         .clamp(0., 1.);
                     let sig = pml_sig_max * (lo_t + hi_t)
                         .powi(pml_grading_order.get());
@@ -493,32 +494,42 @@ impl PmlCoefficientsGrid {
 /// Stores the widths of a layer at the "low-end" and "high-ends" on each axis.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct LayerWidths {
-    pub widths: [LoHiWidths; MAX_DIM]
+    pub widths: [LoHiWidths; DIM]
 }
 
 impl LayerWidths {
+    pub const ZERO: Self = Self { widths: [LoHiWidths::ZERO; DIM] };
+
     /// [`LayerWidths`] with `lo` and `hi` widths along all spatial axes set to `width`.
     #[inline]
-    pub fn splat_spatial(width: Index) -> Self {
-        let mut selff = Self {
-            widths: core::array::repeat(LoHiWidths::default()),
-        };
-        for s_axis in SpatialAxis::ALL_SPATIAL
-        {
-            selff[s_axis] = LoHiWidths::splat(width);
-        }
-        selff
+    pub const fn splat_spatial(width: Index) -> Self {
+        Self { widths: [LoHiWidths::splat(width); DIM] }
     }
 
-    /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a [`YeeGrid`] in grid cells.
-    pub fn sum_with_n_cells(&self, n_cells: GridIndex) -> GridIndex {
-        let mut n_cells = n_cells.into_array();
-        for (n_cells_cmp, (_, lo_hi_widths_cmp)) in n_cells.iter_mut()
-            .zip(self.iter_spatial_axes())
-        {
-            *n_cells_cmp += lo_hi_widths_cmp.lo + lo_hi_widths_cmp.hi;
-        }
-        GridIndex::from_index_array(n_cells)
+    /// Tries to get widths along an axis. If `axis` isn't spatial, return [`LoHiWidths::ZERO`].
+    #[inline]
+    pub fn get_or_zero(&self, axis: Axis) -> LoHiWidths {
+        if let Ok(s_axis) = SpatialAxis::try_from(axis) { self[s_axis] }
+        else { LoHiWidths::ZERO }
+    }
+
+    /// Use index operator to index with a [`SpatialAxis`] (no extra checks)
+    #[inline]
+    pub fn get(&self, axis: Axis) -> Option<&LoHiWidths> {
+        Some(&self[SpatialAxis::try_from(axis).ok()?])
+    }
+
+    /// Use index operator to index with a [`SpatialAxis`] (no extra checks)
+    #[inline]
+    pub fn get_mut(&mut self, axis: Axis) -> Option<&mut LoHiWidths> {
+        Some(&mut self[SpatialAxis::try_from(axis).ok()?])
+    }
+
+    /// Adds `self` with `n_cells`, where `n_cells` is the dimensions of a grid.
+    pub fn sum_with_n_cells(&self, mut n_cells: GridIndex) -> GridIndex {
+        self.iter_spatial_axes()
+            .for_each(|(axis, widths)| n_cells[axis] += widths.lo + widths.hi);
+        n_cells
     }
 
     /// Returns `self` with widths along `spatial_axis` set to `widths`
@@ -529,9 +540,7 @@ impl LayerWidths {
 
     #[inline]
     pub fn iter_spatial_axes(&self) -> impl Iterator<Item = (SpatialAxis, &LoHiWidths)> {
-        SpatialAxis::ALL_SPATIAL
-            .map(|axis| (axis, &self.widths[Axis::from(axis) as usize]))
-            .into_iter()
+        SpatialAxis::ALL_SPATIAL.into_iter().zip(self.widths.iter())
     }
 }
 
@@ -571,51 +580,47 @@ impl core::ops::Sub for LayerWidths {
     }
 }
 
-impl core::ops::Index<Axis> for LayerWidths {
-    type Output = LoHiWidths;
-    #[inline]
-    fn index(&self, index: Axis) -> &Self::Output {
-        &self.widths[index as usize]
-    }
-}
-
-impl core::ops::IndexMut<Axis> for LayerWidths {
-    #[inline]
-    fn index_mut(&mut self, index: Axis) -> &mut Self::Output {
-        &mut self.widths[index as usize]
-    }
-}
-
 impl core::ops::Index<SpatialAxis> for LayerWidths {
     type Output = LoHiWidths;
     #[inline]
-    fn index(&self, index: SpatialAxis) -> &Self::Output {
-        &self.widths[Axis::from(index) as usize]
-    }
+    fn index(&self, index: SpatialAxis) -> &Self::Output { &self.widths[index as usize] }
 }
 
 impl core::ops::IndexMut<SpatialAxis> for LayerWidths {
     #[inline]
-    fn index_mut(&mut self, index: SpatialAxis) -> &mut Self::Output {
-        &mut self.widths[Axis::from(index) as usize]
-    }
+    fn index_mut(&mut self, index: SpatialAxis) -> &mut Self::Output { &mut self.widths[index as usize] }
 }
 
 /// Widths of a layer on the lo- and hi- ends along an axis.
 ///
 /// Used by [`LayerWidths`]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Add, AddAssign, Sub, SubAssign, Mul, MulAssign, Div, DivAssign)]
 pub struct LoHiWidths {
     pub lo: Index,
     pub hi: Index,
 }
 
 impl LoHiWidths {
+    pub const ZERO: Self = Self { lo: 0, hi: 0 };
+
     #[inline]
-    pub fn splat(width: Index) -> Self {
+    pub const fn splat(width: Index) -> Self {
         Self {
             lo: width,
             hi: width,
         }
+    }
+
+    #[inline]
+    pub const fn with_lo(mut self, lo: Index) -> Self {
+        self.lo = lo;
+        self
+    }
+
+    #[inline]
+    pub const fn with_hi(mut self, hi: Index) -> Self {
+        self.hi = hi;
+        self
     }
 }

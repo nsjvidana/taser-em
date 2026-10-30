@@ -232,42 +232,42 @@ impl FdtdLossySimulation {
     /// grid dimensions.
     pub fn compute_grid_sizing(&self, stability: &FdtdStability) -> GridSizing {
         let cell_size = self.fdtd_parameters.cell_size;
-        let sim_to_n_cells = |n_cells_sim| {
-            let mut n_cells = stability.spacer_region_widths.sum_with_n_cells(n_cells_sim);
-            if !self.pml_parameters.overlay_on_grid {
-                n_cells = self.pml_parameters.widths.sum_with_n_cells(n_cells);
-            }
-            LayerWidths::splat_spatial(1).sum_with_n_cells(n_cells) // Boundary cells
-        };
 
-        macro_rules! auto_sizing {
-            ($custom_bb:expr, $rounding_func:ident) => {{
-                let world_bb = $custom_bb.unwrap_or_else(|| self.compute_bounding_box());
-                let n_cells3_f = world_bb.extents() / cell_size.to_3d(Vec3::ONE);
-                let n_cells_sim = Vect::from_vec3(n_cells3_f.$rounding_func()).as_grid_index();
-                let additional_layers = {
-                    let mut additional_layers = stability.spacer_region_widths;
-                    if !self.pml_parameters.overlay_on_grid {
-                        additional_layers += self.pml_parameters.widths;
+        let auto_sizing = |custom_bb: Option<Aabb>, rounding: fn(Vec3) -> Vec3| {
+            let world_bb = custom_bb.unwrap_or_else(|| self.compute_bounding_box());
+            let n_cells_sim = Vect::from_vec3(rounding(
+                world_bb.extents() / cell_size.to_3d(Vec3::ONE)
+            )).as_grid_index();
+            let additional_layers = {
+                let mut additional_layers = stability.spacer_region_widths
+                    + self.pml_parameters.widths
+                    + LayerWidths::splat_spatial(1);
+                if self.pml_parameters.overlay_on_grid { // corrections for overlaying PML on objects
+                    for axis in SpatialAxis::ALL_SPATIAL {
+                        if stability.spacer_region_widths[axis].lo == 0 {
+                            additional_layers[axis].lo -= self.pml_parameters.widths[axis].lo;
+                        }
+                        if stability.spacer_region_widths[axis].hi == 0 {
+                            additional_layers[axis].hi -= self.pml_parameters.widths[axis].hi;
+                        }
                     }
-                    additional_layers + LayerWidths::splat_spatial(1) // Boundary cells
-                };
-                let grid_pos_offset = {
-                    let arr = SpatialAxis::ALL_SPATIAL.map(|axis| additional_layers[axis].lo);
-                    GridIndex::from_array(arr).as_vect() * cell_size
-                };
-                let grid_pos = (n_cells_sim.as_vect() * cell_size / 2.) + grid_pos_offset;
-                let world_center = Vect::from_vec3(world_bb.center());
+                }
+                additional_layers
+            };
+            let grid_pos_offset = {
+                let arr = additional_layers.widths.map(|v| v.lo);
+                GridIndex::from_index_array(arr).as_vect() * cell_size
+            };
+            let grid_pos = (n_cells_sim.as_vect() * cell_size / 2.) + grid_pos_offset;
+            let world_center = Vect::from_vec3(world_bb.center());
 
-                let world_to_grid = (grid_pos - world_center).to_3d(Vec3::ZERO);
-                let n_cells = additional_layers.sum_with_n_cells(n_cells_sim);
-                (n_cells, world_to_grid)
-            }};
-        }
-
+            let world_to_grid = (grid_pos - world_center).to_3d(Vec3::ZERO);
+            let n_cells = additional_layers.sum_with_n_cells(n_cells_sim);
+            (n_cells, world_to_grid)
+        };
         let (n_cells, world_to_grid) = match self.grid_sizing_mode {
-            GridSizingMode::AutoCeil(custom_bb) => auto_sizing!(custom_bb, ceil),
-            GridSizingMode::AutoFloor(custom_bb) => auto_sizing!(custom_bb, floor),
+            GridSizingMode::AutoCeil(custom_bb) => auto_sizing(custom_bb, Vec3::ceil),
+            GridSizingMode::AutoFloor(custom_bb) => auto_sizing(custom_bb, Vec3::floor),
             GridSizingMode::Custom(n_cells) => (n_cells, Vec3::ZERO),
         };
 
@@ -900,8 +900,10 @@ pub struct PmlParameters {
     pub sig_max: Real,
     /// The order of the monomial that ramps PML conductivity up to `sig_max`
     pub grading_order: NonZeroI32, // TODO: make this a positive f32 type.
-    /// If PML conductivities should be placed over the grid edges rather than added as new cells
+    /// If PML conductivities should be masked over objects in the grid rather than added as new cells
     /// at the grid edges (off by default).
+    ///
+    /// Note that this doesn't lay PML conductivities over spacer regions.
     pub overlay_on_grid: bool,
 }
 
