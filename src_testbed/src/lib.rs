@@ -26,6 +26,7 @@ pub struct FdtdTestbedViewer {
     pub window: Window,
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
+    pub pml_visuals: Vec<SceneNode3d>,
     pub material_region_alpha: f32,
     n_cells: GridIndex,
     cell_size: Vect,
@@ -87,6 +88,7 @@ impl FdtdTestbedViewer {
             window,
             camera,
             scene,
+            pml_visuals: vec![],
             material_region_alpha: Self::DEFAULT_REGION_ALPHA,
             n_cells,
             cell_size,
@@ -99,13 +101,62 @@ impl FdtdTestbedViewer {
         };
         selff.default_cam_setup();
         selff.update_cam_light();
+        selff.add_pmls(&simulation.pml_parameters);
         selff.add_region_meshes(&simulation.material_regions, sim_offset);
-
         selff.add_flux_planes(
             simulation.power_flux_sensors.iter().map(|rc| rc.as_ref())
         );
 
         Ok(selff)
+    }
+
+    pub fn add_pmls(&mut self, pml_params: &PmlParameters) {
+        // add/subtract 1 cell for boundary cells
+        let cell_size3 = self.cell_size.to_3d(Vec3::ZERO);
+        let cell_size_max = self.cell_size.max_element();
+        let sim_max = self.grid_bb_max - cell_size3;
+        let sim_min = self.grid_bb_min + cell_size3;
+
+        for (s_axis, width) in pml_params.widths.iter_spatial_axes() {
+            let axis = Axis::from(s_axis);
+
+            let mut make_cube = |mins: Vec3, maxs: Vec3| {
+                let mut extents = maxs - mins;
+                Axis::ALL_AXES.into_iter().for_each(|axis| {
+                    if !SpatialAxis::is_spatial_axis(axis) { extents[axis] = cell_size_max; }
+                });
+                let cube = self.scene
+                    .add_cube(extents.x, extents.y, extents.z)
+                    .set_position((mins + maxs) / 2.)
+                    .set_color(DARK_GRAY.with_alpha(0.25));
+                self.pml_visuals.push(cube);
+            };
+
+            // hi box
+            if width.hi != 0 {
+                let mut mins = sim_min;
+                mins[axis] = sim_max[axis] - width.hi as Real * self.cell_size[s_axis];
+                make_cube(mins, sim_max);
+            }
+
+            // lo box
+            if width.lo != 0 {
+                let mut maxs = sim_max;
+                maxs[axis] = sim_min[axis] + width.lo as Real * self.cell_size[s_axis];
+                make_cube(sim_min, maxs);
+            }
+        }
+    }
+
+    pub fn set_pml_alpha(&mut self, alpha: f32) {
+        self.pml_visuals
+            .iter_mut()
+            .for_each(|v| {
+                v.apply_to_object_mut(&mut |o| {
+                    let c = o.data().color();
+                    o.set_color(c.with_alpha(alpha));
+                })
+            })
     }
 
     /// Position the camera with the default camera setup.
