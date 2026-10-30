@@ -132,7 +132,7 @@ impl FdtdLossySimulation {
         let cell_count = n_cells.element_product();
 
         let sim_offset = Vect::from_vec3(sim_offset3);
-        let (problem_space_min, problem_space_max) = self.compute_problem_space(n_cells);
+        let (problem_space_min, problem_space_max) = self.problem_space_from_n_cells(n_cells);
 
         let flat_idx_incrs = {
             let mut incrs = UVec3::ZERO;
@@ -291,10 +291,25 @@ impl FdtdLossySimulation {
         regions_bb.add_half_extents(Vec3::splat(Real::EPSILON))
     }
 
-    /// Computes the (min, max) grid indices of a rectangular region that's considered the "problem space"
+    /// Computes the `(min, max)` of the problem space in world coordinates.
     ///
-    /// This includes all space but PML and boundary cells
-    pub fn compute_problem_space(&self, n_cells: GridIndex) -> (GridIndex, GridIndex) {
+    /// The problem space is a rectangular region of the grid including all space except for PMLs and
+    /// boundary cells.
+    ///
+    /// This is useful for ensuring space between PMLs and measurement planes.
+    /// (e.g. subtracting 1 `cell_size` from maximum to keep a 1-cell space between a reflectance measurement plane and PMLs)
+    pub fn problem_space_world(&self, stability: &FdtdStability) -> (Vect, Vect) {
+        let GridSizing { n_cells, sim_offset } = self.compute_grid_sizing(stability);
+        let (min, max) = self.problem_space_from_n_cells(n_cells);
+        let grid_to_world = -Vect::from_vec3(sim_offset);
+        (
+            min.as_vect() * self.fdtd_parameters.cell_size + grid_to_world,
+            (max.as_vect() + 0.5) * self.fdtd_parameters.cell_size + grid_to_world,
+        )
+    }
+
+    /// Computes the `(min, max)` grid indices of the problem space.
+    pub fn problem_space_from_n_cells(&self, n_cells: GridIndex) -> (GridIndex, GridIndex) {
         let mut problem_space_min = GridIndex::ONE;
         self.pml_parameters.widths
             .iter_spatial_axes()
