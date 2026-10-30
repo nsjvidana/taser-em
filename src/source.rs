@@ -559,6 +559,8 @@ impl TfsfStates {
                 let tf_max_a1 = problem_space_max[a1] - buf_width.get_or_zero(a1).hi;
                 let tf_max_a2 = problem_space_max[a2] - buf_width.get_or_zero(a2).hi;
 
+                println!("tfsf_pos: {}", tf_max_a+1);
+
                 let num_correction_cells = (tf_max_a - tf_min_a + 1) + 2;
                 let source_cell = 1;
                 let n_cells = num_correction_cells + source_cell + pml_width.get();

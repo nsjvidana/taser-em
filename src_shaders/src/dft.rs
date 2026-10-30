@@ -4,12 +4,12 @@ cfg_cpu! {
 
 use crate::fdtd::GridParameters;
 use crate::math::*;
+use crate::{cfg_cpu, en_spatial_avg_cmplx, h_spatial_avg_cmplx, workgroup_counts};
 use bytemuck::{Pod, Zeroable};
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
 use num_complex::{Complex, Complex32};
-use crate::{cfg_cpu, workgroup_counts};
 
 /// Calculates DFT kernels that will be used by the DFT shader. You only need to dispatch this
 /// once before using `dft_kernels` in a DFT algorithm.
@@ -124,9 +124,13 @@ pub fn gpu_dft_regions_update(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] regions: &[GpuDftRegion],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] h_dfts: &mut [ComplexVec3],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] en_dfts: &mut [ComplexVec3],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 7)] sn_dfts: &mut [ComplexVec3],
 ) {
     let region_idx = id.z / params.max_region_n_cells.z;
     let region = regions.read(region_idx as usize);
+
+    if region.fields.is_empty() { return; }
+
     let local_cell_idx = id.with_z(id.z - region_idx * params.max_region_n_cells.z);
     if local_cell_idx.cmpge(region.n_cells3).any() { return; }
 
@@ -135,15 +139,16 @@ pub fn gpu_dft_regions_update(
     let idx = cell_idx.to_flat_idx(GridIndex::from_uvec3(params.n_cells3)) as usize;
 
     let k = region.kernel.powu(*time_step);
-    *h_dfts.at_mut(idx_dft) += k * region.h_finalize_k * ComplexVec3::from_real(h.read(idx).xyz());
-    *en_dfts.at_mut(idx_dft) += k * ComplexVec3::from_real(en.read(idx).xyz());
+    let h_dft = h_dfts.read(idx_dft) + k * region.h_finalize_k
+        * ComplexVec3::from_real(h.read(idx).xyz());
+    let en_dft = en_dfts.read(idx_dft) + k * ComplexVec3::from_real(en.read(idx).xyz());
+    h_dfts.write(idx_dft, h_dft);
+    en_dfts.write(idx_dft, en_dft);
 
-    // TODO: power (probably when finalizing only)
-    // let en_self = en_dfts.read(idx_dft);
-    // let en_m = crate::sensor::en_cmplx_spatial_avg(en_dfts, en_self, idx_dft, region.flat_idx_incrs);
-    // let h_self = h_dfts.read(idx_dft);
-    // let h_m = crate::sensor::h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, region.flat_idx_incrs);
-    // let ds = en_m.cross(h_m.conj()) * 0.5;
+    if !region.fields.contains(DftFields::SN) { return; }
+    let en_m = en_spatial_avg_cmplx::<true>(en_dfts, en_dft, idx_dft, region.flat_idx_incrs, region.cell_count as _);
+    let h_m = h_spatial_avg_cmplx::<true>(h_dfts, h_dft, idx_dft, region.flat_idx_incrs, region.cell_count as _);
+    sn_dfts.write(idx_dft, en_m.cross(h_m.conj()) * 0.5);
 }
 
 cfg_cpu! {
@@ -192,6 +197,8 @@ pub struct GpuDftRegion {
     pub cell_count: u32,
     pub kernel: Complex32,
     pub h_finalize_k: Complex32,
+    pub fields: DftFields,
+    pub _padding0: [u32; 3],
 }
 
 bitflags::bitflags! {

@@ -70,7 +70,7 @@ impl FdtdLossyHook for DftRegionsHook {
     fn dispatch_step(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
         let DftRegionStates {
             params, dft_regions: regions,
-            h_dfts,en_dfts,
+            h_dfts, en_dfts, sn_dfts,
             update_workgroups, ..
         } = &mut self.state;
 
@@ -84,7 +84,8 @@ impl FdtdLossyHook for DftRegionsHook {
             &sim_state.en,
             regions,
             h_dfts,
-            en_dfts
+            en_dfts,
+            sn_dfts
         )?;
         Ok(())
     }
@@ -94,8 +95,10 @@ pub struct DftRegionReadback {
     refs: Vec<DftRegionDescription>,
     h_dfts: Vec<ComplexVec3>,
     en_dfts: Vec<ComplexVec3>,
+    sn_dfts: Vec<ComplexVec3>,
     h_dfts_read: GpuReadback<ComplexVec3>,
     en_dfts_read: GpuReadback<ComplexVec3>,
+    sn_dfts_read: GpuReadback<ComplexVec3>,
 }
 
 macro_rules! readback_get {
@@ -120,13 +123,16 @@ impl DftRegionReadback {
             refs: state.region_descs.clone(),
             h_dfts: vec![ComplexVec3::ZERO; state.h_dfts.len()],
             en_dfts: vec![ComplexVec3::ZERO; state.en_dfts.len()],
+            sn_dfts: vec![ComplexVec3::ZERO; state.sn_dfts.len()],
             h_dfts_read: GpuReadback::new(backend, state.h_dfts.len())?,
             en_dfts_read: GpuReadback::new(backend, state.en_dfts.len())?,
+            sn_dfts_read: GpuReadback::new(backend, state.sn_dfts.len())?,
         })
     }
 
     readback_get!(get_h, h_dfts);
     readback_get!(get_en, en_dfts);
+    readback_get!(get_sn, sn_dfts);
 
     pub fn get_region_desc(&self, region: &Arc<DftRegion>) -> TaserResult<&DftRegionDescription> {
         self.refs.iter()
@@ -134,7 +140,7 @@ impl DftRegionReadback {
             .ok_or(DftError::CannotFindRegion(region.clone()).into())
     }
 
-    pub fn update_cycle(&mut self, backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<()> {
+    pub fn sync(&mut self, backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<()> {
         self.read_back(backend)?;
         self.request_copy(backend, state)
     }
@@ -147,7 +153,8 @@ impl DftRegionReadback {
 
     pub fn try_read_back(&mut self, backend: &GpuBackend) -> bool {
         self.h_dfts_read.try_take(backend, &mut self.h_dfts) &&
-            self.en_dfts_read.try_take(backend, &mut self.en_dfts)
+            self.en_dfts_read.try_take(backend, &mut self.en_dfts) &&
+            self.sn_dfts_read.try_take(backend, &mut self.sn_dfts)
     }
 
     pub fn request_copy(&mut self, backend: &GpuBackend, state: &DftRegionStates) -> TaserResult<()> {
@@ -156,6 +163,9 @@ impl DftRegionReadback {
         }
         if self.en_dfts_read.is_idle() {
             self.en_dfts_read.request_copy(backend, &state.en_dfts, 0)?;
+        }
+        if self.sn_dfts_read.is_idle() {
+            self.sn_dfts_read.request_copy(backend, &state.sn_dfts, 0)?;
         }
         Ok(())
     }
@@ -168,6 +178,7 @@ pub struct DftRegionStates {
     dft_regions: GpuBuffer<GpuDftRegion>,
     h_dfts: GpuBuffer<ComplexVec3>,
     en_dfts: GpuBuffer<ComplexVec3>,
+    sn_dfts: GpuBuffer<ComplexVec3>,
     update_workgroups: [u32; 3],
 }
 
@@ -189,10 +200,13 @@ impl DftRegionStates {
                             .translated(sim_offset.to_3d(Vec3::ZERO)),
                     }));
                 }
-                let cell_idx_min = (min / sim.cell_size).as_grid_index().cell_idx_to_3d();
-                let n_cells = ((max - min) / sim.cell_size).as_grid_index();
+                let cell_idx_min = (min / sim.cell_size).round().as_grid_index().cell_idx_to_3d();
+                let n_cells = ((max - min) / sim.cell_size).round().as_grid_index();
                 let n_cells3 = n_cells.n_cells_to_3d();
                 let cell_count = n_cells.element_product();
+                if n_cells.min_element() == 0 {
+                    return Some(Err(DftError::InvalidRegionSize(region.clone())))
+                }
 
                 let dft_start_buf_offset = *total_dfts;
                 *total_dfts += cell_count as usize * region.frequencies.len();
@@ -224,7 +238,7 @@ impl DftRegionStates {
             .map(|desc| {
                 let frequencies = &desc.ptr.frequencies;
                 if frequencies.is_empty() { return Err(DftError::NoFrequencies.into()) }
-                let uninit_region_gpu = desc.gpu_desc_uninit();
+                let uninit_region_gpu = GpuDftRegion { fields: desc.ptr.fields, ..desc.gpu_desc_uninit() };
                 let gpu_regions = frequencies
                     .iter()
                     .copied()
@@ -259,6 +273,7 @@ impl DftRegionStates {
             dft_regions: dft_regions_buf,
             h_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
             en_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
+            sn_dfts: dfts_zeroed.create_gpu_buffer(backend)?,
             update_workgroups: dft_regions_update_workgroups(&params),
         })
     }
@@ -305,6 +320,8 @@ impl DftRegionDescription {
             kernel: Complex32::new(Real::NAN, Real::NAN),
             cell_count: self.cell_count,
             h_finalize_k: Complex32::new(Real::NAN, Real::NAN),
+            fields: DftFields::empty(),
+            _padding0: Default::default(),
         }
     }
 }
@@ -603,4 +620,6 @@ pub enum DftError {
         region: Arc<DftRegion>,
         grid_extents: Aabb,
     },
+    #[error("DFT region has zero thickness: {0:?}")]
+    InvalidRegionSize(Arc<DftRegion>),
 }

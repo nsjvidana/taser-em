@@ -2,14 +2,14 @@ cfg_cpu! {
     use khal::ShaderArgsType;
 }
 
+use crate::dft::{ComplexVec3, GpuDftRegion};
 use crate::fdtd::GridParameters;
 use crate::math::*;
+use crate::{cfg_cpu, en_spatial_avg_cmplx, h_spatial_avg_cmplx, workgroup_counts};
 use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::*;
 use khal_std::sync::workgroup_memory_barrier_with_group_sync;
-use crate::{cfg_cpu, workgroup_counts};
-use crate::dft::{ComplexVec3, GpuDftRegion};
 
 pub const FLUX_WORKGROUP_SIZE: UVec3 = UVec3::new(8, 8, 1);
 
@@ -165,20 +165,17 @@ pub fn gpu_power_flux_dft(
     #[cfg(feature = "dim3")]
     local_cell_idx3.dyn_insert(sensor.s_axis2, id.y);
 
-    let is_lo_face_no_boundary = local_cell_idx3
-        .cmplt(GridIndex::from_uvec3(region.n_cells3).to_3d(UVec3::splat(2)) - 1)
-        .all() &&
-        local_cell_idx3.dyn_idx(sensor.s_axis) == 0;
-    let enable = is_lo_face_no_boundary as usize;
+    let within_bounds = local_cell_idx3.cmplt(region.n_cells3).all();
+    let enable = within_bounds as usize;
 
     let idx_dft = (region.dfts_start_idx + grid_idx3_to_flat_idx(local_cell_idx3, region.n_cells3)) as usize
         * enable;
 
     // Power calculation for this cell
     let en_self = en_dfts.read(idx_dft);
-    let en_m = en_cmplx_spatial_avg(en_dfts, en_self, idx_dft, region.flat_idx_incrs);
+    let en_m = en_spatial_avg_cmplx::<true>(en_dfts, en_self, idx_dft, region.flat_idx_incrs, region.cell_count as _);
     let h_self = h_dfts.read(idx_dft);
-    let h_m = h_cmplx_spatial_avg(h_dfts, h_self, idx_dft, region.flat_idx_incrs);
+    let h_m = h_spatial_avg_cmplx::<true>(h_dfts, h_self, idx_dft, region.flat_idx_incrs, region.cell_count as _);
     let ds = en_m.cross(h_m.conj()) * 0.5;
     let ds_dot = ds.dyn_idx(sensor.s_axis);
 
@@ -238,39 +235,3 @@ pub struct GpuPowerFluxDftSensor {
     pub direction: Direction,
     pub gpu_dft_region_idx: u32,
 }
-
-macro_rules! en_spatial_avg_impl {
-    ($name:ident, $v:ident) => {
-        fn $name(en: &[$v], en_self: $v, idx: usize, flat_idx_incrs: UVec3) -> $v {
-            let en_pyz = en.read(idx + (flat_idx_incrs.y + flat_idx_incrs.z) as usize);
-            let en_pzx = en.read(idx + (flat_idx_incrs.z + flat_idx_incrs.x) as usize);
-            let en_pxy = en.read(idx + (flat_idx_incrs.x + flat_idx_incrs.y) as usize);
-            $v {
-                x: (en_self.x + en_pyz.x) * 0.5,
-                y: (en_self.y + en_pzx.y) * 0.5,
-                z: (en_self.z + en_pxy.z) * 0.5,
-            }
-        }
-    };
-}
-
-en_spatial_avg_impl!(en_cmplx_spatial_avg, ComplexVec3);
-// TODO: en_spatial_avg_impl!(en_spatial_avg, Vec3); ...use this in instantaneous flux
-
-macro_rules! h_spatial_avg_impl {
-    ($name:ident, $v:ident) => {
-        fn $name(h: &[$v], h_self: $v, idx: usize, flat_idx_incrs: UVec3) -> $v {
-            let h_px = h.read(idx + flat_idx_incrs.x as usize);
-            let h_py = h.read(idx + flat_idx_incrs.y as usize);
-            let h_pz = h.read(idx + flat_idx_incrs.z as usize);
-            $v {
-                x: (h_self.x + h_px.x) * 0.5,
-                y: (h_self.y + h_py.y) * 0.5,
-                z: (h_self.z + h_pz.z) * 0.5,
-            }
-        }
-    };
-}
-
-h_spatial_avg_impl!(h_cmplx_spatial_avg, ComplexVec3);
-// TODO: h_spatial_avg_impl!(h_spatial_avg, Vec3); ...use this in instantaneous flux

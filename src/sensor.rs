@@ -71,15 +71,16 @@ impl PowerFluxDftHook {
             .map(|desc| {
                 let sensor = &*desc.ptr;
                 let (plane_min, plane_max) = {
-                    // temporarily move into grid space & snap pos to center of a grid cell along axis
+                    // temporarily move into grid space
                     let mut pos = sensor.position + sim_offset;
+                    // snap pos along plane normal to center of a grid cell
                     pos[sensor.axis] = ((pos[sensor.axis] / sim.cell_size[sensor.axis]).floor() + 0.5)
                         * sim.cell_size[sensor.axis];
                     // clamp plane dimensions to grid edges, with a thickness of 1 cell
                     let mut size = sensor.size
                         .unwrap_or(Vect::splat(Real::INFINITY))
                         .abs();
-                    size[sensor.axis] = 2. * sim.cell_size[sensor.axis];
+                    size[sensor.axis] = sim.cell_size[sensor.axis];
                     let plane_min = (pos - size * 0.5).max(Vect::ZERO);
                     let plane_max = (pos + size * 0.5).min(grid_extents);
                     // move back into world space since dft regions takes world space inputs
