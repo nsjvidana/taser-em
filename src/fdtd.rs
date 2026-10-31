@@ -893,8 +893,7 @@ impl FdtdStability {
     /// `f_max` is the maximum frequency the Gaussian pulse has.
     #[inline]
     pub fn dt_from_gaussian_freq(&self, f_max: Real) -> Real {
-        let tau = core::f32::consts::FRAC_1_PI / f_max;
-        tau / self.source_resolution as f32
+        Source::gaussian_tau(f_max) / self.source_resolution as f32
     }
 }
 
@@ -955,7 +954,11 @@ impl PmlParameters {
 
 #[derive(Copy, Clone, Debug)]
 pub enum MaterialDiscretization {
+    /// Assign materials to cells directly without any smoothing. This means the grid will resort to
+    /// stair-casing materials, which can lead to inaccuracies.
     Rough,
+    /// Smooth out material values with a box filter. `resolution` determines the size of the box
+    /// filter, with higher `resolution` giving more accuracy at the cost of simulation initialization time.
     Smooth { resolution: NonZeroU32 }
 }
 

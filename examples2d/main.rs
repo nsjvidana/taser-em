@@ -1,3 +1,5 @@
+mod binary_grating;
+
 use kiss3d::glamx::Vec3;
 use std::sync::Arc;
 use taser_em2d::prelude::*;
@@ -6,10 +8,11 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, Visual
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::DipoleAntenna;
+    let example = Example::BinaryGrating;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),
+        Example::BinaryGrating => binary_grating::binary_grating().await.unwrap(),
         Example::BenchAll => benchmark_all().await.unwrap(),
     }
 }
@@ -17,6 +20,7 @@ async fn main() {
 enum Example {
     Suzanne,
     DipoleAntenna,
+    BinaryGrating,
     BenchAll,
 }
 
@@ -60,14 +64,16 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 
     // Compute source position and gaussian curve data points
     let source_values = Source::gaussian_max_f(f_max, 1., dt);
-    simulation.add_dipole(
-        Dipole {
-            dipole_type: DipoleType::Electric,
-            position: Vect::from_vec3(simulation.compute_bounding_box().mins - wavelen),
+    simulation.add_tfsf(
+        Tfsf {
+            spatial_axis: SpatialAxis::Y,
+            direction: Direction::Negative,
             t_start: 0.0,
-            moment: Vec3::Z,
+            polarization: Vec3::Z,
+            tfsf_buffer_width: LayerWidths::splat_spatial(3),
+            injection_plane_only: false,
         },
-        source_values
+        source_values,
     );
 
     // Set up buffers and pipeline
@@ -102,7 +108,6 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 }
 
 pub async fn dipole_antenna() -> anyhow::Result<()> {
-    // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
     let dft_resolution = 50;
     let sim_speed = 2;
@@ -188,9 +193,9 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Set up DFT plots
     let frequency_scale = Some(1e-9); // Frequency is in GHz, so multiply by 1E-9 for a cleaner X axis;
     let mut plot_window = PlotWindow::new("Power Flux DFT", Some("Frequency (GHz)"), None);
-    let mut flux_plot = DftPlot::new("Power Flux", &flux_dft.frequencies, frequency_scale)?;
-    let mut src_flux_plot = DftPlot::new("Power Flux (Source)", &flux_dft.frequencies, frequency_scale)?;
-    let mut normalized_plot = DftPlot::new("Power Flux Normalized", &flux_dft.frequencies, frequency_scale)?;
+    let mut flux_plot = ComplexPlot::new("Power Flux", &flux_dft.frequencies, frequency_scale, None)?;
+    let mut src_flux_plot = ComplexPlot::new("Power Flux (Source)", &flux_dft.frequencies, frequency_scale, None)?;
+    let mut normalized_plot = ComplexPlot::new("Power Flux Normalized", &flux_dft.frequencies, frequency_scale, None)?;
 
     // Source-only simulation for normalizing DFTs (same process, but with a different simulation state)
     let src_sim = simulation.sources_only();
@@ -224,10 +229,10 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         let mut dfts_normalized = new_dfts.clone();
         dfts_normalized
             .zip_mut_with(&src_dfts, |to_normalize, src| *to_normalize /= src);
-        flux_plot.update(new_dfts.as_slice().unwrap());
-        src_flux_plot.update(src_dfts.as_slice().unwrap());
+        flux_plot.set_y(new_dfts.as_slice().unwrap());
+        src_flux_plot.set_y(src_dfts.as_slice().unwrap());
         if dfts_normalized.iter().all(|dft| dft.is_finite()) {
-            normalized_plot.update(dfts_normalized.as_slice().unwrap());
+            normalized_plot.set_y(dfts_normalized.as_slice().unwrap());
         }
         plot_window.show(
             &mut testbed,

@@ -18,6 +18,7 @@ cuda = ["taser-em2d/cuda"]
 
 [dependencies]
 taser-em-testbed2d.workspace = true
+rustfft = "6.4.1"
 kiss3d.workspace = true
 
 [dependencies.taser-em2d]

@@ -28,6 +28,13 @@ impl<S: SourceType> Source<S> {
 }
 
 impl Source<()> {
+    /// A value that's proportional to how "wide" a gaussian pulse is, for the pulse calculated as:
+    /// `g = exp(-((t - t_0) / tau) ^ 2)`
+    ///
+    /// `f_max` is maximum frequency of Gaussian curve
+    #[inline]
+    pub fn gaussian_tau(f_max: Real) -> Real { core::f32::consts::FRAC_1_PI / f_max }
+
     /// Helper function that generates data points for a Gaussian curve with a maximum frequency of
     /// `f_max` (Hz).
     ///
@@ -35,7 +42,7 @@ impl Source<()> {
     /// When `f_max <= 0.` or when `dt <= 0.`
     pub fn gaussian_max_f(f_max: Real, amplitude: Real, dt: Real) -> Vec<Real> {
         assert!(f_max > 0.0, "f_max must be > 0");
-        let tau = core::f32::consts::FRAC_1_PI / f_max;
+        let tau = Self::gaussian_tau(f_max);
         let t_0 = 6. * tau;
         let approx_dur = 12. * tau;
         Self::function_data_points(dt, approx_dur, |t| {
