@@ -41,7 +41,7 @@ impl DftRegionsHook {
 }
 
 impl FdtdLossyHook for DftRegionsHook {
-    fn dispatch_step(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
+    fn dispatch_step<BC: BoundaryConditionTypes>(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
         let DftRegionStates {
             params, dft_regions: regions,
             h_dfts, en_dfts, sn_dfts,
@@ -157,7 +157,7 @@ pub struct DftRegionStates {
 }
 
 impl DftRegionStates {
-    pub fn new(backend: &GpuBackend, sim: &FdtdLossyState, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
+    pub fn new<BC: BoundaryConditionTypes>(backend: &GpuBackend, sim: &FdtdLossyState<BC>, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
         let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
         let grid_extents = sim.cell_size * sim.n_cells.as_vect();

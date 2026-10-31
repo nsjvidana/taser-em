@@ -4119,6 +4119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "taser-em-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "taser-em-shaders1d"
 version = "0.1.0"
 dependencies = [
@@ -4215,6 +4224,7 @@ dependencies = [
  "ndarray",
  "parry3d",
  "rayon",
+ "taser-em-macros",
  "taser-em-shaders1d",
  "thiserror 2.0.18",
 ]
@@ -4235,6 +4245,7 @@ dependencies = [
  "ndarray",
  "parry3d",
  "rayon",
+ "taser-em-macros",
  "taser-em-shaders2d",
  "thiserror 2.0.18",
 ]
@@ -4255,6 +4266,7 @@ dependencies = [
  "ndarray",
  "parry3d",
  "rayon",
+ "taser-em-macros",
  "taser-em-shaders3d",
  "thiserror 2.0.18",
 ]

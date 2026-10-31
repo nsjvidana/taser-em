@@ -285,10 +285,10 @@ impl FdtdTestbedViewer {
     /// Renders one frame of the vector field `v_field`.
     ///
     /// Returns `false` if the viewer should stop rendering (e.g. when the window closes).
-    pub async fn render_frame(
+    pub async fn render_frame<BC: BoundaryConditionTypes>(
         &mut self,
         backend: &GpuBackend,
-        state: &FdtdLossyState,
+        state: &FdtdLossyState<BC>,
         readback: &mut FdtdStateReadback,
     ) -> TaserResult<bool> {
         self.update_cam_light();

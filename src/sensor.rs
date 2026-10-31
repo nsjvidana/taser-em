@@ -8,6 +8,7 @@ use std::sync::Arc;
 use taser_em_shaders::dft::DftFields;
 use taser_em_shaders::math::*;
 use taser_em_shaders::sensor::*;
+use crate::boundary::BoundaryConditionTypes;
 
 #[derive(Clone, Debug)]
 pub struct PowerFluxDftSensor {
@@ -43,7 +44,7 @@ pub struct PowerFluxDftHook {
 }
 
 impl PowerFluxDftHook {
-    pub fn new(backend: &GpuBackend, sim: &mut FdtdLossyState, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
+    pub fn new<BC: BoundaryConditionTypes>(backend: &GpuBackend, sim: &mut FdtdLossyState<BC>, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
         let mut uninit = Self::new_uninit(backend, sim, sensors)?;
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("__power_flux_dft_init", None);
@@ -51,7 +52,7 @@ impl PowerFluxDftHook {
         Ok(uninit)
     }
 
-    pub fn new_uninit(backend: &GpuBackend, sim: &FdtdLossyState, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
+    pub fn new_uninit<BC: BoundaryConditionTypes>(backend: &GpuBackend, sim: &FdtdLossyState<BC>, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
         if sensors.is_empty() { return Err(PowerFluxError::NoSensors.into()) }
         let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
         let grid_extents = sim.n_cells.as_vect() * sim.cell_size;
@@ -139,11 +140,11 @@ impl PowerFluxDftHook {
 }
 
 impl FdtdLossyHook for PowerFluxDftHook {
-    fn initialize(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+    fn initialize<BC: BoundaryConditionTypes>(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
         self.dft_regions_hook.initialize(pass, state)
     }
 
-    fn dispatch_step(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState) -> TaserResult<()> {
+    fn dispatch_step<BC: BoundaryConditionTypes>(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
         self.dft_regions_hook.dispatch_step(pass, state)?;
 
         if self.enable_update {
@@ -300,7 +301,7 @@ pub struct PowerFluxReadback {
 }
 
 impl PowerFluxReadback {
-    pub fn new(backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<Option<Self>> {
+    pub fn new<BC: BoundaryConditionTypes>(backend: &GpuBackend, state: &FdtdLossyState<BC>) -> TaserResult<Option<Self>> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(None); };
         let n_powers = flux_state.sensor_power.len();
         Ok(Some(Self {
@@ -310,7 +311,7 @@ impl PowerFluxReadback {
         }))
     }
 
-    pub fn request_copy(&mut self, backend: &GpuBackend, state: &FdtdLossyState) -> TaserResult<()> {
+    pub fn request_copy<BC: BoundaryConditionTypes>(&mut self, backend: &GpuBackend, state: &FdtdLossyState<BC>) -> TaserResult<()> {
         let Some(flux_state) = &state.power_flux_states else { return Ok(()); };
         if self.sensor_power_read.is_idle() {
         self.sensor_power_read.request_copy(backend, &flux_state.sensor_power, 0)?;
@@ -347,7 +348,7 @@ impl PowerFluxPipeline {
         })
     }
 
-    pub fn dispatch_steps(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState) -> TaserResult<()> {
+    pub fn dispatch_steps<BC: BoundaryConditionTypes>(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
         let Some(flux_state) = &mut sim_state.power_flux_states else {
             return Ok(());
         };

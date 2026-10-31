@@ -30,6 +30,7 @@ path = "../../src/lib.rs"
 required-features = ["dim2"]
 
 [dependencies]
+taser-em-macros.workspace = true
 parry3d.workspace = true
 khal.workspace = true
 taser-em-shaders = { package = "taser-em-shaders2d", path = "../taser-em-shaders2d" }
