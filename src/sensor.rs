@@ -1,4 +1,4 @@
-use crate::dft::{Dft, DftError, DftRegion, DftRegionStates, DftRegionsHook, ToDft};
+use crate::dft::{DftError, DftRegion, DftRegionStates, DftRegionsHook};
 use crate::fdtd::*;
 use crate::gpu_util::CreateGpuBuffer;
 use crate::prelude::TaserResult;
@@ -291,22 +291,6 @@ impl PowerFluxFunction {
     pub fn get_sensor_ref(&self) -> &Arc<PowerFluxSensor> { &self.obj }
 
     pub fn sensor_idx(&self) -> usize { self.sensor_idx }
-}
-
-impl ToDft for PowerFluxFunction {
-    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {
-        let ptr = Arc::new(self);
-        Ok((Dft::new(frequencies, ptr.clone())?, ptr))
-    }
-
-    fn get_value_position(&self) -> usize { self.sensor_idx() }
-
-    fn get_value_buffer(state: &FdtdLossyState) -> TaserResult<&GpuBuffer<Real>> {
-        let flux_states = state.power_flux_states
-            .as_ref()
-            .ok_or(PowerFluxError::NoSensors)?;
-        Ok(&flux_states.sensor_power)
-    }
 }
 
 pub struct PowerFluxReadback {

@@ -75,38 +75,6 @@ impl Source<()> {
     }
 }
 
-pub struct SourceFunction<S: SourceType> {
-    #[allow(dead_code)]
-    source: Arc<S>,
-    val_pos: usize
-}
-
-impl<S: SourceType> SourceFunction<S> {
-    pub fn new(source: &Arc<S>, source_states: &SourceStates) -> TaserResult<Self> {
-        Ok(Self {
-            source: source.clone(),
-            val_pos: S::get_value_position(source, source_states)
-                .ok_or(SourceError::NoSourceInstance(std::any::type_name::<S>().to_string()))?,
-        })
-    }
-}
-
-impl<S: SourceType> ToDft for SourceFunction<S> {
-    fn to_dft(self, frequencies: Vec<Real>) -> TaserResult<(Dft<Self>, Arc<Self>)> {
-        let func = Arc::new(self);
-        Ok((Dft::new(frequencies, func.clone())?, func))
-    }
-
-    fn get_value_position(&self) -> usize {
-        self.val_pos
-    }
-
-    fn get_value_buffer(state: &FdtdLossyState) -> TaserResult<&GpuBuffer<Real>> {
-        S::get_value_buffer(&state.source_states)
-                .ok_or(SourceError::NoSourceInstance(std::any::type_name::<S>().to_string()).into())
-    }
-}
-
 pub struct SourcePipeline {
     dipole_pipeline: DipolePipeline,
     tfsf_pipeline: TfsfPipeline,

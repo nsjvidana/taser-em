@@ -290,15 +290,6 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
     let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let dipole = simulation.add_dipole(dipole, source_values);
 
-    // Power flux sensor for reading back power flux
-    let flux_sensor = simulation.add_flux_sensor(
-        PowerFluxSensor {
-            axis: SpatialAxis::X,
-            position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
-            direction: Direction::Negative,
-        }
-    );
-
     // Preparing simulation
     // Create instance of backend we will run the simulation with
     let backend = create_backend().await?;
@@ -313,36 +304,20 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
     // Create GPU simulation state
     let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
 
-    // Set up power flux & source DFT
-    let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-    let (dft, _flux_func) = PowerFluxFunction::new(&flux_sensor, state.power_flux_states.as_ref().unwrap())?
-        .to_dft(frequencies.clone())?;
-    let flux_dft_hook = DftHook::new(&backend, [dft], &state)?;
-    let (dft, _src_func) = SourceFunction::new(&dipole, &state.source_states)?
-        .to_dft(frequencies)?;
-    let src_dft_hook = DftHook::new(&backend, [dft], &state)?;
+    todo!("Set up power flux DFT for source and main sim.");
+    let _frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
 
     // Set up readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
         .expect("we added a flux sensor to the simulation, so readback must be possible");
-    let mut flux_dft_read = DftReadback::new(&backend, &flux_dft_hook).await?;
-    let mut src_dft_read = DftReadback::new(&backend, &src_dft_hook).await?;
-
-    // Apply DFT hooks
-    let mut pipeline = apply_pipeline_hooks(pipeline, (flux_dft_hook, src_dft_hook));
 
     // Run simulation
     println!("Running on backend: {}", backend_name(&backend));
     let mut run_sim = || -> TaserResult<()> {
         // Dummy readbacks (synchronizes backend too)
-        let (flux_dft, src_dft) = &pipeline.hooks;
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
-        flux_dft_read.try_read_back(&backend);
-        flux_dft_read.request_copy(&backend, flux_dft.states())?;
-        src_dft_read.try_read_back(&backend);
-        src_dft_read.request_copy(&backend, src_dft.states())?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d benchmark example", None);
