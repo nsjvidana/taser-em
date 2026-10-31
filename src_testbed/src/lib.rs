@@ -28,6 +28,7 @@ pub struct FdtdTestbedViewer {
     pub scene: SceneNode3d,
     pub pml_visuals: Vec<SceneNode3d>,
     pub material_region_alpha: f32,
+    background_mat: ElectricMaterial,
     n_cells: GridIndex,
     cell_size: Vect,
     pub visualization_mode: VisualizationMode,
@@ -90,6 +91,7 @@ impl FdtdTestbedViewer {
             scene,
             pml_visuals: vec![],
             material_region_alpha: Self::DEFAULT_REGION_ALPHA,
+            background_mat: simulation.background_material,
             n_cells,
             cell_size,
             visualization_mode,
@@ -205,9 +207,12 @@ impl FdtdTestbedViewer {
         for MaterialRegion {
             shape, pose,
             mesh,
+            material,
             ..
         } in mat_regions.regions.iter()
         {
+            if *material == self.background_mat { continue; }
+
             let mut node = shape.as_cuboid()
                 .map(|cuboid| {
                     let ext = cuboid.half_extents * 2.;

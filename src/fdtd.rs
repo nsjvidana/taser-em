@@ -809,29 +809,40 @@ impl FdtdParameters {
 
 /// Helper struct containing parameters and functions for ensuring simulation stability.
 ///
-/// The default of this struct contains hardcoded values that are generally stable.
+/// The default of this struct contains hardcoded values that are generally stable for things like
+/// low- to high-contrast dielectrics. It's still recommended to play around with these values to
+/// ensure better accuracy and late-time stability.
 #[derive(Derivative, Clone)]
 #[derivative(Default)]
 pub struct FdtdStability {
+    /// Number of cells that should comprise the smallest wavelength in the simulation.
     #[derivative(Default(value = "10"))]
     pub cells_per_wavelength: Index,
-    /// Divides CFL condition upper bound by `dt_safety_factor`.
-    ///
-    /// `dt_safety_factor > 1.` to improve stability.
+    /// Divides CFL condition upper bound by a number to ensure stability. Default is `2.0`.
     #[derivative(Default(value = "2."))]
     pub dt_safety_factor: Real,
+    /// Minimum number of data points a source should have
     #[derivative(Default(value = "10"))]
     pub source_resolution: Index,
+    /// Size of a box-filter applied to materials when using [`MaterialDiscretization::Smooth`].
     #[derivative(Default(value = "NonZeroU32::new(3).unwrap()"))]
     pub material_resolution: NonZeroU32,
+    /// Widths of spacer regions that will surround the simulation, separating it from boundaries and
+    /// PMLs on specific axes.
     #[derivative(Default(value = "LayerWidths::splat_spatial(10)"))]
     pub spacer_region_widths: LayerWidths,
 }
 
 impl FdtdStability {
-    /// Construct [`FdtdStability`] from cells-per-wavelength.
+    /// Construct [`FdtdStability`] from cells-per-wavelength (CPW). `spacer_region_widths` will be one
+    /// wavelength wide according to the cpw.
     ///
-    /// Also makes `spacer_region_widths` `cells_per_wavelength` wide.
+    /// # Stable Values
+    /// Below are some good CPWs for certain simulations (taken from EMP-5304):
+    /// - `10` to `20` - Low-contrast dielectrics
+    /// - `20` to `30` - High-contrast dielectrics
+    /// - `40` to `60` - Metallic structures
+    /// - `100` to `200` - Plasmonic devices
     pub fn from_cpw(cells_per_wavelength: Index) -> Self {
         Self {
             cells_per_wavelength,
@@ -840,7 +851,7 @@ impl FdtdStability {
         }
     }
 
-    /// Construct cell size from minimum wavelength calculated with a maximum frequency in the simulation.
+    /// Construct cell size from minimum wavelength derived from a maximum frequency in the simulation.
     ///
     /// Uses `self.cells_per_wavelength` to create the cell size.
     pub fn cell_size_from_min_wavelength(&self, f_max: Real) -> Vect {
@@ -849,29 +860,37 @@ impl FdtdStability {
         Vect::from_array([cell_size; DIM])
     }
 
+    /// Computes a stable `dt` according to the CFL-condition.
+    ///
+    /// Note that if `self.dt_safety_factor < 1.`, this function will force its output to be
+    /// the CFL upper-bound, which probably will be unstable.
     pub fn cfl_condition(&self, cell_size: Vect) -> Real {
         let cell_size_term = cell_size
-            .map(|v| {
-                v.powi(2).recip()
-            })
+            .map(|v| v.powi(2).recip())
             .element_sum()
             .sqrt();
         let safety_factor = self.dt_safety_factor.max(1.);
         1. / (C_0 * cell_size_term * safety_factor)
     }
 
+    /// Outputs a new `cell_size` that better represents a dimension on a device in the simulation.
+    ///
+    /// This helps for devices with certain dimensions on them that are imperative to their performance.
     pub fn snap_to_critical_dim(&self, cell_size: Vect, critical_dim: Vect) -> Vect {
         let cells_per_crit_dim = (critical_dim / cell_size).ceil();
         critical_dim / cells_per_crit_dim
     }
 
-    /// Computes a stable maximum conductivity for a PML
+    /// Computes a stable maximum conductivity for a PML, given the `dt` of the simulation.
     #[inline]
     pub fn pml_sig_max(dt: Real) -> Real {
         EPS_0 / (2. * dt)
     }
 
-    /// Compute a stable dt from a gaussian curve maximum frequency
+    /// Compute a `dt` that ensures at least `source_resolution` data points exist for a Gaussian pulse
+    /// (not necessarily a stable `dt`).
+    ///
+    /// `f_max` is the maximum frequency the Gaussian pulse has.
     #[inline]
     pub fn dt_from_gaussian_freq(&self, f_max: Real) -> Real {
         let tau = core::f32::consts::FRAC_1_PI / f_max;
@@ -951,7 +970,7 @@ impl MaterialDiscretization {
 /// Material properties
 ///
 /// For Perfect Electric Conductors, set any component of the `sig` field to [`Real::INFINITY`].
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ElectricMaterial {
     /// Relative permittivity
     pub eps_r: Vec3,
