@@ -71,6 +71,7 @@ pub async fn cube() -> anyhow::Result<()> {
         t_start: 0.0,
         polarization: Vec3::X,
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
+        injection_plane_only: false,
     };
     simulation.add_tfsf(source, Source::gaussian_max_f(f_max, 1., dt));
 

@@ -56,6 +56,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
         t_start: 0.,
         polarization: Vec3::Y, // Ey/Hx mode
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
+        injection_plane_only: false,
     };
     simulation.add_tfsf(tfsf, Source::gaussian_max_f(f_max, 1., dt));
 

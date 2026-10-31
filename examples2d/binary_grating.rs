@@ -93,7 +93,7 @@ pub async fn binary_grating() -> anyhow::Result<()> {
         let start = Vect::from_vec3(sim_bb.mins)
             .with_y(problem_max.y - cell_size.y); // 1 cell between PML and reflectance plane
         let mut end = start + Vect::new(sim_bb.extents().x, cell_size.y);
-        if ((end.x - start.x) / cell_size.x) as Index % 2 == 0 { // ensure symmetrical diffraction modes
+        if (((end.x - start.x) / cell_size.x) as Index).is_multiple_of(2) { // ensure symmetrical diffraction modes
             end.x -= cell_size.x;
         }
         Arc::new(DftRegion::new(frequencies.clone(), start, end, DftFields::SN))
@@ -102,7 +102,7 @@ pub async fn binary_grating() -> anyhow::Result<()> {
         let start = Vect::from_vec3(sim_bb.mins)
             .with_y(problem_min.y + cell_size.y); // 1 cell between PML and transmittance plane
         let mut end = start + Vect::new(sim_bb.extents().x, cell_size.y);
-        if ((end.x - start.x) / cell_size.x) as Index % 2 == 0 { // ensure symmetrical diffraction modes
+        if (((end.x - start.x) / cell_size.x) as Index).is_multiple_of(2) { // ensure symmetrical diffraction modes
             end.x -= cell_size.x;
         }
         Arc::new(DftRegion::new(frequencies.clone(), start, end, DftFields::SN))
@@ -222,7 +222,7 @@ pub async fn binary_grating() -> anyhow::Result<()> {
                 let mut refl = en_refl / &src_en;
                 // spatial harmonics
                 fft.process(refl.as_slice_mut().unwrap());
-                let mid = (refl.len() + 1) / 2;
+                let mid = refl.len().div_ceil(2);
                 refl.as_slice_mut().unwrap().rotate_left(mid);
                 refl = &refl / refl.len() as Real;
                 // diffraction efficiency
@@ -234,7 +234,7 @@ pub async fn binary_grating() -> anyhow::Result<()> {
                 let mut trans = en_trans / &src_en;
                 // spatial harmonics
                 fft.process(trans.as_slice_mut().unwrap());
-                let mid = (trans.len() + 1) / 2;
+                let mid = trans.len().div_ceil(2);
                 trans.as_slice_mut().unwrap().rotate_left(mid);
                 trans = &trans / trans.len() as Real;
                 // diffraction efficiency

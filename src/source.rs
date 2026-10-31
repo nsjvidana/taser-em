@@ -402,6 +402,8 @@ pub struct Tfsf {
     ///
     /// Enable this if you know the entire plane wave will hit an object. If it does hit the object this way
     /// and this isn't enabled, you might get random fields injected into your object (very bad!)
+    ///
+    /// This does nothing in 1D.
     pub injection_plane_only: bool,
 }
 

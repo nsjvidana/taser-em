@@ -51,6 +51,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
         t_start: 0.0,
         polarization: Vec3::new(1., 1., 0.).normalize(),
         tfsf_buffer_width: LayerWidths::splat_spatial(3),
+        injection_plane_only: false,
     };
     simulation.add_tfsf(tfsf, Source::gaussian_max_f(f_max, 1., dt));
 
@@ -65,21 +66,15 @@ pub async fn benchmark() -> anyhow::Result<()> {
     let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
-    macro_rules! get_n_steps {
-        () => {{
-            readback.request_copy_t_idx(&backend, &state)?;
-            readback.read_back_t_idx(&backend)?;
-            readback.get_t_idx()
-        }};
-    }
-
     // Run simulation
     for _ in 0..WARMUP {
         pipeline.simulate(&backend, &mut state)?;
         backend.synchronize()?;
     }
 
-    let n_steps_warmup = get_n_steps!();
+    readback.request_copy_t_idx(&backend, &state)?;
+    readback.read_back_t_idx(&backend)?;
+    let n_steps_warmup = readback.get_t_idx();
 
     let start = std::time::Instant::now();
     for _ in 0..BENCH {
@@ -88,7 +83,9 @@ pub async fn benchmark() -> anyhow::Result<()> {
     }
     let elapsed = start.elapsed();
 
-    let n_steps = get_n_steps!() - n_steps_warmup;
+    readback.request_copy_t_idx(&backend, &state)?;
+    readback.read_back_t_idx(&backend)?;
+    let n_steps = readback.get_t_idx() - n_steps_warmup;
 
     let avg_per_step = elapsed / n_steps;
     let backend_name = backend_name(&backend);
