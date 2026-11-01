@@ -9,6 +9,7 @@ use khal::backend::*;
 use parry3d::bounding_volume::Aabb;
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::{NonZeroI32, NonZeroU32};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use taser_em_shaders::fdtd::*;
 use taser_em_shaders::math::*;
@@ -236,12 +237,12 @@ impl FdtdLossySimulation {
         }
     }
 
-    pub fn finalize<BC: BoundaryConditionTypes, Hooks: FdtdLossyHook>(
+    pub fn finalize<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-        pipeline: &mut FdtdLossyPipeline<BC, Hooks>,
-    ) -> TaserResult<FdtdLossyState<BC>> {
+        pipeline: &mut FdtdLossyPipeline<BC, H>,
+    ) -> TaserResult<FdtdLossyBuffers<BC, H>> {
         let mut state = self.finalize_no_init(backend, stability, pipeline)?;
 
         let mut encoder = backend.begin_encoding();
@@ -253,12 +254,12 @@ impl FdtdLossySimulation {
         Ok(state)
     }
 
-    pub fn finalize_no_init<BC: BoundaryConditionTypes, Hooks: FdtdLossyHook>(
+    pub fn finalize_no_init<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-        pipeline: &FdtdLossyPipeline<BC, Hooks>,
-    ) -> TaserResult<FdtdLossyState<BC>> {
+        pipeline: &FdtdLossyPipeline<BC, H>,
+    ) -> TaserResult<FdtdLossyBuffers<BC, H>> {
         let FdtdParameters {
             cell_size, dt, ..
         } = self.fdtd_parameters;
@@ -307,37 +308,45 @@ impl FdtdLossySimulation {
         let cell_count = n_cells.element_product() as usize;
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
 
-        let state = FdtdLossyState {
-            bc_states: BoundaryConditionStates::new(&pipeline.boundary_conditions, self)?,
-            // Uniforms / thread-independent vars
-            grid: grid.create_gpu_uniform(backend)?,
-            t_idx: 0.create_gpu_buffer(backend)?,
-            // Vector fields
-            h_previous: zeroed_vector_field.create_gpu_buffer(backend)?,
-            h: zeroed_vector_field.create_gpu_buffer(backend)?,
-            dn: zeroed_vector_field.create_gpu_buffer(backend)?,
-            en: zeroed_vector_field.create_gpu_buffer(backend)?,
-            // For computing source terms
-            source_states: SourceStates::new(
-                backend,
-                self,
-                n_cells3,
-                sim_offset,
-                problem_space_min.cell_idx_to_3d(),
-                problem_space_max.cell_idx_to_3d()
-            )?,
-            // For update equation terms
-            source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
-            update_source_terms_workgroups: update_source_terms_workgroups(n_cells),
-            int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
-            pml_coeffs: pml_coeffs.coeffs.create_gpu_buffer(backend)?,
-            // Misc data
-            power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
-            workgroup_count: fdtd_lossy_workgroups(n_cells),
-            n_cells,
-            cell_size,
-            grid_sizing,
-            dt,
+        let state_construction_args = StateConstructionArgs {
+            simulation: self,
+            grid_sizing: &grid_sizing,
+        };
+
+        let state = FdtdLossyBuffers {
+            hooks_states: pipeline.hooks.construct_state(backend, state_construction_args)?,
+            state: FdtdLossyState {
+                bc_states: BoundaryConditionStates::new(&pipeline.boundary_conditions, self)?,
+                // Uniforms / thread-independent vars
+                grid: grid.create_gpu_uniform(backend)?,
+                t_idx: 0.create_gpu_buffer(backend)?,
+                // Vector fields
+                h_previous: zeroed_vector_field.create_gpu_buffer(backend)?,
+                h: zeroed_vector_field.create_gpu_buffer(backend)?,
+                dn: zeroed_vector_field.create_gpu_buffer(backend)?,
+                en: zeroed_vector_field.create_gpu_buffer(backend)?,
+                // For computing source terms
+                source_states: SourceStates::new(
+                    backend,
+                    self,
+                    n_cells3,
+                    sim_offset,
+                    problem_space_min.cell_idx_to_3d(),
+                    problem_space_max.cell_idx_to_3d()
+                )?,
+                // For update equation terms
+                source_terms: vec![SourceTerms::default(); cell_count].create_gpu_buffer(backend)?,
+                update_source_terms_workgroups: update_source_terms_workgroups(n_cells),
+                int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
+                pml_coeffs: pml_coeffs.coeffs.create_gpu_buffer(backend)?,
+                // Misc data
+                power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
+                workgroup_count: fdtd_lossy_workgroups(n_cells),
+                n_cells,
+                cell_size,
+                grid_sizing,
+                dt,
+            }
         };
         Ok(state)
     }
@@ -430,32 +439,36 @@ where
     }
 }
 
-impl<BC, Hooks> FdtdLossyPipeline<BC, Hooks>
+impl<BC, H> FdtdLossyPipeline<BC, H>
 where
     BC: BoundaryConditionTypes,
-    Hooks: FdtdLossyHook,
+    H: FdtdLossyHook,
 {
     /// Initialize buffers
     pub fn initialize(
-        &mut self,
+        &self,
         pass: &mut GpuPass,
-        state: &mut FdtdLossyState<BC>
+        buffers: &mut FdtdLossyBuffers<BC, H>,
     ) -> TaserResult<()> {
-        self.boundary_conditions.initialize(pass, state)?;
+        let FdtdLossyBuffers {
+            hooks_states, state: sim
+        } = buffers;
 
-        self.source_pipeline.initialize(pass, state)?;
+        self.boundary_conditions.initialize(pass, sim)?;
+
+        self.source_pipeline.initialize(pass, sim)?;
 
         self.init_pec.call(
             pass,
-            DispatchGrid::Grid(state.workgroup_count),
-            &state.grid,
-            &mut state.h,
-            &mut state.dn,
-            &mut state.en,
-            &state.pml_coeffs
+            DispatchGrid::Grid(sim.workgroup_count),
+            &sim.grid,
+            &mut sim.h,
+            &mut sim.dn,
+            &mut sim.en,
+            &sim.pml_coeffs
         )?;
 
-        self.hooks.initialize(pass, state)?;
+        self.hooks.initialize(pass, sim, hooks_states)?;
 
         Ok(())
     }
@@ -469,9 +482,9 @@ where
     ///
     /// If you want to avoid direct submissions, use [`FdtdLossyPipeline::dispatch_steps_aux`] instead.
     pub fn simulate(
-        &mut self,
+        &self,
         backend: &GpuBackend,
-        state: &mut FdtdLossyState<BC>,
+        state: &mut FdtdLossyBuffers<BC, H>,
     ) -> TaserResult<()> {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("__fdtd_lossy_simulation", None);
@@ -482,45 +495,49 @@ where
     }
 
     pub fn dispatch_steps_aux(
-        &mut self,
+        &self,
         pass: &mut GpuPass,
-        state: &mut FdtdLossyState<BC>,
+        buffers: &mut FdtdLossyBuffers<BC, H>,
     ) -> TaserResult<()> {
-        for _ in 0..self.num_steps_per_submission {
-            self.source_pipeline.dispatch_step(pass, state)?;
+        let FdtdLossyBuffers {
+            hooks_states, state: sim
+        } = buffers;
 
-            self.boundary_conditions.pre_update(pass, state)?;
+        for _ in 0..self.num_steps_per_submission {
+            self.source_pipeline.dispatch_step(pass, sim)?;
+
+            self.boundary_conditions.pre_update(pass, sim)?;
 
             self.h_update.call(
                 pass,
-                DispatchGrid::Grid(state.workgroup_count),
-                &state.grid,
-                &mut state.h_previous,
-                &mut state.h,
-                &mut state.en,
-                &mut state.int_terms,
-                &state.pml_coeffs,
-                &state.source_terms,
+                DispatchGrid::Grid(sim.workgroup_count),
+                &sim.grid,
+                &mut sim.h_previous,
+                &mut sim.h,
+                &mut sim.en,
+                &mut sim.int_terms,
+                &sim.pml_coeffs,
+                &sim.source_terms,
             )?;
 
-            self.boundary_conditions.before_de_update(pass, state)?;
+            self.boundary_conditions.before_de_update(pass, sim)?;
 
             self.dn_en_update.call(
                 pass,
-                DispatchGrid::Grid(state.workgroup_count),
-                &state.grid,
-                &mut state.t_idx,
-                &mut state.h,
-                &mut state.dn,
-                &mut state.en,
-                &mut state.int_terms,
-                &state.pml_coeffs,
-                &state.source_terms,
+                DispatchGrid::Grid(sim.workgroup_count),
+                &sim.grid,
+                &mut sim.t_idx,
+                &mut sim.h,
+                &mut sim.dn,
+                &mut sim.en,
+                &mut sim.int_terms,
+                &sim.pml_coeffs,
+                &sim.source_terms,
             )?;
 
-            self.power_flux_pipeline.dispatch_steps(pass, state)?;
+            self.power_flux_pipeline.dispatch_steps(pass, sim)?;
 
-            self.hooks.dispatch_step(pass, state)?;
+            self.hooks.dispatch_step(pass, sim, hooks_states)?;
         }
         Ok(())
     }
@@ -565,45 +582,80 @@ pub fn apply_pipeline_hooks<
 ///
 /// If you want more than two hooks, just make a nested tuple of hooks.
 pub trait FdtdLossyHook {
+    type StateType;
+
+    /// Construct state / buffers this hook relies on
+    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType>;
+
     /// Initialize the simulation `state` or the state of the hook.
     fn initialize<BC: BoundaryConditionTypes>(
-        &mut self,
+        &self,
         _pass: &mut GpuPass,
-        _state: &mut FdtdLossyState<BC>
+        _sim: &mut FdtdLossyState<BC>,
+        _state: &mut Self::StateType,
     ) -> TaserResult<()> { Ok(()) }
 
     /// Called at the end of each FDTD iteration (not every submission). Meaning that it may be called multiple
     /// times depending on [`FdtdLossySimulation::num_steps_per_submission`].
     fn dispatch_step<BC: BoundaryConditionTypes>(
-        &mut self,
+        &self,
         _pass: &mut GpuPass,
-        _state: &mut FdtdLossyState<BC>
+        _sim: &mut FdtdLossyState<BC>,
+        _state: &mut Self::StateType,
     ) -> TaserResult<()> { Ok(()) }
 }
 
-impl FdtdLossyHook for () {}
+impl FdtdLossyHook for () {
+    type StateType = ();
+    fn construct_state(&self, _: &GpuBackend, _: StateConstructionArgs) -> TaserResult<Self::StateType> { Ok(()) }
+}
 
 impl<A, B> FdtdLossyHook for (A, B)
 where
     A: FdtdLossyHook,
     B: FdtdLossyHook,
 {
-    fn initialize<BC: BoundaryConditionTypes>(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
-        let (a, b) = (&mut self.0, &mut self.1);
-        a.initialize(pass, state)?;
-        b.initialize(pass, state)
+    type StateType = (A::StateType, B::StateType);
+
+    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType> {
+        Ok((self.0.construct_state(backend, args.clone())?, self.1.construct_state(backend, args)?))
     }
 
-    fn dispatch_step<BC: BoundaryConditionTypes>(&mut self, pass: &mut GpuPass, state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
-        let (a, b) = (&mut self.0, &mut self.1);
-        a.dispatch_step(pass, state)?;
-        b.dispatch_step(pass, state)
+    fn initialize<BC: BoundaryConditionTypes>(
+        &self,
+        pass: &mut GpuPass,
+        sim: &mut FdtdLossyState<BC>,
+        state: &mut Self::StateType,
+    ) -> TaserResult<()> {
+        self.0.initialize(pass, sim, &mut state.0)?;
+        self.1.initialize(pass, sim, &mut state.1)
+    }
+
+    fn dispatch_step<BC: BoundaryConditionTypes>(
+        &self,
+        pass: &mut GpuPass,
+        sim: &mut FdtdLossyState<BC>,
+        state: &mut Self::StateType,
+    ) -> TaserResult<()> {
+        self.0.dispatch_step(pass, sim, &mut state.0)?;
+        self.1.dispatch_step(pass, sim, &mut state.1)
     }
 }
+
+#[derive(Clone)]
+pub struct StateConstructionArgs<'a> {
+    pub simulation: &'a FdtdLossySimulation,
+    pub grid_sizing: &'a GridSizing,
+}
+
 macro_rules! request_copy_fn {
     ($name:ident, $read:ident, $buf:ident) => {
         #[inline]
-        pub fn $name<BC: BoundaryConditionTypes>(&mut self, backend: &GpuBackend, state: &FdtdLossyState<BC>) -> TaserResult<()> {
+        pub fn $name<BC: BoundaryConditionTypes>(
+            &mut self,
+            backend: &GpuBackend,
+            state: &FdtdLossyState<BC>
+        ) -> TaserResult<()> {
             if self.$read.is_idle() {
                 self.$read.request_copy(backend, &state.$buf, 0)?
             }
@@ -686,7 +738,7 @@ impl FdtdStateReadback {
     pub fn get_simulation_mode(&self) -> FdtdSimulationMode { self.mode }
 
     /// Submit a command for copying all vector field data from GPU to CPU
-    pub fn request_copy_fields<BC: BoundaryConditionTypes>(
+    pub fn request_copy_fields<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
         &mut self,
         backend: &GpuBackend,
         state: &FdtdLossyState<BC>
@@ -898,7 +950,39 @@ impl FdtdStability {
     }
 }
 
-/// Buffers and data needed for running the shader
+/// Buffers and data needed for running the shader. Is treated like a [`FdtdLossyState`], but also
+/// stores buffers for hooks.
+pub struct FdtdLossyBuffers<BC: BoundaryConditionTypes, Hooks: FdtdLossyHook> {
+    pub hooks_states: Hooks::StateType,
+    pub state: FdtdLossyState<BC>,
+}
+
+impl<BC: BoundaryConditionTypes, H: FdtdLossyHook> Deref for FdtdLossyBuffers<BC, H> {
+    type Target = FdtdLossyState<BC>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl<BC: BoundaryConditionTypes, H: FdtdLossyHook> DerefMut for FdtdLossyBuffers<BC, H> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
+
+impl<BC: BoundaryConditionTypes, H: FdtdLossyHook> AsRef<FdtdLossyState<BC>> for FdtdLossyBuffers<BC, H> {
+    fn as_ref(&self) -> &FdtdLossyState<BC> {
+        &self.state
+    }
+}
+
+impl<BC: BoundaryConditionTypes, H: FdtdLossyHook> AsMut<FdtdLossyState<BC>> for FdtdLossyBuffers<BC, H> {
+    fn as_mut(&mut self) -> &mut FdtdLossyState<BC> {
+        &mut self.state
+    }
+}
+
 pub struct FdtdLossyState<BC: BoundaryConditionTypes> {
     pub bc_states: BoundaryConditionStates<BC>,
     // Uniforms / thread-independent vars

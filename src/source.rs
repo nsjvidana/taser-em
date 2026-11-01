@@ -92,7 +92,11 @@ impl SourcePipeline {
         })
     }
 
-    pub fn initialize<BC: BoundaryConditionTypes>(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
+    pub fn initialize<BC: BoundaryConditionTypes>(
+        &self,
+        pass: &mut GpuPass,
+        sim_state: &mut FdtdLossyState<BC>
+    ) -> TaserResult<()> {
         self.tfsf_pipeline.initialize_masks(
             pass,
             sim_state,
@@ -100,7 +104,11 @@ impl SourcePipeline {
         Ok(())
     }
 
-    pub fn dispatch_step<BC: BoundaryConditionTypes>(&self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
+    pub fn dispatch_step<BC: BoundaryConditionTypes>(
+        &self,
+        pass: &mut GpuPass,
+        sim_state: &mut FdtdLossyState<BC>
+    ) -> TaserResult<()> {
         let mut zero_src_terms = true;
         if let Some(dipole_states) = &mut sim_state.source_states.dipole_states {
             self.dipole_pipeline.dispatch_step(

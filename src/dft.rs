@@ -26,27 +26,36 @@ impl DftRegion {
 
 pub struct DftRegionsHook {
     update: GpuDftRegionsUpdate,
-    state: DftRegionStates, // TODO: make states into an input for hooks
+    region_objs: Vec<Arc<DftRegion>>
 }
 
 impl DftRegionsHook {
-    pub fn new(backend: &GpuBackend, state: DftRegionStates) -> TaserResult<Self> {
+    pub fn new(backend: &GpuBackend, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
         Ok(Self {
             update: GpuDftRegionsUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
-            state,
+            region_objs: region_objs.to_vec(),
         })
     }
-    
-    pub fn state(&self) -> &DftRegionStates { &self.state }
 }
 
 impl FdtdLossyHook for DftRegionsHook {
-    fn dispatch_step<BC: BoundaryConditionTypes>(&mut self, pass: &mut GpuPass, sim_state: &mut FdtdLossyState<BC>) -> TaserResult<()> {
+    type StateType = DftRegionStates;
+
+    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType> {
+        DftRegionStates::new(backend, args, &self.region_objs)
+    }
+
+    fn dispatch_step<BC: BoundaryConditionTypes>(
+        &self,
+        pass: &mut GpuPass,
+        sim_state: &mut FdtdLossyState<BC>,
+        state: &mut Self::StateType,
+    ) -> TaserResult<()> {
         let DftRegionStates {
             params, dft_regions: regions,
             h_dfts, en_dfts, sn_dfts,
             update_workgroups, ..
-        } = &mut self.state;
+        } = state;
 
         // TODO: defer this shader by cloning En & H into separate buffer
         self.update.call(
@@ -157,10 +166,14 @@ pub struct DftRegionStates {
 }
 
 impl DftRegionStates {
-    pub fn new<BC: BoundaryConditionTypes>(backend: &GpuBackend, sim: &FdtdLossyState<BC>, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
+    pub fn new(backend: &GpuBackend, args: StateConstructionArgs, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
-        let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
-        let grid_extents = sim.cell_size * sim.n_cells.as_vect();
+        let sim_offset = Vect::from_vec3(args.grid_sizing.sim_offset);
+        let FdtdParameters {
+            cell_size, dt, ..
+        } = &args.simulation.fdtd_parameters;
+        let n_cells = args.grid_sizing.n_cells;
+        let grid_extents = cell_size * n_cells.as_vect();
 
         let region_descs = region_objs
             .iter()
@@ -174,8 +187,8 @@ impl DftRegionStates {
                             .translated(sim_offset.to_3d(Vec3::ZERO)),
                     }));
                 }
-                let cell_idx_min = (min / sim.cell_size).round().as_grid_index().cell_idx_to_3d();
-                let n_cells = ((max - min) / sim.cell_size).round().as_grid_index();
+                let cell_idx_min = (min / cell_size).round().as_grid_index().cell_idx_to_3d();
+                let n_cells = ((max - min) / cell_size).round().as_grid_index();
                 let n_cells3 = n_cells.n_cells_to_3d();
                 let cell_count = n_cells.element_product();
                 if n_cells.min_element() == 0 {
@@ -222,8 +235,8 @@ impl DftRegionStates {
                         GpuDftRegion {
                             freq,
                             dfts_start_idx,
-                            kernel: Complex32::from_polar(1., -core::f32::consts::TAU * freq * sim.dt),
-                            h_finalize_k: Complex32::from_polar(1., -core::f32::consts::TAU * freq * 0.5 * sim.dt),
+                            kernel: Complex32::from_polar(1., -core::f32::consts::TAU * freq * dt),
+                            h_finalize_k: Complex32::from_polar(1., -core::f32::consts::TAU * freq * 0.5 * dt),
                             ..uninit_region_gpu
                         }
                     })
@@ -238,7 +251,7 @@ impl DftRegionStates {
             .unwrap();
         let dfts_zeroed = vec![ComplexVec3::ZERO; dft_count];
 
-        let params = GpuDftRegionsParams::new(sim.n_cells.n_cells_to_3d(), sim.dt, &dft_regions);
+        let params = GpuDftRegionsParams::new(n_cells.n_cells_to_3d(), *dt, &dft_regions);
         let dft_regions_buf = dft_regions.create_gpu_buffer(backend)?;
         Ok(Self {
             region_descs,
