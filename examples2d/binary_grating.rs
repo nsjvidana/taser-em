@@ -15,7 +15,8 @@ use taser_em_testbed2d::*;
 /// | -1               | 0.00%           | 15.55%            |
 /// | 0                | 18.41%          | 50.48%            |
 /// | 0                | 0.00%           | 15.55%            |
-/// This example is close enough to these values. It's off by about 2% at most.
+/// This example is... close enough to these values. It's off by about 2% at most. However, the lecture
+/// was only off by ~1%.
 pub async fn binary_grating() -> anyhow::Result<()> {
     let freq = 10e9; // 10 GHz
     let sim_speed = 5;
@@ -109,47 +110,35 @@ pub async fn binary_grating() -> anyhow::Result<()> {
     };
     let all_regions = &[trans_plane.clone(), refl_plane.clone()];
 
-    // TODO: don't make pipeline/hooks store states, but take them as inputs instead
-    //       this will allow using the same pipeline for different simulation instances (e.g. src-only sim)
-    //       maybe add a required "state type" to the hooks trait to impl this.
-    //       also remove all &mut self from the trait if possible. ideally pipelines are immutable
-
     /*
      * Preparing simulation for running
      */
     let backend = create_backend().await?;
 
     // Main simulation
+    // DFT region states
+    let args = simulation.compute_state_construction_args(&stability);
+    let region_states = DftRegionStates::new(&backend, args, all_regions)?;
+    // pipeline
     let boundary_conditions = BoundaryConditions::new(
         PeriodicBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
-    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
-    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
+    let pipeline = apply_pipeline_hooks(
+        FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?,
+        DftRegionsHook::new(&backend)?
+    );
+    // simulation state and readbacks
+    let mut state = simulation.finalize_with_hooks(&backend, &stability, &pipeline, region_states)?;
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
-    // DFT regions
-    let region_states = DftRegionStates::new(&backend, &state, all_regions)?;
-    let mut dft_regions_read = DftRegionReadback::new(&backend, &region_states)?;
-    let mut pipeline = apply_pipeline_hooks(
-        pipeline,
-        DftRegionsHook::new(&backend, region_states)?
-    );
+    let mut dft_regions_read = DftRegionReadback::new(&backend, &state.hooks_states)?;
 
-    // Source-only sim
+    // Source-only simulation with the same DFT regions and pipeline
     let src_sim = simulation.sources_only();
-    let boundary_conditions = BoundaryConditions::new(
-        PeriodicBoundaryX::from_backend(&backend)?,
-        PECBoundaryY::from_backend(&backend)?,
-    );
-    let mut pipeline_src = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
-    let mut state_src = src_sim.finalize(&backend, &stability, &mut pipeline_src)?;
-    // DFT region in the source simulation
-    let region_states_src = DftRegionStates::new(&backend, &state_src, all_regions)?;
-    let mut dft_regions_read_src = DftRegionReadback::new(&backend, &region_states_src)?;
-    let mut pipeline_src = apply_pipeline_hooks(
-        pipeline_src,
-        DftRegionsHook::new(&backend, region_states_src)?,
-    );
+    let args = src_sim.compute_state_construction_args(&stability);
+    let region_states_src = DftRegionStates::new(&backend, args, all_regions)?; // same region objects used here
+    let mut state_src = src_sim.finalize_with_hooks(&backend, &stability, &pipeline, region_states_src)?;
+    let mut dft_regions_read_src = DftRegionReadback::new(&backend, &state_src.hooks_states)?;
 
     /*
      * Running simulation
@@ -180,8 +169,12 @@ pub async fn binary_grating() -> anyhow::Result<()> {
         let t = readback.get_t_idx() as Real * state.dt;
 
         if t < steady_time { // wait for steady-state
-            pipeline.simulate(&backend, &mut state)?;
-            pipeline_src.simulate(&backend, &mut state_src)?;
+            let mut encoder = backend.begin_encoding();
+            let mut pass = encoder.begin_pass("2D binary grating", None);
+            pipeline.dispatch_steps(&mut pass, &mut state)?;
+            pipeline.dispatch_steps(&mut pass, &mut state_src)?;
+            drop(pass);
+            backend.submit(encoder)?;
             continue;
         }
         if plot_calculated {
@@ -192,8 +185,8 @@ pub async fn binary_grating() -> anyhow::Result<()> {
             continue;
         }
 
-        dft_regions_read.request_copy(&backend, pipeline.hooks.state())?;
-        dft_regions_read_src.request_copy(&backend, pipeline_src.hooks.state())?;
+        dft_regions_read.request_copy(&backend, &state.hooks_states)?;
+        dft_regions_read_src.request_copy(&backend, &state_src.hooks_states)?;
         dft_regions_read.read_back(&backend)?;
         dft_regions_read_src.read_back(&backend)?;
 

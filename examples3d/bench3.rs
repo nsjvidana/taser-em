@@ -62,8 +62,8 @@ pub async fn benchmark() -> anyhow::Result<()> {
         PECBoundaryY::from_backend(&backend)?,
         PECBoundaryZ::from_backend(&backend)?,
     );
-    let mut pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
-    let mut state = simulation.finalize(&backend, &stability, &mut pipeline)?;
+    let pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Run simulation

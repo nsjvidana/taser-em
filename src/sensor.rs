@@ -29,116 +29,30 @@ pub struct PowerFluxDftSensor {
 }
 
 // TODO: interop w/ external DftRegionsHook instead?
-//        maybe works with a DftRegionsHook builder struct...
 pub struct PowerFluxDftHook {
     /// Enables / disables updating the power flux integrals.
     ///
     /// This is necessary if one wants to run the power flux integrals only once, after steady state fields
     /// are achieved.
     pub enable_update: bool,
-    #[allow(dead_code)]
-    region_objs: Vec<Arc<DftRegion>>,
-    descriptions: Vec<PowerFluxDftDescription>,
     update: GpuPowerFluxDft,
     dft_regions_hook: DftRegionsHook,
 }
 
 impl PowerFluxDftHook {
-    pub fn new<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
+    pub fn new(
         backend: &GpuBackend,
-        sim: &FdtdLossyState<BC>,
-        sensors: &[Arc<PowerFluxDftSensor>]
     ) -> TaserResult<Self> {
-        if sensors.is_empty() { return Err(PowerFluxError::NoSensors.into()) }
-        let sim_offset = Vect::from_vec3(sim.grid_sizing.sim_offset);
-        let grid_extents = sim.n_cells.as_vect() * sim.cell_size;
-
-        let descriptions = sensors.iter()
-            .scan(0, |freq_count, sensor| {
-                let sensor_power_start = *freq_count;
-                *freq_count += sensor.frequencies.len();
-                Some(PowerFluxDftDescription {
-                    ptr: sensor.clone(),
-                    sensor_power_start,
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let region_objs = descriptions.iter()
-            .map(|desc| {
-                let sensor = &*desc.ptr;
-                let (plane_min, plane_max) = {
-                    // temporarily move into grid space
-                    let mut pos = sensor.position + sim_offset;
-                    // snap pos along plane normal to center of a grid cell
-                    pos[sensor.axis] = ((pos[sensor.axis] / sim.cell_size[sensor.axis]).floor() + 0.5)
-                        * sim.cell_size[sensor.axis];
-                    // clamp plane dimensions to grid edges, with a thickness of 1 cell
-                    let mut size = sensor.size
-                        .unwrap_or(Vect::splat(Real::INFINITY))
-                        .abs();
-                    size[sensor.axis] = sim.cell_size[sensor.axis];
-                    let plane_min = (pos - size * 0.5).max(Vect::ZERO);
-                    let plane_max = (pos + size * 0.5).min(grid_extents);
-                    // move back into world space since dft regions takes world space inputs
-                    (plane_min - sim_offset, plane_max - sim_offset)
-                };
-                Arc::new(DftRegion {
-                    frequencies: sensor.frequencies.clone(),
-                    bb_min: plane_min,
-                    bb_max: plane_max,
-                    fields: DftFields::SN,
-                })
-            })
-            .collect::<Vec<_>>();
-
         Ok(Self {
             enable_update: true,
-            region_objs: region_objs.clone(),
-            descriptions,
             update: GpuPowerFluxDft::from_dir(backend, &crate::SPIRV_DIR)?,
-            dft_regions_hook: DftRegionsHook::new(backend, &region_objs)?,
+            dft_regions_hook: DftRegionsHook::new(backend)?,
         })
     }
 }
 
 impl FdtdLossyHook for PowerFluxDftHook {
     type StateType = PowerFluxDftStates;
-
-    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType> {
-        let dft_region_states = DftRegionStates::new(backend, args, &self.region_objs)?;
-
-        // TODO: use a offset of region buf instead of gpu_dft_region_idx for each sensor?
-        let mut flux_sensors = self.descriptions.iter()
-            .map(|desc| {
-                let gpu_sensor = desc.gpu_desc_uninit();
-                let freqs = &desc.ptr.frequencies;
-                if freqs.is_empty() { Err(DftError::NoFrequencies.into()) }
-                else { Ok(std::iter::repeat_n(gpu_sensor, freqs.len()).collect::<Vec<_>>()) }
-            })
-            .flatten_ok()
-            .collect::<TaserResult<Vec<_>>>()?;
-        flux_sensors // flux_sensors buffer is parallel to dft region buffer (for now)
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, s)| s.gpu_dft_region_idx = i as u32);
-        debug_assert_eq!(flux_sensors.len(), dft_region_states.regions().len());
-
-        let sensor_power = vec![Complex32::ZERO; flux_sensors.len()];
-
-        let gpu_dft_regions = dft_region_states.gpu_region_descs();
-        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, gpu_dft_regions);
-        let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
-
-        Ok(PowerFluxDftStates {
-            dft_region_states,
-            descriptions: self.descriptions.clone(),
-            flux_sensors: flux_sensors.create_gpu_buffer(backend)?,
-            sensor_power: sensor_power.create_gpu_buffer(backend)?,
-            wg_summations: wg_summations.create_gpu_buffer(backend)?,
-            flux_dft_workgroups,
-        })
-    }
 
     fn initialize<BC: BoundaryConditionTypes>(
         &self,
@@ -249,6 +163,90 @@ pub struct PowerFluxDftStates {
     flux_dft_workgroups: [u32; 3],
 }
 
+impl PowerFluxDftStates {
+    pub fn new(backend: &GpuBackend, args: StateConstructionArgs, sensors: &[Arc<PowerFluxDftSensor>]) -> TaserResult<Self> {
+        if sensors.is_empty() { return Err(PowerFluxError::NoSensors.into()) }
+        
+        let grid_sizing = args.grid_sizing;
+        let n_cells = grid_sizing.n_cells;
+        let cell_size = args.simulation.fdtd_parameters.cell_size;
+        let sim_offset = Vect::from_vec3(grid_sizing.sim_offset);
+        let grid_extents = n_cells.as_vect() * cell_size;
+
+        let descriptions = sensors.iter()
+            .scan(0, |freq_count, sensor| {
+                let sensor_power_start = *freq_count;
+                *freq_count += sensor.frequencies.len();
+                Some(PowerFluxDftDescription {
+                    ptr: sensor.clone(),
+                    sensor_power_start,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let region_objs = descriptions.iter()
+            .map(|desc| {
+                let sensor = &*desc.ptr;
+                let (plane_min, plane_max) = {
+                    // temporarily move into grid space
+                    let mut pos = sensor.position + sim_offset;
+                    // snap pos along plane normal to center of a grid cell
+                    pos[sensor.axis] = ((pos[sensor.axis] / cell_size[sensor.axis]).floor() + 0.5)
+                        * cell_size[sensor.axis];
+                    // clamp plane dimensions to grid edges, with a thickness of 1 cell
+                    let mut size = sensor.size
+                        .unwrap_or(Vect::splat(Real::INFINITY))
+                        .abs();
+                    size[sensor.axis] = cell_size[sensor.axis];
+                    let plane_min = (pos - size * 0.5).max(Vect::ZERO);
+                    let plane_max = (pos + size * 0.5).min(grid_extents);
+                    // move back into world space since dft regions takes world space inputs
+                    (plane_min - sim_offset, plane_max - sim_offset)
+                };
+                Arc::new(DftRegion {
+                    frequencies: sensor.frequencies.clone(),
+                    bb_min: plane_min,
+                    bb_max: plane_max,
+                    fields: DftFields::SN,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let dft_region_states = DftRegionStates::new(backend, args, &region_objs)?;
+
+        // TODO: use a offset of region buf instead of gpu_dft_region_idx for each sensor?
+        let mut flux_sensors = descriptions.iter()
+            .map(|desc| {
+                let gpu_sensor = desc.gpu_desc_uninit();
+                let freqs = &desc.ptr.frequencies;
+                if freqs.is_empty() { Err(DftError::NoFrequencies.into()) }
+                else { Ok(std::iter::repeat_n(gpu_sensor, freqs.len()).collect::<Vec<_>>()) }
+            })
+            .flatten_ok()
+            .collect::<TaserResult<Vec<_>>>()?;
+        flux_sensors // flux_sensors buffer is parallel to dft region buffer (for now)
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, s)| s.gpu_dft_region_idx = i as u32);
+        debug_assert_eq!(flux_sensors.len(), dft_region_states.regions().len());
+
+        let sensor_power = vec![Complex32::ZERO; flux_sensors.len()];
+
+        let gpu_dft_regions = dft_region_states.gpu_region_descs();
+        let flux_dft_workgroups = flux_dft_workgroups(&flux_sensors, gpu_dft_regions);
+        let wg_summations = vec![Complex32::ZERO; flux_dft_workgroups.iter().product::<u32>() as usize];
+
+        Ok(PowerFluxDftStates {
+            dft_region_states,
+            descriptions,
+            flux_sensors: flux_sensors.create_gpu_buffer(backend)?,
+            sensor_power: sensor_power.create_gpu_buffer(backend)?,
+            wg_summations: wg_summations.create_gpu_buffer(backend)?,
+            flux_dft_workgroups,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct PowerFluxDftDescription {
     pub ptr: Arc<PowerFluxDftSensor>,
@@ -318,7 +316,7 @@ pub struct PowerFluxReadback {
 }
 
 impl PowerFluxReadback {
-    pub fn new<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
+    pub fn new<BC: BoundaryConditionTypes>(
         backend: &GpuBackend,
         state: &FdtdLossyState<BC>
     ) -> TaserResult<Option<Self>> {
@@ -331,7 +329,7 @@ impl PowerFluxReadback {
         }))
     }
 
-    pub fn request_copy<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
+    pub fn request_copy<BC: BoundaryConditionTypes>(
         &mut self,
         backend: &GpuBackend,
         state: &FdtdLossyState<BC>

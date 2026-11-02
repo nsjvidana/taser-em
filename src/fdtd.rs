@@ -237,13 +237,37 @@ impl FdtdLossySimulation {
         }
     }
 
-    pub fn finalize<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
+    /// Computes arguments for constructing states / GPU buffers. **See performance notes below.**
+    ///
+    /// # Performance
+    /// This can be a **very expensive function** if the simulation has high-detail geometries.
+    /// Use [`FdtdLossySimulation::finalize_no_init`] (and [`FdtdLossyPipeline::initialize`] on its output) to
+    /// avoid redundant geometry computations that may be expensive.
+    pub fn compute_state_construction_args(&self, stability: &FdtdStability) -> StateConstructionArgs<'_> {
+        StateConstructionArgs {
+            simulation: self,
+            grid_sizing: self.compute_grid_sizing(stability),
+        }
+    }
+
+    pub fn finalize<BC: BoundaryConditionTypes>(
         &self,
         backend: &GpuBackend,
         stability: &FdtdStability,
-        pipeline: &mut FdtdLossyPipeline<BC, H>,
+        pipeline: &FdtdLossyPipeline<BC, ()>,
+    ) -> TaserResult<FdtdLossyBuffers<BC, ()>> {
+        self.finalize_with_hooks(backend, stability, pipeline, ())
+    }
+
+    pub fn finalize_with_hooks<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
+        &self,
+        backend: &GpuBackend,
+        stability: &FdtdStability,
+        pipeline: &FdtdLossyPipeline<BC, H>,
+        hooks_states: H::StateType
     ) -> TaserResult<FdtdLossyBuffers<BC, H>> {
-        let mut state = self.finalize_no_init(backend, stability, pipeline)?;
+        let args = self.compute_state_construction_args(stability);
+        let mut state = Self::finalize_no_init(backend, args, pipeline, hooks_states)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("simulation initialize", None);
@@ -255,27 +279,29 @@ impl FdtdLossySimulation {
     }
 
     pub fn finalize_no_init<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
-        &self,
         backend: &GpuBackend,
-        stability: &FdtdStability,
+        args: StateConstructionArgs,
         pipeline: &FdtdLossyPipeline<BC, H>,
+        hooks_states: H::StateType
     ) -> TaserResult<FdtdLossyBuffers<BC, H>> {
+        let StateConstructionArgs {
+            simulation: sim, grid_sizing
+        } = args;
         let FdtdParameters {
             cell_size, dt, ..
-        } = self.fdtd_parameters;
+        } = sim.fdtd_parameters;
 
-        let grid_sizing = self.compute_grid_sizing(stability);
         let GridSizing { n_cells, sim_offset } = grid_sizing;
         let n_cells3 = n_cells.n_cells_to_3d();
 
-        let grid_mats = self.create_material_grid(sim_offset, n_cells);
-        let pml_coeffs = PmlCoefficientsGrid::new(&grid_mats, self.pml_parameters, dt);
+        let grid_mats = sim.create_material_grid(sim_offset, n_cells);
+        let pml_coeffs = PmlCoefficientsGrid::new(&grid_mats, sim.pml_parameters, dt);
         let sim_offset3 = pml_coeffs.sim_offset;
 
         let cell_count = n_cells.element_product();
 
         let sim_offset = Vect::from_vec3(sim_offset3);
-        let (problem_space_min, problem_space_max) = self.problem_space_from_n_cells(n_cells);
+        let (problem_space_min, problem_space_max) = sim.problem_space_from_n_cells(n_cells);
 
         let flat_idx_incrs = {
             let mut incrs = UVec3::ZERO;
@@ -308,15 +334,10 @@ impl FdtdLossySimulation {
         let cell_count = n_cells.element_product() as usize;
         let zeroed_vector_field = vec![Vec4::ZERO; cell_count];
 
-        let state_construction_args = StateConstructionArgs {
-            simulation: self,
-            grid_sizing: &grid_sizing,
-        };
-
         let state = FdtdLossyBuffers {
-            hooks_states: pipeline.hooks.construct_state(backend, state_construction_args)?,
+            hooks_states,
             state: FdtdLossyState {
-                bc_states: BoundaryConditionStates::new(&pipeline.boundary_conditions, self)?,
+                bc_states: BoundaryConditionStates::new(&pipeline.boundary_conditions, sim)?,
                 // Uniforms / thread-independent vars
                 grid: grid.create_gpu_uniform(backend)?,
                 t_idx: 0.create_gpu_buffer(backend)?,
@@ -328,7 +349,7 @@ impl FdtdLossySimulation {
                 // For computing source terms
                 source_states: SourceStates::new(
                     backend,
-                    self,
+                    sim,
                     n_cells3,
                     sim_offset,
                     problem_space_min.cell_idx_to_3d(),
@@ -340,7 +361,7 @@ impl FdtdLossySimulation {
                 int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
                 pml_coeffs: pml_coeffs.coeffs.create_gpu_buffer(backend)?,
                 // Misc data
-                power_flux_states: PowerFluxStates::new(backend, self, n_cells, &sim_offset3)?,
+                power_flux_states: PowerFluxStates::new(backend, sim, n_cells, &sim_offset3)?,
                 workgroup_count: fdtd_lossy_workgroups(n_cells),
                 n_cells,
                 cell_size,
@@ -480,7 +501,7 @@ where
     /// Just provide an empty function `|_,_| Ok(())` if adding extra things to the simulation loop isn't
     /// necessary.
     ///
-    /// If you want to avoid direct submissions, use [`FdtdLossyPipeline::dispatch_steps_aux`] instead.
+    /// If you want to avoid direct submissions, use [`FdtdLossyPipeline::dispatch_steps`] instead.
     pub fn simulate(
         &self,
         backend: &GpuBackend,
@@ -488,13 +509,13 @@ where
     ) -> TaserResult<()> {
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("__fdtd_lossy_simulation", None);
-        self.dispatch_steps_aux(&mut pass, state)?;
+        self.dispatch_steps(&mut pass, state)?;
         drop(pass);
         backend.submit(encoder)?;
         Ok(())
     }
 
-    pub fn dispatch_steps_aux(
+    pub fn dispatch_steps(
         &self,
         pass: &mut GpuPass,
         buffers: &mut FdtdLossyBuffers<BC, H>,
@@ -584,9 +605,6 @@ pub fn apply_pipeline_hooks<
 pub trait FdtdLossyHook {
     type StateType;
 
-    /// Construct state / buffers this hook relies on
-    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType>;
-
     /// Initialize the simulation `state` or the state of the hook.
     fn initialize<BC: BoundaryConditionTypes>(
         &self,
@@ -607,7 +625,6 @@ pub trait FdtdLossyHook {
 
 impl FdtdLossyHook for () {
     type StateType = ();
-    fn construct_state(&self, _: &GpuBackend, _: StateConstructionArgs) -> TaserResult<Self::StateType> { Ok(()) }
 }
 
 impl<A, B> FdtdLossyHook for (A, B)
@@ -616,10 +633,6 @@ where
     B: FdtdLossyHook,
 {
     type StateType = (A::StateType, B::StateType);
-
-    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType> {
-        Ok((self.0.construct_state(backend, args.clone())?, self.1.construct_state(backend, args)?))
-    }
 
     fn initialize<BC: BoundaryConditionTypes>(
         &self,
@@ -645,7 +658,7 @@ where
 #[derive(Clone)]
 pub struct StateConstructionArgs<'a> {
     pub simulation: &'a FdtdLossySimulation,
-    pub grid_sizing: &'a GridSizing,
+    pub grid_sizing: GridSizing,
 }
 
 macro_rules! request_copy_fn {

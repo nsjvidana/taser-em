@@ -26,24 +26,18 @@ impl DftRegion {
 
 pub struct DftRegionsHook {
     update: GpuDftRegionsUpdate,
-    region_objs: Vec<Arc<DftRegion>>
 }
 
 impl DftRegionsHook {
-    pub fn new(backend: &GpuBackend, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
+    pub fn new(backend: &GpuBackend) -> TaserResult<Self> {
         Ok(Self {
             update: GpuDftRegionsUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
-            region_objs: region_objs.to_vec(),
         })
     }
 }
 
 impl FdtdLossyHook for DftRegionsHook {
     type StateType = DftRegionStates;
-
-    fn construct_state(&self, backend: &GpuBackend, args: StateConstructionArgs) -> TaserResult<Self::StateType> {
-        DftRegionStates::new(backend, args, &self.region_objs)
-    }
 
     fn dispatch_step<BC: BoundaryConditionTypes>(
         &self,
