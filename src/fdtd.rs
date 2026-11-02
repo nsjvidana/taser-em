@@ -166,21 +166,11 @@ impl FdtdLossySimulation {
         GridSizing { n_cells, world_to_grid }
     }
 
-    /// Compute the bounding box surrounding all objects and sources in the simulation.
+    /// Compute the bounding box surrounding all [`MaterialRegion`]s in the simulation.
     pub fn compute_bounding_box(&self) -> Aabb {
-        // TODO: remove sources from bounding box computation
-        let mut regions_bb = self.material_regions.compute_bounding_box();
-        let regions_center = regions_bb.center();
-        let source_pts = self.dipoles.iter()
-            .map(|src| src.src_ref.position.to_3d(Vec3::ZERO))
-            .chain(self.tfsf_sources.iter().map(|_| regions_center))
-            .collect::<Vec<_>>();
-        for pt in source_pts.iter() {
-            regions_bb.mins = regions_bb.mins.min(*pt);
-            regions_bb.maxs = regions_bb.maxs.max(*pt);
-        }
         // ensure the simulation encompasses everything by adding machine eps
-        regions_bb.add_half_extents(Vec3::splat(Real::EPSILON))
+        self.material_regions.compute_bounding_box()
+            .add_half_extents(Vec3::splat(Real::EPSILON))
     }
 
     /// Computes the `(min, max)` of the problem space in world coordinates.
@@ -397,7 +387,8 @@ pub enum GridSizingMode {
     /// The grid will span from the origin to the grid extents (`cell_size * custom_n_cells`), in world space,
     /// with the **out-most layer of cells being boundary cells**.
     ///
-    /// Objects, like [`Source`]s, must be within the grid bounds in world space, otherwise an error will occur.
+    /// Objects, like [`Source`]s and [`MaterialRegion`]s,must be within the grid bounds in world space,
+    /// otherwise an error will occur.
     ///
     /// See the Region Intersections section of [`YeeGridMaterials::new_material_grid`] to know how to
     /// ensure that [`MaterialRegions`] will be included in the grid.
