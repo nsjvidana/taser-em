@@ -8,7 +8,7 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, Visual
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::BinaryGrating;
+    let example = Example::BenchAll;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),
@@ -278,32 +278,54 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
             ElectricMaterial::PEC
         );
 
+    // Flux DFT
+    let frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
+    let flux_dft = Arc::new(PowerFluxDftSensor {
+        axis: SpatialAxis::X,
+        position: Vect::new(
+            -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
+            0.
+        ),
+        size: None,
+        direction: Direction::Negative,
+        frequencies: frequencies.clone(),
+    });
+    let all_flux_dfts = std::slice::from_ref(&flux_dft);
+
+    // Instant flux
+    simulation.add_flux_sensor(InstantPowerFluxSensor {
+        axis: SpatialAxis::X,
+        position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
+        direction: Direction::Negative,
+    });
+
     // Source injection in antenna feed gap
     let source_values = Source::sin_cycle(freq, dt).repeat(10);
     let dipole = Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y);
     let _dipole = simulation.add_dipole(dipole, source_values);
 
     // Preparing simulation
-    // Create instance of backend we will run the simulation with
     let backend = create_backend().await?;
-
-    // Create pipelines and boundary conditions
+    // pipeline with boundary conditions & flux DFT
     let boundary_conditions = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
     );
-    let pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, SIM_SPEED)?;
-
-    // Create GPU simulation state
-    let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
-
-    // TODO: Set up power flux DFT for source and main sim
-    let _frequencies = frequencies_from_range(0.0..=(freq * 2.), dft_resolution);
-
-    // Set up readback
+    let pipeline = FdtdLossyPipeline::new_with_hooks(
+        &backend,
+        boundary_conditions,
+        SIM_SPEED,
+        PowerFluxDftHook::new(&backend)?
+    )?;
+    // GPU simulation state
+    let args = simulation.compute_state_construction_args(&stability);
+    let flux_dft_state = PowerFluxDftStates::new(&backend, args, all_flux_dfts)?;
+    let mut state = simulation.finalize_with_hooks(&backend, &stability, &pipeline, flux_dft_state)?;
+    // readback
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ)?;
     let mut power_readback = PowerFluxReadback::new(&backend, &state)?
         .expect("we added a flux sensor to the simulation, so readback must be possible");
+    let mut flux_dft_readback = PowerFluxDftReadback::new(&backend, &state.hooks_states)?;
 
     // Run simulation
     println!("Running on backend: {}", backend_name(&backend));
@@ -311,6 +333,7 @@ pub async fn benchmark_all() -> anyhow::Result<()> {
         // Dummy readbacks (synchronizes backend too)
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
+        flux_dft_readback.sync(&backend, &state.hooks_states)?;
 
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2d benchmark example", None);

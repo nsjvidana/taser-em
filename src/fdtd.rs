@@ -457,6 +457,26 @@ where
     BC: BoundaryConditionTypes,
     H: FdtdLossyHook,
 {
+    /// Create a new pipeline for running FDTD simulation, with [`FdtdLossyHook`]s for additional
+    /// functionality.
+    pub fn new_with_hooks(
+        backend: &GpuBackend,
+        boundary_conditions: BoundaryConditions<BC>,
+        num_steps_per_submission: usize,
+        hooks: H
+    ) -> TaserResult<Self> {
+        Ok(Self {
+            init_pec: InitPec::from_dir(backend, &crate::SPIRV_DIR)?,
+            boundary_conditions,
+            source_pipeline: SourcePipeline::new(backend)?,
+            h_update: GpuLossyHUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            dn_en_update: GpuLossyDnEnUpdate::from_dir(backend, &crate::SPIRV_DIR)?,
+            power_flux_pipeline: PowerFluxPipeline::new(backend)?,
+            num_steps_per_submission,
+            hooks,
+        })
+    }
+
     /// Initialize buffers
     pub fn initialize(
         &self,
@@ -593,7 +613,8 @@ pub fn apply_pipeline_hooks<
 /// You can make a hook as a tuple of hooks: ``(Hook1::new(), Hook2::new())``
 /// Each hook would be applied to the simulation.
 ///
-/// If you want more than two hooks, just make a nested tuple of hooks.
+/// If you want more than two hooks, just make a nested tuple of hooks, or if that's too
+/// confusing, implement this trait for a struct you would like to turn into a hook.
 pub trait FdtdLossyHook {
     type StateType;
 
