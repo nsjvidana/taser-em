@@ -248,7 +248,7 @@ impl FdtdTestbedViewer {
         }
     }
 
-    pub fn add_flux_planes<'a>(&mut self, flux_sensors: impl Iterator<Item=&'a PowerFluxSensor>) {
+    pub fn add_flux_planes<'a>(&mut self, flux_sensors: impl Iterator<Item=&'a InstantPowerFluxSensor>) {
         let grid_dims = self.grid_bb_max - self.grid_bb_min;
         let grid_center = self.grid_bb_min + grid_dims * 0.5;
         for sensor in flux_sensors {

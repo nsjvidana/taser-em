@@ -268,14 +268,13 @@ impl PowerFluxDftDescription {
     }
 }
 
-// TODO: rename this to instantaneous
-/// Measure Poynting Flux flowing through a plane perpendicular to `axis`, stretching to the edges
+/// Measure instantaneous Poynting Flux flowing through a plane perpendicular to `axis`, stretching to the edges
 /// of the grid
 ///
-/// Cuts into spacer regions, meaning spacer regions won't wrap around [`PowerFluxSensor`]s.
+/// Cuts into spacer regions, meaning spacer regions won't wrap around [`InstantPowerFluxSensor`]s.
 /// If the sensor ends up outside the grid, an error will be returned.
 #[derive(Clone, Debug)]
-pub struct PowerFluxSensor {
+pub struct InstantPowerFluxSensor {
     pub axis: SpatialAxis,
     /// Position of plane along `axis` in world-space.
     pub position: Real,
@@ -287,12 +286,12 @@ pub struct PowerFluxSensor {
 
 #[derive(Clone)]
 pub struct PowerFluxFunction {
-    obj: Arc<PowerFluxSensor>,
+    obj: Arc<InstantPowerFluxSensor>,
     sensor_idx: usize,
 }
 
 impl PowerFluxFunction {
-    pub fn new(sensor: &Arc<PowerFluxSensor>, flux_state: &PowerFluxStates) -> TaserResult<Self> {
+    pub fn new(sensor: &Arc<InstantPowerFluxSensor>, flux_state: &PowerFluxStates) -> TaserResult<Self> {
         let (sensor_idx, _) = flux_state.sensors.iter()
             .enumerate()
             .find(|(_, m)| Arc::ptr_eq(m, sensor))
@@ -304,13 +303,13 @@ impl PowerFluxFunction {
         })
     }
 
-    pub fn get_sensor_ref(&self) -> &Arc<PowerFluxSensor> { &self.obj }
+    pub fn get_sensor_ref(&self) -> &Arc<InstantPowerFluxSensor> { &self.obj }
 
     pub fn sensor_idx(&self) -> usize { self.sensor_idx }
 }
 
 pub struct PowerFluxReadback {
-    sensors: Vec<Arc<PowerFluxSensor>>,
+    sensors: Vec<Arc<InstantPowerFluxSensor>>,
     sensor_power: Vec<Real>,
     sensor_power_read: GpuReadback<Real>
 }
@@ -351,7 +350,7 @@ impl PowerFluxReadback {
         self.sensor_power_read.try_take(backend, &mut self.sensor_power)
     }
 
-    pub fn get_power(&self, sensor: &Arc<PowerFluxSensor>) -> Option<Real> {
+    pub fn get_power(&self, sensor: &Arc<InstantPowerFluxSensor>) -> Option<Real> {
         self.sensors.iter()
             .zip(self.sensor_power.iter())
             .find(|(m, _)| Arc::ptr_eq(m, sensor))
@@ -396,8 +395,8 @@ impl PowerFluxPipeline {
 }
 
 pub struct PowerFluxStates {
-    pub sensors: Vec<Arc<PowerFluxSensor>>,
-    pub flux_sensors: GpuBuffer<GpuPowerFluxSensor>,
+    pub sensors: Vec<Arc<InstantPowerFluxSensor>>,
+    pub flux_sensors: GpuBuffer<GpuInstantPowerFluxSensor>,
     pub sensor_power: GpuBuffer<Real>,
     pub wg_summations: GpuBuffer<Real>,
     pub workgroups: [u32; 3],
@@ -427,7 +426,7 @@ impl PowerFluxStates {
 
                 let da = axis.to_vec3() * sensor.direction as i32 as Real;
                 let position = ((world_to_grid[axis] + sensor.position) / cell_size3_one[axis]) as u32;
-                let gpu_sensor = GpuPowerFluxSensor {
+                let gpu_sensor = GpuInstantPowerFluxSensor {
                     da,
                     axis,
                     axis1,
@@ -458,7 +457,7 @@ impl PowerFluxStates {
 #[derive(thiserror::Error, Debug)]
 pub enum PowerFluxError {
     #[error("The following sensor couldn't be found in the simulation: {0:?}")]
-    MissingSensor(Arc<PowerFluxSensor>),
+    MissingSensor(Arc<InstantPowerFluxSensor>),
     #[error("Tried accessing data of a sensor but none are in the simulation")]
     NoSensors
 }

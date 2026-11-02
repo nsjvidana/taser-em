@@ -145,7 +145,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Instantaneous and time-averaged power flux sensors
     let flux = simulation.add_flux_sensor(
-        PowerFluxSensor {
+        InstantPowerFluxSensor {
             axis: SpatialAxis::X,
             position: -(stability.spacer_region_widths[SpatialAxis::X].hi as Real * cell_size.x) * 0.90,
             direction: Direction::Negative,

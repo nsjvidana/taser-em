@@ -25,7 +25,7 @@ pub struct FdtdLossySimulation {
     pub background_material: ElectricMaterial,
     pub dipoles: Vec<Source<Dipole>>,
     pub tfsf_sources: Vec<Source<Tfsf>>,
-    pub power_flux_sensors: Vec<Arc<PowerFluxSensor>>,
+    pub power_flux_sensors: Vec<Arc<InstantPowerFluxSensor>>,
 }
 
 impl FdtdLossySimulation {
@@ -65,7 +65,7 @@ impl FdtdLossySimulation {
         ptr
     }
 
-    pub fn add_flux_sensor(&mut self, power_flux_sensor: PowerFluxSensor) -> Arc<PowerFluxSensor> {
+    pub fn add_flux_sensor(&mut self, power_flux_sensor: InstantPowerFluxSensor) -> Arc<InstantPowerFluxSensor> {
         let ptr = Arc::new(power_flux_sensor);
         self.power_flux_sensors.push(ptr.clone());
         ptr

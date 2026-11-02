@@ -27,7 +27,7 @@ pub fn gpu_power_flux(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] h_previous: &[Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] h: &[Vec4],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] en: &[Vec4],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_sensors: &[GpuPowerFluxSensor],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux_sensors: &[GpuInstantPowerFluxSensor],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] sensor_power: &mut [Real],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] wg_summations: &mut [Real], // flat 3d array, element for every workgroup
 ) {
@@ -87,7 +87,7 @@ cfg_cpu! {
 
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 #[repr(C)]
-pub struct GpuPowerFluxSensor {
+pub struct GpuInstantPowerFluxSensor {
     /// Magnitude-direction of `da` vector used in power flux integral.
     pub da: Vec3,
     pub axis: Axis,
