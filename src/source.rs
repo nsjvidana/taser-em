@@ -195,7 +195,7 @@ impl SourceStates {
         backend: &GpuBackend,
         sim: &FdtdLossySimulation,
         n_cells3: UVec3,
-        sim_offset: Vect,
+        world_to_grid: Vect,
         problem_space_min: UVec3,
         problem_space_max: UVec3,
     ) -> TaserResult<Self> {
@@ -215,7 +215,7 @@ impl SourceStates {
         Ok(Self {
             src_h: src_components_zero.create_gpu_buffer(backend)?,
             src_dn: src_components_zero.create_gpu_buffer(backend)?,
-            dipole_states: DipoleStates::new(backend, sim, sim_offset, n_cells)?,
+            dipole_states: DipoleStates::new(backend, sim, world_to_grid, n_cells)?,
             tfsf_states: tfsf_dispatch_data,
         })
     }
@@ -301,7 +301,7 @@ impl DipoleStates {
     pub fn new(
         backend: &GpuBackend,
         sim: &FdtdLossySimulation,
-        sim_offset: Vect,
+        world_to_grid: Vect,
         n_cells: GridIndex
     ) -> TaserResult<Option<Self>> {
         let FdtdParameters {
@@ -315,7 +315,7 @@ impl DipoleStates {
                 let vals = &source.data_points;
                 if vals.is_empty() { return None; }
 
-                let pos = (sim_offset + position) / cell_size;
+                let pos = (world_to_grid + position) / cell_size;
                 let cell_grid_idx = pos.round().as_grid_index();
                 if pos.cmplt(Vect::ZERO).any() || cell_grid_idx.cmpge(n_cells).any() {
                     return Some(Err(

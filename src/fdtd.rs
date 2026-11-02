@@ -91,7 +91,7 @@ impl FdtdLossySimulation {
         self
     }
 
-    pub fn create_material_grid(&self, sim_offset: Vec3, n_cells: GridIndex) -> YeeGridMaterials {
+    pub fn create_material_grid(&self, world_to_grid: Vec3, n_cells: GridIndex) -> YeeGridMaterials {
         let FdtdParameters { material_discretization, cell_size, .. } =
             &self.fdtd_parameters;
         match material_discretization {
@@ -99,7 +99,7 @@ impl FdtdLossySimulation {
                 YeeGridMaterials::new_material_grid(
                     n_cells,
                     *cell_size,
-                    sim_offset,
+                    world_to_grid,
                     &self.material_regions,
                     self.background_material,
                 ),
@@ -108,7 +108,7 @@ impl FdtdLossySimulation {
                 YeeGridMaterials::new_material_grid(
                     n_cells * res,
                     cell_size / res as Real,
-                    sim_offset,
+                    world_to_grid,
                     &self.material_regions,
                     self.background_material,
                 ).downscaled(*resolution)
@@ -163,7 +163,7 @@ impl FdtdLossySimulation {
             GridSizingMode::Custom(n_cells) => (n_cells, Vec3::ZERO),
         };
 
-        GridSizing { n_cells, sim_offset: world_to_grid, }
+        GridSizing { n_cells, world_to_grid }
     }
 
     /// Compute the bounding box surrounding all objects and sources in the simulation.
@@ -191,9 +191,9 @@ impl FdtdLossySimulation {
     /// This is useful for ensuring space between PMLs and measurement planes.
     /// (e.g. subtracting 1 `cell_size` from maximum to keep a 1-cell space between a reflectance measurement plane and PMLs)
     pub fn problem_space_world(&self, stability: &FdtdStability) -> (Vect, Vect) {
-        let GridSizing { n_cells, sim_offset } = self.compute_grid_sizing(stability);
+        let GridSizing { n_cells, world_to_grid } = self.compute_grid_sizing(stability);
         let (min, max) = self.problem_space_from_n_cells(n_cells);
-        let grid_to_world = -Vect::from_vec3(sim_offset);
+        let grid_to_world = -Vect::from_vec3(world_to_grid);
         (
             min.as_vect() * self.fdtd_parameters.cell_size + grid_to_world,
             (max.as_vect() + 0.5) * self.fdtd_parameters.cell_size + grid_to_world,
@@ -291,16 +291,16 @@ impl FdtdLossySimulation {
             cell_size, dt, ..
         } = sim.fdtd_parameters;
 
-        let GridSizing { n_cells, sim_offset } = grid_sizing;
+        let GridSizing { n_cells, world_to_grid } = grid_sizing;
         let n_cells3 = n_cells.n_cells_to_3d();
 
-        let grid_mats = sim.create_material_grid(sim_offset, n_cells);
+        let grid_mats = sim.create_material_grid(world_to_grid, n_cells);
         let pml_coeffs = PmlCoefficientsGrid::new(&grid_mats, sim.pml_parameters, dt);
-        let sim_offset3 = pml_coeffs.sim_offset;
+        let world_to_grid3 = pml_coeffs.world_to_grid;
 
         let cell_count = n_cells.element_product();
 
-        let sim_offset = Vect::from_vec3(sim_offset3);
+        let world_to_grid = Vect::from_vec3(world_to_grid3);
         let (problem_space_min, problem_space_max) = sim.problem_space_from_n_cells(n_cells);
 
         let flat_idx_incrs = {
@@ -351,7 +351,7 @@ impl FdtdLossySimulation {
                     backend,
                     sim,
                     n_cells3,
-                    sim_offset,
+                    world_to_grid,
                     problem_space_min.cell_idx_to_3d(),
                     problem_space_max.cell_idx_to_3d()
                 )?,
@@ -361,7 +361,7 @@ impl FdtdLossySimulation {
                 int_terms: vec![PmlIntegrals::default(); cell_count].create_gpu_buffer(backend)?,
                 pml_coeffs: pml_coeffs.coeffs.create_gpu_buffer(backend)?,
                 // Misc data
-                power_flux_states: PowerFluxStates::new(backend, sim, n_cells, &sim_offset3)?,
+                power_flux_states: PowerFluxStates::new(backend, sim, n_cells, &world_to_grid3)?,
                 workgroup_count: fdtd_lossy_workgroups(n_cells),
                 n_cells,
                 cell_size,
@@ -371,14 +371,6 @@ impl FdtdLossySimulation {
         };
         Ok(state)
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct GridSizing {
-    /// Grid dimensions in cells
-    pub n_cells: GridIndex,
-    /// Translation offset applied to material regions and other simulation objects
-    pub sim_offset: Vec3,
 }
 
 /// How the grid's size (`n_cells`) will be calculated. Default is [`GridSizingMode::AutoCeil`] with no

@@ -170,7 +170,7 @@ impl PowerFluxDftStates {
         let grid_sizing = args.grid_sizing;
         let n_cells = grid_sizing.n_cells;
         let cell_size = args.simulation.fdtd_parameters.cell_size;
-        let sim_offset = Vect::from_vec3(grid_sizing.sim_offset);
+        let world_to_grid = Vect::from_vec3(grid_sizing.world_to_grid);
         let grid_extents = n_cells.as_vect() * cell_size;
 
         let descriptions = sensors.iter()
@@ -189,7 +189,7 @@ impl PowerFluxDftStates {
                 let sensor = &*desc.ptr;
                 let (plane_min, plane_max) = {
                     // temporarily move into grid space
-                    let mut pos = sensor.position + sim_offset;
+                    let mut pos = sensor.position + world_to_grid;
                     // snap pos along plane normal to center of a grid cell
                     pos[sensor.axis] = ((pos[sensor.axis] / cell_size[sensor.axis]).floor() + 0.5)
                         * cell_size[sensor.axis];
@@ -201,7 +201,7 @@ impl PowerFluxDftStates {
                     let plane_min = (pos - size * 0.5).max(Vect::ZERO);
                     let plane_max = (pos + size * 0.5).min(grid_extents);
                     // move back into world space since dft regions takes world space inputs
-                    (plane_min - sim_offset, plane_max - sim_offset)
+                    (plane_min - world_to_grid, plane_max - world_to_grid)
                 };
                 Arc::new(DftRegion {
                     frequencies: sensor.frequencies.clone(),
@@ -408,7 +408,7 @@ impl PowerFluxStates {
         backend: &GpuBackend,
         sim: &FdtdLossySimulation,
         n_cells: GridIndex,
-        sim_offset: &Vec3
+        world_to_grid: &Vec3
     ) -> TaserResult<Option<Self>> {
         if sim.power_flux_sensors.is_empty() {
             return Ok(None);
@@ -426,7 +426,7 @@ impl PowerFluxStates {
                 let axis2 = axis1.permute();
 
                 let da = axis.to_vec3() * sensor.direction as i32 as Real;
-                let position = ((sim_offset[axis] + sensor.position) / cell_size3_one[axis]) as u32;
+                let position = ((world_to_grid[axis] + sensor.position) / cell_size3_one[axis]) as u32;
                 let gpu_sensor = GpuPowerFluxSensor {
                     da,
                     axis,

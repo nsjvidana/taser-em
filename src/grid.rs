@@ -143,7 +143,7 @@ pub struct YeeGridMaterials {
     /// The material applied to cells that don't intersect with any material regions.
     pub default_mat: ElectricMaterial,
     /// The translation applied to all objects in a [`MaterialRegions`] to center them on a Yee grid.
-    pub sim_offset: Vec3,
+    pub world_to_grid: Vec3,
 }
 
 impl YeeGridMaterials {
@@ -158,31 +158,31 @@ impl YeeGridMaterials {
 
     /// Compute a material grid with the dimensions of `n_cells` by sampling material regions.
     ///
-    /// `sim_offset` gets applied to the translation of all `regions` internally before they get discretized.
+    /// `world_to_grid` gets applied to the translation of all `regions` internally before they get discretized.
     ///
     /// # How it Works
     /// The grid spans from the world space origin to the grid extents (`cell_size * custom_n_cells`), in world space,
     /// with the **out-most layer of cells being boundary cells**.
     ///
-    /// With `sim_offset` applied each region, point-intersection tests with each region are done with
+    /// With `world_to_grid` applied to each region, point-intersection tests with each region are done with
     /// the physical positions of each vector component in the grid (using [`SharedShape::contains_point`]).
     /// Components that don't intersect with any regions are assigned `default_mat`.
     ///
-    /// # Region Intersections
+    /// ## Region Intersections
     /// Whether a region is in the grid will depend on the dimension:
-    /// - 1D: Only parts of `regions` intersecting with the Z axis after `sim_offset` is applied.
-    /// - 2D: Only parts of `regions` intersecting with the X-Y plane after `sim_offset` is applied.
-    /// - 3D: Only parts of `regions` that end up inside the 3D grid after `sim_offset` is applied.
+    /// - 1D: Only parts of `regions` intersecting with the Z axis after `world_to_grid` is applied.
+    /// - 2D: Only parts of `regions` intersecting with the X-Y plane after `world_to_grid` is applied.
+    /// - 3D: Only parts of `regions` that end up inside the 3D grid after `world_to_grid` is applied.
     pub fn new_material_grid(
         n_cells: GridIndex,
         cell_size: Vect,
-        sim_offset: Vec3,
+        world_to_grid: Vec3,
         regions: &MaterialRegions,
         default_mat: ElectricMaterial,
     ) -> Self {
         let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
 
-        let centered_scene_pose = regions.scene_pose.append_translation(sim_offset);
+        let centered_scene_pose = regions.scene_pose.append_translation(world_to_grid);
 
         let half_cell_size3 = (cell_size / 2.).to_3d(Vec3::ZERO);
         let dn_offsets = Self::DN_OFFSETS.map(|v| v * half_cell_size3);
@@ -216,7 +216,7 @@ impl YeeGridMaterials {
             cell_size,
             materials: mats,
             default_mat,
-            sim_offset,
+            world_to_grid,
         }
     }
 
@@ -258,18 +258,8 @@ impl YeeGridMaterials {
             cell_size,
             materials,
             default_mat: self.default_mat,
-            sim_offset: self.sim_offset,
+            world_to_grid: self.world_to_grid,
         }
-    }
-
-    pub fn compute_simulation_offset(
-        simulation_bb: &Aabb,
-        n_cells: GridIndex,
-        cell_size: Vect
-    ) -> Vec3 {
-        let grid_center = n_cells.as_vect() * cell_size / 2.;
-        let sim_center = Vect::from_vec3(simulation_bb.center());
-        (grid_center - sim_center).to_3d(Vec3::ZERO)
     }
 }
 
@@ -331,7 +321,7 @@ pub struct PmlCoefficientsGrid {
     pub n_cells: GridIndex,
     /// Grid's update coefficients in a flattened array.
     pub coeffs: Vec<PmlCoefficients>,
-    pub sim_offset: Vec3,
+    pub world_to_grid: Vec3,
 }
 
 impl PmlCoefficientsGrid {
@@ -355,7 +345,7 @@ impl PmlCoefficientsGrid {
         let YeeGridMaterials {
             n_cells: _n_cells,
             materials: mats,
-            sim_offset,
+            world_to_grid,
             ..
         } = grid_mats;
 
@@ -485,7 +475,7 @@ impl PmlCoefficientsGrid {
                 }
             });
 
-        Self { n_cells, coeffs, sim_offset: *sim_offset }
+        Self { n_cells, coeffs, world_to_grid: *world_to_grid }
     }
 }
 
@@ -623,4 +613,15 @@ impl LoHiWidths {
         self.hi = hi;
         self
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GridSizing {
+    /// Grid dimensions in cells
+    pub n_cells: GridIndex,
+    /// Translation that brings simulation objects (e.g. [`MaterialRegion`], [`Source`]) from world-space
+    /// to grid-space.
+    ///
+    /// World-space typically includes all user inputs that are transformations / positions
+    pub world_to_grid: Vec3,
 }

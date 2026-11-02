@@ -69,7 +69,7 @@ impl FdtdTestbedViewer {
         let mut scene = SceneNode3d::default();
 
         let GridSizing {
-            n_cells, sim_offset
+            n_cells, world_to_grid
         } = simulation.compute_grid_sizing(stability);
         let cell_size = simulation.fdtd_parameters.cell_size;
         visualization_mode.initialize(&mut scene, n_cells, cell_size);
@@ -104,7 +104,7 @@ impl FdtdTestbedViewer {
         selff.default_cam_setup();
         selff.update_cam_light();
         selff.add_pmls(&simulation.pml_parameters);
-        selff.add_region_meshes(&simulation.material_regions, sim_offset);
+        selff.add_region_meshes(&simulation.material_regions, world_to_grid);
         selff.add_flux_planes(
             simulation.power_flux_sensors.iter().map(|rc| rc.as_ref())
         );
@@ -203,7 +203,7 @@ impl FdtdTestbedViewer {
     }
 
     /// Add material regions as meshes rendered in the scene.
-    pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, sim_offset: Vec3) {
+    pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, world_to_grid: Vec3) {
         for MaterialRegion {
             shape, pose,
             mesh,
@@ -239,7 +239,7 @@ impl FdtdTestbedViewer {
                     self.scene
                         .add_mesh(kiss3d_mesh, Vec3::ONE)
                 });
-            let region_pose_world = (mat_regions.scene_pose * pose).append_translation(sim_offset);
+            let region_pose_world = (mat_regions.scene_pose * pose).append_translation(world_to_grid);
             node
                 .set_pose(region_pose_world)
                 .set_color(GRAY.with_alpha(self.material_region_alpha))

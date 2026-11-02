@@ -162,7 +162,7 @@ pub struct DftRegionStates {
 impl DftRegionStates {
     pub fn new(backend: &GpuBackend, args: StateConstructionArgs, region_objs: &[Arc<DftRegion>]) -> TaserResult<Self> {
         if region_objs.is_empty() { return Err(DftError::NoRegions.into()) }
-        let sim_offset = Vect::from_vec3(args.grid_sizing.sim_offset);
+        let world_to_grid = Vect::from_vec3(args.grid_sizing.world_to_grid);
         let FdtdParameters {
             cell_size, dt, ..
         } = &args.simulation.fdtd_parameters;
@@ -172,13 +172,13 @@ impl DftRegionStates {
         let region_descs = region_objs
             .iter()
             .scan(0, |total_dfts, region| {
-                let min = region.bb_min.min(region.bb_max) + sim_offset;
-                let max = region.bb_min.max(region.bb_max) + sim_offset;
+                let min = region.bb_min.min(region.bb_max) + world_to_grid;
+                let max = region.bb_min.max(region.bb_max) + world_to_grid;
                 if min.cmplt(Vect::ZERO).any() || max.cmpgt(grid_extents).any() {
                     return Some(Err(DftError::OutOfBoundsRegion {
                         region: region.clone(),
                         grid_extents: Aabb::new(Vec3::ZERO, grid_extents.to_3d(Vec3::ZERO))
-                            .translated(sim_offset.to_3d(Vec3::ZERO)),
+                            .translated(world_to_grid.to_3d(Vec3::ZERO)),
                     }));
                 }
                 let cell_idx_min = (min / cell_size).round().as_grid_index().cell_idx_to_3d();
