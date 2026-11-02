@@ -5,6 +5,8 @@ pub use num_complex::ComplexFloat;
 use bytemuck::{Pod, Zeroable};
 pub use dim_types::*;
 use crate::cfg_cpu;
+use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use num_complex::Complex;
 
 pub type Real = f32;
 pub type Index = u32;
@@ -771,4 +773,123 @@ pub fn grid_idx3_to_flat_idx(grid_idx3: UVec3, n_cells3: UVec3) -> u32 {
     grid_idx3.z * n_cells3.x * n_cells3.y +
         grid_idx3.y * n_cells3.x +
         grid_idx3.x
+}
+
+#[derive(Add, AddAssign, Sub, SubAssign, Mul, MulAssign, Div, DivAssign)]
+#[mul(forward)]
+#[mul_assign(forward)]
+#[div(forward)]
+#[div_assign(forward)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug, Default, PartialEq)]
+#[repr(C)]
+pub struct ComplexVec3 {
+    pub x: Complex32,
+    pub y: Complex32,
+    pub z: Complex32,
+}
+
+impl ComplexVec3 {
+    /// Complex cross product
+    pub fn cross(self, rhs: Self) -> Self {
+        Self {
+            x: self.y * rhs.z - rhs.y * self.z,
+            y: self.z * rhs.x - rhs.z * self.x,
+            z: self.x * rhs.y - rhs.x * self.y
+        }
+    }
+
+    /// Complex conjugate of vector
+    pub fn conj(self) -> Self {
+        Self {
+            x: self.x.conj(),
+            y: self.y.conj(),
+            z: self.z.conj(),
+        }
+    }
+}
+
+impl ComplexVec3 {
+    pub const ZERO: Self = Self::splat(Complex32::ZERO);
+
+    #[inline]
+    pub const fn splat(v: Complex<f32>) -> Self {
+        Self { x: v, y: v, z: v, }
+    }
+
+    #[inline]
+    pub const fn from_real(real: Vec3) -> Self {
+        Self {
+            x: Complex32::new(real.x, 0.),
+            y: Complex32::new(real.y, 0.),
+            z: Complex32::new(real.z, 0.),
+        }
+    }
+}
+
+impl core::ops::Mul<Complex32> for ComplexVec3 {
+    type Output = Self;
+
+    fn mul(self, rhs: Complex32) -> Self::Output {
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+
+impl core::ops::Mul<ComplexVec3> for Complex32 {
+    type Output = ComplexVec3;
+
+    fn mul(self, rhs: ComplexVec3) -> Self::Output {
+        ComplexVec3 {
+            x: self * rhs.x,
+            y: self * rhs.y,
+            z: self * rhs.z,
+        }
+    }
+}
+
+impl core::ops::Mul<Real> for ComplexVec3 {
+    type Output = Self;
+
+    fn mul(self, rhs: Real) -> Self::Output {
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+
+impl core::ops::Mul<ComplexVec3> for Real {
+    type Output = ComplexVec3;
+
+    fn mul(self, rhs: ComplexVec3) -> Self::Output {
+        ComplexVec3 {
+            x: self * rhs.x,
+            y: self * rhs.y,
+            z: self * rhs.z,
+        }
+    }
+}
+
+impl GpuDynamicIndex<Axis> for ComplexVec3 {
+    type Output = Complex32;
+
+    fn dyn_idx(&self, index: Axis) -> Self::Output {
+        match index {
+            Axis::X => self.x,
+            Axis::Y => self.y,
+            Axis::Z => self.z,
+        }
+    }
+
+    fn dyn_insert(&mut self, index: Axis, val: Self::Output) {
+        match index {
+            Axis::X => self.x = val,
+            Axis::Y => self.y = val,
+            Axis::Z => self.z = val,
+        }
+    }
 }

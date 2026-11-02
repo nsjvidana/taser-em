@@ -1,9 +1,9 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 #![allow(clippy::too_many_arguments)]
 
-use crate::dft::ComplexVec3;
 use crate::math::*;
 use khal_std::index::MaybeIndexUnchecked;
+use math::ComplexVec3;
 
 pub mod math;
 pub mod fdtd;

@@ -2,8 +2,9 @@ cfg_cpu! {
     use khal::ShaderArgsType;
 }
 
-use crate::dft::{ComplexVec3, GpuDftRegion};
+use crate::dft::GpuDftRegion;
 use crate::fdtd::GridParameters;
+use crate::math::ComplexVec3;
 use crate::math::*;
 use crate::{cfg_cpu, en_spatial_avg_cmplx, h_spatial_avg_cmplx, workgroup_counts};
 use bytemuck::{Pod, Zeroable};
