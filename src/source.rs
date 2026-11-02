@@ -247,19 +247,7 @@ impl Dipole {
     }
 }
 
-impl SourceType for Dipole {
-    fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize> {
-        state.dipole_states.as_ref().map(|st|
-            st.dipole_refs.iter()
-                .position(|r| Arc::ptr_eq(r, ref_self))
-                .expect("The source at `ref_self` should be in `state`")
-        )
-    }
-
-    fn get_value_buffer(state: &SourceStates) -> Option<&GpuBuffer<Real>> {
-        state.dipole_states.as_ref().map(|st| &st.curr_src_vals)
-    }
-}
+impl SourceType for Dipole {}
 
 pub struct DipolePipeline {
     gpu_compute_dipole_terms: GpuComputeDipoleTerms,
@@ -383,19 +371,7 @@ pub struct Tfsf {
     pub injection_plane_only: bool,
 }
 
-impl SourceType for Tfsf {
-    fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize> {
-        state.tfsf_states.as_ref().map(|st|
-            st.tfsf_refs.iter()
-                .position(|r| Arc::ptr_eq(r, ref_self))
-                .expect("The source at `ref_self` should be in `state`")
-        )
-    }
-
-    fn get_value_buffer(state: &SourceStates) -> Option<&GpuBuffer<Real>> {
-        state.tfsf_states.as_ref().map(|st| &st.curr_src_vals)
-    }
-}
+impl SourceType for Tfsf {}
 
 /// Parameters for an auxiliary grid (used for TF/SF sources)
 #[derive(Clone, Debug)]
@@ -680,23 +656,10 @@ impl TfsfStates {
 
 /// Trait for sources that inject energy into the simulation in various ways.
 ///
-/// Also has functions for
-pub trait SourceType {
-    /// Identical to [`ToDft::get_value_position`]
-    fn get_value_position(ref_self: &Arc<Self>, state: &SourceStates) -> Option<usize>;
-    /// Identical to [`ToDft::get_value_buffer`]
-    fn get_value_buffer(state: &SourceStates) -> Option<&GpuBuffer<Real>>;
-}
+/// Currently doesn't have much, but might be used for dynamic source types.
+pub trait SourceType {}
 
-impl SourceType for () {
-    fn get_value_position(_ref_self: &Arc<Self>, _state: &SourceStates) -> Option<usize> {
-        None
-    }
-
-    fn get_value_buffer(_state: &SourceStates) -> Option<&GpuBuffer<Real>> {
-        None
-    }
-}
+impl SourceType for () {}
 
 #[derive(thiserror::Error, Debug)]
 pub enum SourceError {
