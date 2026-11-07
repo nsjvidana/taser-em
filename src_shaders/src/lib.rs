@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "spirv", no_std)]
+#![cfg_attr(target_arch_is_gpu, no_std)]
 #![allow(clippy::too_many_arguments)]
 
 use crate::math::*;

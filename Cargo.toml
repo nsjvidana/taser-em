@@ -16,6 +16,13 @@ members = [
 ]
 resolver = "2"
 
+[workspace.lints]
+rust.unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(feature, values("dim1", "dim2", "dim3", "cpu", "cuda", "cuda-oxide", "metal"))',
+    'cfg(target_arch, values("spirv", "nvptx64"))',
+    'cfg(target_arch_is_gpu)',
+] }
+
 [workspace.package]
 version = "0.1.0"
 authors = ["Nilson Sampath Jayasinghe Vidana Patiranage <nilsonjvidana@gmail.com>"]
@@ -31,10 +38,10 @@ edition = "2024"
 
 [workspace.dependencies]
 parry3d = "0.28"
-khal = { version = "0.2.1", features = ["derive"] }
-khal-builder = "0.2.1"
-khal-std = "0.2.1"
-spirv-std = { version = "0.10.0-alpha.1", features = ["default"] }
+khal = { version = "0.4.0", features = ["derive"] }
+khal-builder = "0.4.0"
+khal-std = "0.4.0"
+spirv-std = { version = "0.10.0", features = ["default"] }
 kiss3d = { version = "0.44.0", features = ["egui"] }
 egui_plot = "0.35"
 egui = "0.34"

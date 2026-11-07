@@ -3,7 +3,6 @@ cfg_cpu! {
 }
 
 use crate::fdtd::*;
-use crate::math::*;
 use crate::*;
 use bytemuck::{Pod, Zeroable};
 use khal_std::index::MaybeIndexUnchecked;

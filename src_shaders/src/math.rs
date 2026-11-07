@@ -4,7 +4,6 @@ pub use num_complex::ComplexFloat;
 
 use bytemuck::{Pod, Zeroable};
 pub use dim_types::*;
-use crate::cfg_cpu;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use num_complex::Complex;
 
@@ -644,9 +643,6 @@ impl_vector_indexing!(Real, Real, Axis, 1);
 impl_vector_indexing!(UVec2, Index, Axis, UVec2::AXES.len());
 impl_vector_indexing!(Vec2, Real, Axis, Vec2::AXES.len());
 impl_vector_indexing!(UVec3, Index, Axis, UVec3::AXES.len());
-cfg_cpu! {
-    impl_vector_indexing!(USizeVec3, usize, Axis, USizeVec3::AXES.len());
-}
 impl_vector_indexing!(Vec3, Real, Axis, Vec3::AXES.len());
 impl_vector_indexing!(Vec4, Real, Axis, Vec4::AXES.len());
 
