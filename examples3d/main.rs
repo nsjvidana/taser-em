@@ -7,33 +7,31 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 
 #[kiss3d::main]
 async fn main() {
-    const EXAMPLE: Examples = Examples::Dipole;
+    const EXAMPLE: Examples = Examples::SuzanneTheScatterer;
     match EXAMPLE {
-        Examples::Cube => cube().await.unwrap(),
+        Examples::SuzanneTheScatterer => mesh_scatterer().await.unwrap(),
         Examples::Dipole => dipole_antenna().await.unwrap(),
         Examples::Bench => bench3::benchmark().await.unwrap(),
     }
 }
 
 enum Examples {
-    Cube,
+    SuzanneTheScatterer,
     Dipole,
     Bench
 }
 
-pub async fn cube() -> anyhow::Result<()> {
+pub async fn mesh_scatterer() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
     let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 16.,
         cells_per_wavelength: 10,
-        material_resolution: NonZeroU32::new(3).unwrap(),
+        material_resolution: NonZeroU32::new(2).unwrap(),
         spacer_region_widths: LayerWidths::splat_spatial(10)
-            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(5))
-            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(5)),
+            .with_axis_widths(SpatialAxis::Z, LoHiWidths::splat(10).with_lo(20)),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
@@ -45,17 +43,14 @@ pub async fn cube() -> anyhow::Result<()> {
         material_discretization: MaterialDiscretization::Smooth {
             resolution: stability.material_resolution
         },
-        // material_discretization: MaterialDiscretization::Rough,
     };
     let mut simulation = FdtdLossySimulation::new(fdtd_params, PmlParameters::new(dt));
 
-    // Compute cube dimensions
-    // construct the cube
+    // Construct scatterer from mesh
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(4.),
         mu_r: Vec3::splat(1.),
-        sig: Vec3::INFINITY,
-        // sig: Vec3::splat(0.),
+        sig: Vec3::splat(0.),
     };
     let wavelen = C_0 / f_max;
     simulation.material_regions.load_trimesh_regions(
@@ -70,7 +65,7 @@ pub async fn cube() -> anyhow::Result<()> {
         direction: Direction::Positive,
         t_start: 0.0,
         polarization: Vec3::X,
-        tfsf_buffer_width: LayerWidths::splat_spatial(3),
+        tfsf_buffer_width: LayerWidths::splat_spatial(8),
         injection_plane_only: false,
     };
     simulation.add_tfsf(source, Source::gaussian_max_f(f_max, 1., dt));
@@ -91,8 +86,8 @@ pub async fn cube() -> anyhow::Result<()> {
         .with_color_mode(
             ColorMode::FixedRange {
                 v_min: 0.,
-                v_mid: 0.5 / 2.,
-                v_max: 0.5,
+                v_mid: 0.7 / 2.,
+                v_max: 0.7,
                 color_min: BLUE.with_alpha(0.),
                 color_mid: CYAN.with_alpha(0.5),
                 color_max: RED
