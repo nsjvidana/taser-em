@@ -358,9 +358,9 @@ pub struct Tfsf {
     pub t_start: f32,
     /// Polarization direction of the plane wave (unit vector)
     pub polarization: Vec3,
-    /// The distances between the TF/SF boundary and the border/PML, in grid cells.
+    /// Number of cells between the TF/SF boundary and the border/PML, in grid cells.
     ///
-    /// If you want to record values behind the TF/SF boundary, `LayerWidths::splat_spatial(3)` works well.
+    /// Width of `4` to `8` cells works well.
     pub tfsf_buffer_width: LayerWidths,
     /// If this TF/SF source should only have the source injection plane as a TF/SF boundary.
     ///

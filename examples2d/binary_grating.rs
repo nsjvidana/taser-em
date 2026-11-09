@@ -81,8 +81,8 @@ pub async fn binary_grating() -> anyhow::Result<()> {
         direction: Direction::Negative,
         t_start: 0.0,
         polarization: Vec3::Z,
-        tfsf_buffer_width: LayerWidths::default()
-            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(3)),
+        tfsf_buffer_width: LayerWidths::ZERO
+            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(8)),
         injection_plane_only: true,
     };
     simulation.add_tfsf(tfsf, src_data_pts);
