@@ -76,3 +76,9 @@ opt-level = 3
 codegen-units = 16
 [profile.dev.build-override]
 opt-level = 3
+
+# Fix by @lucasmerlin for access violation crash on old Vulkan drivers.
+# PR #10124 (https://github.com/gfx-rs/wgpu/pull/10124)
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/nsjvidana/wgpu.git", branch = "lucasmerlin-old-vk-fix" }
+wgpu = { git = "https://github.com/nsjvidana/wgpu.git", branch = "lucasmerlin-old-vk-fix" }
