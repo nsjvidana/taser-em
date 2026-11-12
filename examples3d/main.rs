@@ -7,7 +7,7 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 
 #[kiss3d::main]
 async fn main() {
-    const EXAMPLE: Examples = Examples::SuzanneTheScatterer;
+    const EXAMPLE: Examples = Examples::Dipole;
     match EXAMPLE {
         Examples::SuzanneTheScatterer => mesh_scatterer().await.unwrap(),
         Examples::Dipole => dipole_antenna().await.unwrap(),

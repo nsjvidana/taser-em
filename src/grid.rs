@@ -14,6 +14,7 @@ use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::shape::SharedShape;
 use std::num::NonZeroU32;
 use std::path::Path;
+use parry3d::query::PointQuery;
 use taser_em_shaders::fdtd::PmlCoefficients;
 use taser_em_shaders::math::*;
 
@@ -188,12 +189,23 @@ impl YeeGridMaterials {
         let dn_offsets = Self::DN_OFFSETS.map(|v| v * half_cell_size3);
         let h_offsets = Self::H_OFFSETS.map(|v| v * half_cell_size3);
         let regions_transformed = regions.regions.iter()
-            .map(|r| (&r.shape, centered_scene_pose * r.pose, r.material))
+            .map(|r| {
+                let p = centered_scene_pose * r.pose;
+                (&r.shape, r.shape.compute_aabb(&p), p, r.material)
+            })
             .collect::<Vec<_>>();
+        let regions_bb = regions_transformed
+            .iter()
+            .fold(Aabb::new_invalid(), |result, (_, aabb, _, _)| result.merged(aabb));
+
         let mat_at_pt = |pt| {
-            regions_transformed.iter()
-                .find_map(|(s, p, m)|
-                    s.contains_point(p, pt).then_some(m)
+            regions_transformed
+                .iter()
+                .find_map(|(s, aabb, p, m)|
+                    // avoid testing points that aren't in the vicinity of this region or any region.
+                    (regions_bb.contains_point(&Pose3::IDENTITY, pt) &&
+                     aabb.contains_point(&Pose3::IDENTITY, pt) &&
+                        s.contains_point(p, pt)).then_some(m)
                 )
                 .copied()
                 .unwrap_or(default_mat)
