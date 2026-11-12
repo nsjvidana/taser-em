@@ -7,7 +7,7 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 
 #[kiss3d::main]
 async fn main() {
-    const EXAMPLE: Examples = Examples::Dipole;
+    const EXAMPLE: Examples = Examples::SuzanneTheScatterer;
     match EXAMPLE {
         Examples::SuzanneTheScatterer => mesh_scatterer().await.unwrap(),
         Examples::Dipole => dipole_antenna().await.unwrap(),
@@ -24,7 +24,7 @@ enum Examples {
 pub async fn mesh_scatterer() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 3;
+    let sim_speed = 2;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
@@ -65,7 +65,8 @@ pub async fn mesh_scatterer() -> anyhow::Result<()> {
         direction: Direction::Positive,
         t_start: 0.0,
         polarization: Vec3::X,
-        tfsf_buffer_width: LayerWidths::splat_spatial(8),
+        tfsf_buffer_width: LayerWidths::splat_spatial(8)
+            .with_axis_widths(SpatialAxis::Z, LoHiWidths::splat(8).with_hi(4)),
         injection_plane_only: false,
     };
     simulation.add_tfsf(source, Source::gaussian_max_f(f_max, 1., dt));
@@ -82,23 +83,14 @@ pub async fn mesh_scatterer() -> anyhow::Result<()> {
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Create viewer and set up camera
-    let vis_mode = VisualizationMode::default()
-        .with_color_mode(
-            ColorMode::FixedRange {
-                v_min: 0.,
-                v_mid: 0.7 / 2.,
-                v_max: 0.7,
-                color_min: BLUE.with_alpha(0.),
-                color_mid: CYAN.with_alpha(0.5),
-                color_max: RED
-            }
-        );
+    let vis_mode = VisualizationMode::default();
     let mut testbed = FdtdTestbedViewer::new(
         &simulation,
         &stability,
         vis_mode,
         VectorFieldVisual::H
     ).await?;
+    testbed.set_pml_alpha(0.);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));

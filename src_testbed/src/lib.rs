@@ -9,6 +9,7 @@ pub mod re_exports {
 use crate::util::{draw_bb, lerp_colors};
 use glamx::*;
 use kiss3d::camera::Projection;
+use kiss3d::egui;
 use kiss3d::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,6 +28,8 @@ pub struct FdtdTestbedViewer {
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
     pub pml_visuals: Vec<SceneNode3d>,
+    pub pml_alpha: f32,
+    pub material_region_visuals: Vec<SceneNode3d>,
     pub material_region_alpha: f32,
     background_mat: ElectricMaterial,
     n_cells: GridIndex,
@@ -39,6 +42,21 @@ pub struct FdtdTestbedViewer {
     grid_bb_min: Vec3,
     grid_bb_max: Vec3,
     bb_color: Color,
+}
+
+macro_rules! set_visual_alpha_fn {
+    ($name:ident, $visuals:ident) => {
+        pub fn $name(&mut self, alpha: f32) {
+            self.$visuals
+                .iter_mut()
+                .for_each(|v| {
+                    v.apply_to_object_mut(&mut |o| {
+                        let c = o.data().color();
+                        o.set_color(c.with_alpha(alpha));
+                    })
+                })
+        }
+    };
 }
 
 impl FdtdTestbedViewer {
@@ -90,6 +108,8 @@ impl FdtdTestbedViewer {
             camera,
             scene,
             pml_visuals: vec![],
+            pml_alpha: 0.25,
+            material_region_visuals: vec![],
             material_region_alpha: Self::DEFAULT_REGION_ALPHA,
             background_mat: simulation.background_material,
             n_cells,
@@ -130,7 +150,7 @@ impl FdtdTestbedViewer {
                 let cube = self.scene
                     .add_cube(extents.x, extents.y, extents.z)
                     .set_position((mins + maxs) / 2.)
-                    .set_color(DARK_GRAY.with_alpha(0.25));
+                    .set_color(DARK_GRAY.with_alpha(self.pml_alpha));
                 self.pml_visuals.push(cube);
             };
 
@@ -150,16 +170,8 @@ impl FdtdTestbedViewer {
         }
     }
 
-    pub fn set_pml_alpha(&mut self, alpha: f32) {
-        self.pml_visuals
-            .iter_mut()
-            .for_each(|v| {
-                v.apply_to_object_mut(&mut |o| {
-                    let c = o.data().color();
-                    o.set_color(c.with_alpha(alpha));
-                })
-            })
-    }
+    set_visual_alpha_fn!(set_pml_alpha, pml_visuals);
+    set_visual_alpha_fn!(set_region_alpha, material_region_visuals);
 
     /// Position the camera with the default camera setup.
     pub fn default_cam_setup(&mut self) {
@@ -204,48 +216,56 @@ impl FdtdTestbedViewer {
 
     /// Add material regions as meshes rendered in the scene.
     pub fn add_region_meshes(&mut self, mat_regions: &MaterialRegions, world_to_grid: Vec3) {
-        for MaterialRegion {
-            shape, pose,
-            mesh,
-            material,
-            ..
-        } in mat_regions.regions.iter()
-        {
-            if *material == self.background_mat { continue; }
+        let mut new_regions = mat_regions
+            .regions
+            .iter()
+            .filter_map(|r| {
+                let MaterialRegion {
+                    shape, pose,
+                    mesh,
+                    material,
+                    ..
+                } = r;
 
-            let mut node = shape.as_cuboid()
-                .map(|cuboid| {
-                    let ext = cuboid.half_extents * 2.;
-                    self.scene
-                        .add_cube(ext.x, ext.y, ext.z)
-                })
-                .or_else(||
-                    shape
-                        .as_capsule()
-                        .map(|caps| self.scene.add_capsule(caps.radius, caps.height()))
-                )
-                .or_else(||
-                    shape
-                        .as_ball()
-                        .map(|ball| self.scene.add_sphere(ball.radius))
-                )
-                .unwrap_or_else(|| {
-                    let mesh = mesh
-                        .clone()
-                        .expect("Failed to visualize material region");
-                    let kiss3d_mesh = Rc::new(RefCell::new(GpuMesh3d::new(
-                        mesh.vertices, mesh.indices, None, None, false
-                    )));
-                    self.scene
-                        .add_mesh(kiss3d_mesh, Vec3::ONE)
-                });
-            let region_pose_world = (mat_regions.scene_pose * pose).append_translation(world_to_grid);
-            node
-                .set_pose(region_pose_world)
-                .set_color(GRAY.with_alpha(self.material_region_alpha))
-                .set_casts_shadows(false)
-                .enable_backface_culling(false);
-        }
+                if *material == self.background_mat { return None; }
+
+                let mut node = shape.as_cuboid()
+                    .map(|cuboid| {
+                        let ext = cuboid.half_extents * 2.;
+                        self.scene
+                            .add_cube(ext.x, ext.y, ext.z)
+                    })
+                    .or_else(||
+                        shape
+                            .as_capsule()
+                            .map(|caps| self.scene.add_capsule(caps.radius, caps.height()))
+                    )
+                    .or_else(||
+                        shape
+                            .as_ball()
+                            .map(|ball| self.scene.add_sphere(ball.radius))
+                    )
+                    .unwrap_or_else(|| {
+                        let mesh = mesh
+                            .clone()
+                            .expect("Failed to visualize material region");
+                        let kiss3d_mesh = Rc::new(RefCell::new(GpuMesh3d::new(
+                            mesh.vertices, mesh.indices, None, None, false
+                        )));
+                        self.scene
+                            .add_mesh(kiss3d_mesh, Vec3::ONE)
+                    });
+                let region_pose_world = (mat_regions.scene_pose * pose).append_translation(world_to_grid);
+                node
+                    .set_pose(region_pose_world)
+                    .set_color(GRAY.with_alpha(self.material_region_alpha))
+                    .set_casts_shadows(false)
+                    .enable_backface_culling(false);
+                Some(node)
+            })
+            .collect::<Vec<_>>();
+
+        self.material_region_visuals.append(&mut new_regions);
     }
 
     pub fn add_flux_planes<'a>(&mut self, flux_sensors: impl Iterator<Item=&'a InstantPowerFluxSensor>) {
@@ -292,6 +312,7 @@ impl FdtdTestbedViewer {
         readback: &mut FdtdStateReadback,
     ) -> TaserResult<bool> {
         self.update_cam_light();
+        self.viewer_control_window();
 
         if cfg!(feature = "dim3") {
             draw_bb(&mut self.window, self.grid_bb_min, self.grid_bb_max, self.bb_color);
@@ -330,6 +351,37 @@ impl FdtdTestbedViewer {
         let Some(cam_light) = &mut self.cam_light else { return; };
         let eye = self.camera.eye();
         cam_light.set_position(eye);
+    }
+
+    pub fn viewer_control_window(&mut self) {
+        macro_rules! visual_alpha {
+            ($ui:expr, $slider_name:expr, $alpha:expr) => {{
+                let resp = $ui.add(
+                    egui::Slider::new($alpha, 0.0..=1.0)
+                        .text($slider_name)
+                        .trailing_fill(true)
+                );
+                resp.changed()
+            }};
+        }
+
+        let mut region_changed = false;
+        let mut pml_changed = false;
+        self.window.draw_ui(|ctx| {
+            egui::Window::new("Viewer Control")
+                .collapsible(true)
+                .open(&mut true)
+                .show(ctx, |ui| {
+                    region_changed |= visual_alpha!(ui, "Material Region Alpha", &mut self.material_region_alpha);
+                    pml_changed |= visual_alpha!(ui, "PML Alpha", &mut self.pml_alpha);
+                });
+        });
+        if region_changed {
+            self.set_region_alpha(self.material_region_alpha);
+        }
+        if pml_changed {
+            self.set_pml_alpha(self.pml_alpha);
+        }
     }
 }
 
