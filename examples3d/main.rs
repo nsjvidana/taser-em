@@ -1,4 +1,5 @@
 mod bench3;
+mod yagi;
 
 use kiss3d::prelude::*;
 use std::num::NonZeroU32;
@@ -7,10 +8,11 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 
 #[kiss3d::main]
 async fn main() {
-    const EXAMPLE: Examples = Examples::SuzanneTheScatterer;
+    const EXAMPLE: Examples = Examples::Yagi;
     match EXAMPLE {
         Examples::SuzanneTheScatterer => mesh_scatterer().await.unwrap(),
         Examples::Dipole => dipole_antenna().await.unwrap(),
+        Examples::Yagi => yagi::yagi_uda_antenna().await.unwrap(),
         Examples::Bench => bench3::benchmark().await.unwrap(),
     }
 }
@@ -18,6 +20,7 @@ async fn main() {
 enum Examples {
     SuzanneTheScatterer,
     Dipole,
+    Yagi,
     Bench
 }
 
@@ -110,11 +113,10 @@ pub async fn mesh_scatterer() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let sim_speed = 5;
+    let sim_speed = 1;
 
     // Simulation parameters w/ default stability values.
     let stability = FdtdStability {
-        dt_safety_factor: 10.,
         cells_per_wavelength: 30,
         spacer_region_widths: LayerWidths::splat_spatial(10)
             .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(30)),

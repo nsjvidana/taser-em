@@ -28,7 +28,7 @@ pub struct FdtdTestbedViewer {
     pub camera: OrbitCamera3d,
     pub scene: SceneNode3d,
     pub pml_visuals: Vec<SceneNode3d>,
-    pub pml_alpha: f32,
+    pml_alpha: f32,
     pub material_region_visuals: Vec<SceneNode3d>,
     pub material_region_alpha: f32,
     background_mat: ElectricMaterial,
