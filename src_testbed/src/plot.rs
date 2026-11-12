@@ -1,4 +1,5 @@
 use crate::FdtdTestbedViewer;
+use kiss3d::egui;
 use egui::{Color32, WidgetText};
 use egui_plot::{AxisHints, Legend, Line, Plot, PlotPoint, PlotPoints, PlotUi};
 use glamx::DVec2;
@@ -44,9 +45,7 @@ impl PlotWindow {
                 .show(ctx, |ui| {
                     let mut p = Plot::new(self.name.as_str())
                         .legend(Legend::default())
-                        .label_formatter(|_, pt| {
-                            format!("{:.2$}, {:.3$}", pt.x, pt.y, self.x_decimals, self.y_decimals)
-                        });
+                        .label_formatter(egui_plot::default_label_formatter);
                     if let Some(x_title) = self.x_axis_title.as_ref() {
                         p = p.custom_x_axes(vec![
                             AxisHints::new_x().label(x_title.clone())
