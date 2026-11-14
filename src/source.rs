@@ -222,6 +222,10 @@ impl SourceStates {
 }
 
 /// Dipole source (magnetic or electric).
+///
+/// **Note:** If the function this dipole gets has any 0 Hz component / DC offset, it will form some
+/// "static" field that won't propagate away. So full cycles of periodic functions (e.g. sin, cos) work
+/// best with this source.
 #[derive(Clone, Debug)]
 pub struct Dipole {
     /// Choose between an electric and magnetic dipole source.

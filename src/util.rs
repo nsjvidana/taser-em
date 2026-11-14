@@ -55,15 +55,37 @@ pub fn generate_mesh(shape: &dyn parry3d::shape::Shape) -> Option<(Vec<glamx::Ve
 /// Utility function for picking a backend and constructing it, depending on which features
 /// are enabled.
 ///
+/// For to specify `wgpu` features and limits, use [`create_backend_custom`]. However, `webgpu` feature
+/// must be enabled for to customize features and limits.
+///
 /// # Warning
 /// Only use this function if exactly **one** backend feature is selected, otherwise
 /// you might not get the backend you actually want.
 pub async fn create_backend() -> anyhow::Result<GpuBackend> {
+    create_backend_custom(
+        #[cfg(feature = "webgpu")]
+        None,
+        #[cfg(feature = "webgpu")]
+        None,
+    ).await
+}
+
+pub async fn create_backend_custom(
+    #[cfg(feature = "webgpu")]
+    features: Option<khal::re_exports::wgpu::Features>,
+    #[cfg(feature = "webgpu")]
+    limits: Option<khal::re_exports::wgpu::Limits>,
+) -> anyhow::Result<GpuBackend> {
     let backend = cfg_select! {
-        feature = "metal" => GpuBackend::Metal(khal::backend::Metal::new()?),
         feature = "cpu" => GpuBackend::Cpu,
+        feature = "metal" => GpuBackend::Metal(khal::backend::Metal::new()?),
         feature = "cuda" => GpuBackend::Cuda(khal::backend::Cuda::new(0)?),
-        feature = "webgpu" => GpuBackend::WebGpu(khal::backend::WebGpu::default().await?),
+        feature = "webgpu" => {{
+            GpuBackend::WebGpu(khal::backend::WebGpu::new(
+                features.unwrap_or_default(),
+                limits.unwrap_or_default()
+            ).await?)
+        }},
     };
     Ok(backend)
 }
