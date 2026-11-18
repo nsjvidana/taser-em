@@ -11,10 +11,10 @@ use crate::{into_par_iter, par_iter_mut};
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
-use parry3d::shape::SharedShape;
+use parry3d::partitioning::{Bvh, BvhBuildStrategy};
+use parry3d::shape::{Cuboid, Shape, SharedShape};
 use std::num::NonZeroU32;
 use std::path::Path;
-use parry3d::query::PointQuery;
 use taser_em_shaders::fdtd::PmlCoefficients;
 use taser_em_shaders::math::*;
 
@@ -149,12 +149,16 @@ pub struct YeeGridMaterials {
 
 impl YeeGridMaterials {
     /// Spatial offset of each component in the Dn field at each cell
-    pub const DN_OFFSETS: [Vec3; MAX_DIM] = [Vec3::X, Vec3::Y, Vec3::Z];
+    pub const DN_OFFSETS: [Vec3; MAX_DIM] = [
+        Vec3::new(0.5, 0. , 0. ),
+        Vec3::new(0. , 0.5, 0. ),
+        Vec3::new(0. , 0. , 0.5),
+    ];
     /// Spatial offset of each component in the H field at each cell
     pub const H_OFFSETS: [Vec3; MAX_DIM] = [
-        Vec3::new(0., 1., 1.),
-        Vec3::new(1., 0., 1.),
-        Vec3::new(1., 1., 0.),
+        Vec3::new(0. , 0.5, 0.5),
+        Vec3::new(0.5, 0. , 0.5),
+        Vec3::new(0.5, 0.5, 0. ),
     ];
 
     /// Compute a material grid with the dimensions of `n_cells` by sampling material regions.
@@ -165,8 +169,8 @@ impl YeeGridMaterials {
     /// The grid spans from the world space origin to the grid extents (`cell_size * custom_n_cells`), in world space,
     /// with the **out-most layer of cells being boundary cells**.
     ///
-    /// With `world_to_grid` applied to each region, point-intersection tests with each region are done with
-    /// the physical positions of each vector component in the grid (using [`SharedShape::contains_point`]).
+    /// With `world_to_grid` translation applied to each region, cube-intersection tests with each region are done with
+    /// the physical positions of each vector component in the grid.
     /// Components that don't intersect with any regions are assigned `default_mat`.
     ///
     /// ## Region Intersections
@@ -185,41 +189,72 @@ impl YeeGridMaterials {
 
         let centered_scene_pose = regions.scene_pose.append_translation(world_to_grid);
 
-        let half_cell_size3 = (cell_size / 2.).to_3d(Vec3::ZERO);
-        let dn_offsets = Self::DN_OFFSETS.map(|v| v * half_cell_size3);
-        let h_offsets = Self::H_OFFSETS.map(|v| v * half_cell_size3);
         let regions_transformed = regions.regions.iter()
             .map(|r| {
                 let p = centered_scene_pose * r.pose;
-                (&r.shape, r.shape.compute_aabb(&p), p, r.material)
+                (r.shape.clone(), p, r.shape.compute_aabb(&p), r.material)
             })
             .collect::<Vec<_>>();
-        let regions_bb = regions_transformed
-            .iter()
-            .fold(Aabb::new_invalid(), |result, (_, aabb, _, _)| result.merged(aabb));
 
-        let mat_at_pt = |pt| {
-            regions_transformed
-                .iter()
-                .find_map(|(s, aabb, p, m)|
-                    // avoid testing points that aren't in the vicinity of this region or any region.
-                    (regions_bb.contains_point(&Pose3::IDENTITY, pt) &&
-                     aabb.contains_point(&Pose3::IDENTITY, pt) &&
-                        s.contains_point(p, pt)).then_some(m)
-                )
-                .copied()
+        let aabbs = regions_transformed.iter().map(|(_, _, aabb, _)| *aabb).collect::<Vec<_>>();
+        let bvh = Bvh::from_leaves(BvhBuildStrategy::Binned, &aabbs); // TODO: try using BvhBuildStrategy::Ploc instead
+
+        let query_cube = Cuboid::new(cell_size.to_3d(Vec3::splat(cell_size.max_element() * 2.)) / 2.);
+
+        let pen_depth_thresh = cell_size.length() * 0.5;
+
+        let mat_at_cmp = |pt, is_h: bool, axis_idx: usize| {
+            let query_pose = Pose3::from_translation(pt);
+            bvh
+                .intersect_aabb(&query_cube.compute_aabb(&query_pose))
+                .find_map(|i| {
+                    let leaf_id = i as usize;
+                    let (shape, pose, _, mat) = &regions_transformed[leaf_id];
+                    let contact = parry3d::query::contact(&query_pose, &query_cube, pose, &**shape, 0.0);
+                    let Ok(Some(contact)) = contact else { return None };
+
+                    if contact.dist >= pen_depth_thresh { return Some(*mat); }
+                    if mat.sig[axis_idx].is_infinite() { // shallow penetration means this is component is at a surface
+                        // set PEC for vector field components at pec interface
+                        // PEC surface conditions (vector field conditions at a PEC surface):
+                        // - En components tangential to PEC surfaces are `0.`
+                        // - H components orthogonal to PEC surface are `0.`
+                        let component_dir = Axis::try_from(axis_idx as u32)
+                            .unwrap()
+                            .to_vec3();
+                        let angle = component_dir.angle_between(contact.normal2);
+                        // TODO: try making 0-to-1 term multiplied to all coeffs since
+                        //       PEC surface isn't guaranteed to be aligned with grid
+                        //       term can be stored in YeeCellMaterials
+                        let angle_to_normal = angle.min(core::f32::consts::PI - angle);
+                        if is_h && angle_to_normal < Real::EPSILON || // H component = 0 if normal to surface
+                            !is_h && (core::f32::consts::FRAC_PI_2 - angle_to_normal).abs() < Real::EPSILON  // En component = 0 if tangent to surface
+                        {
+                            return Some(*mat)
+                        }
+                    }
+                    None
+                })
                 .unwrap_or(default_mat)
         };
 
-        let mut mats = vec![YeeCellMaterials::FREE_SPACE; cell_count];
+        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
+        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
+        let h_offsets = Self::H_OFFSETS.map(|v| v * cell_size3);
+        let mut mats = vec![YeeCellMaterials::ZERO; cell_count];
+        // TODO: use ndarray::Array3 with parallel feature instead
         par_iter_mut!(mats)
             .enumerate()
             .for_each(|(i, mat)| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
                 let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
                 *mat = YeeCellMaterials {
-                    dn: dn_offsets.map(|off| mat_at_pt(pos + off)),
-                    h: h_offsets.map(|off| mat_at_pt(pos + off)),
+                    dn: std::array::from_fn(|i| {
+                        mat_at_cmp(pos + dn_offsets[i], false, i)
+                    }),
+                    h: std::array::from_fn(|i| {
+                        mat_at_cmp(pos + h_offsets[i], true, i)
+                    }),
                 };
             });
 
@@ -237,7 +272,7 @@ impl YeeGridMaterials {
     pub fn downscaled(
         &self,
         downscale_factor: NonZeroU32,
-    ) -> YeeGridMaterials {
+    ) -> Self {
         let downscale_factor = downscale_factor.get();
 
         let n_cells = self.n_cells.div_ceil(GridIndex::splat(downscale_factor));
@@ -245,25 +280,52 @@ impl YeeGridMaterials {
 
         let kernel_cells = grid_cells_iter(GridIndex::splat(downscale_factor)).collect::<Vec<_>>();
         let fine_n_cells = self.n_cells;
-        let fine_n_cells3 = fine_n_cells.n_cells_to_3d();
         let cell_count = n_cells.element_product() as usize;
+        let start = std::time::Instant::now();
         let materials = into_par_iter!(0..cell_count)
             .map(|coarse_idx| {
                 let subcell_fine = GridIndex::from_flat_idx(coarse_idx as u32, n_cells) * downscale_factor;
                 let mut mat_sum = YeeCellMaterials::ZERO;
+                let mut n_pecs_h = [0; 3];
+                let mut n_pecs_dn = [0; 3];
                 let mut n_sums = 0;
                 for k_cell_offset in kernel_cells.iter() {
                     let fine_cell = subcell_fine + k_cell_offset;
-                    let fine_cell3 = fine_cell.cell_idx_to_3d();
-                    if fine_cell3.cmplt(fine_n_cells3).all() {
-                        let fine_idx = fine_cell.to_flat_idx(fine_n_cells) as usize;
-                        mat_sum = mat_sum + self.materials[fine_idx];
-                        n_sums += 1;
+                    if fine_cell.cmpge(fine_n_cells).any() { continue; }
+                    
+                    let fine_mat_idx = fine_cell.to_flat_idx(fine_n_cells) as usize;
+                    let mats = self.materials[fine_mat_idx];
+                    mat_sum = mat_sum + mats.with_no_pec();
+                    n_sums += 1;
+                    for (i, (mat, count)) in mats.h.iter().zip(&mut n_pecs_h).enumerate() {
+                        if mat.sig[i].is_infinite() { *count += 1 }
+                    }
+                    for (i, (mat, count)) in mats.dn.iter().zip(&mut n_pecs_dn).enumerate() {
+                        if mat.sig[i].is_infinite() { *count += 1 }
                     }
                 }
-                mat_sum / (n_sums as f32)
+
+                let mut downscaled_mats = mat_sum / (n_sums as f32);
+                // set PEC for components with at least half their kernel cells being PEC material
+                let n_sums_half = n_sums / 2;
+                downscaled_mats.h
+                    .iter_mut()
+                    .zip(n_pecs_h)
+                    .enumerate()
+                    .for_each(|(i, (mat, pec_count))| {
+                        if pec_count >= n_sums_half { mat.sig[i] = Real::INFINITY; }
+                    });
+                downscaled_mats.dn
+                    .iter_mut()
+                    .zip(n_pecs_dn)
+                    .enumerate()
+                    .for_each(|(i, (mat, pec_count))| {
+                        if pec_count >= n_sums_half { mat.sig[i] = Real::INFINITY; }
+                    });
+                downscaled_mats
             })
             .collect::<Vec<_>>();
+        println!("downscaling: {:?}", start.elapsed());
 
         YeeGridMaterials {
             n_cells,
@@ -294,6 +356,21 @@ impl YeeCellMaterials {
         dn: [ElectricMaterial::ZERO; MAX_DIM],
         h: [ElectricMaterial::ZERO; MAX_DIM],
     };
+
+    /// Returns `self` with all PEC components having their conductivity set to zero
+    pub fn with_no_pec(mut self) -> Self {
+        self.h
+            .iter_mut()
+            .for_each(|v| {
+                v.sig = v.sig.map(|v| if v.is_infinite() { 0. } else { v });
+            });
+        self.dn
+            .iter_mut()
+            .for_each(|v| {
+                v.sig = v.sig.map(|v| if v.is_infinite() { 0. } else { v });
+            });
+        self
+    }
 }
 
 impl core::ops::Add for YeeCellMaterials {
@@ -322,6 +399,25 @@ impl core::ops::Div<Real> for YeeCellMaterials {
             h: core::array::from_fn(|i|
                 self.h[i] / rhs
             ),
+        }
+    }
+}
+
+/// How objects get discretized / voxelized on the Yee Grid.
+#[derive(Copy, Clone, Debug)]
+pub enum MaterialDiscretization {
+    /// Assign materials to cells directly without any smoothing. This means the grid will resort to
+    /// stair-casing materials, which can lead to inaccuracies.
+    Rough,
+    /// Smooth out material values with a box filter. `resolution` determines the size of the box
+    /// filter, with higher `resolution` giving more accuracy at the cost of simulation initialization time.
+    Smooth { resolution: NonZeroU32 }
+}
+
+impl MaterialDiscretization {
+    pub fn smooth_from_stability(stability: &FdtdStability) -> Self {
+        Self::Smooth {
+            resolution: stability.material_resolution,
         }
     }
 }
@@ -423,7 +519,15 @@ impl PmlCoefficientsGrid {
 
                     // H update coefficients
                     let h_mat = &cell_materials.h[axis_i];
-                    if h_mat.sig[axis].is_finite() {
+                    if h_mat.sig[axis].is_infinite() {
+                        coeff.h1[axis] = PmlCoefficients::PEC.h1[axis];
+                        coeff.h2[axis] = PmlCoefficients::PEC.h2[axis];
+                        coeff.h3[axis] = PmlCoefficients::PEC.h3[axis];
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.h4[axis] = PmlCoefficients::PEC.h4[axis];
+                        }
+                    } else {
                         let h_sigs_axis = h_sigs[axis_i];
                         let coeff_term0 = (
                             inv_dt + ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) +
@@ -440,19 +544,22 @@ impl PmlCoefficientsGrid {
                         {
                             coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
                         }
-                    } else { // Zero-out components inside perfect electric conductors
-                        coeff.h1[axis] = 0.;
-                        coeff.h2[axis] = 0.;
-                        coeff.h3[axis] = 0.;
-                        #[cfg(any(feature = "dim2", feature = "dim3"))]
-                        {
-                            coeff.h4[axis] = 0.;
-                        }
                     }
 
                     // Dn/En update coefficients
                     let dn_mat = &cell_materials.dn[axis_i];
-                    if dn_mat.sig[axis].is_finite() {
+                    if dn_mat.sig[axis].is_infinite() {
+                        coeff.dn1[axis] = PmlCoefficients::PEC.dn1[axis];
+                        coeff.dn2[axis] = PmlCoefficients::PEC.dn2[axis];
+                        coeff.dn_loss1[axis] = PmlCoefficients::PEC.dn_loss1[axis];
+                        coeff.dn_loss2[axis] = PmlCoefficients::PEC.dn_loss2[axis];
+                        coeff.dn3[axis] = PmlCoefficients::PEC.dn3[axis];
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.dn4[axis] = PmlCoefficients::PEC.dn4[axis];
+                        }
+                        coeff.en1[axis] = PmlCoefficients::PEC.en1[axis];
+                    } else {
                         let dn_sigs_axis = dn_sigs[axis_i];
                         let coeff_term0 = (
                             inv_dt + ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) +
@@ -472,17 +579,6 @@ impl PmlCoefficientsGrid {
                             coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
                         }
                         coeff.en1[axis] = dn_mat.eps_r[axis].recip();
-                    } else { // Zero-out components inside perfect electric conductors
-                        coeff.dn1[axis] = 0.;
-                        coeff.dn2[axis] = 0.;
-                        coeff.dn_loss1[axis] = 0.;
-                        coeff.dn_loss2[axis] = 0.;
-                        coeff.dn3[axis] = 0.;
-                        #[cfg(any(feature = "dim2", feature = "dim3"))]
-                        {
-                            coeff.dn4[axis] = 0.;
-                        }
-                        coeff.en1[axis] = 0.;
                     }
                 }
             });

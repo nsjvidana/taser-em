@@ -1055,24 +1055,6 @@ impl PmlParameters {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum MaterialDiscretization {
-    /// Assign materials to cells directly without any smoothing. This means the grid will resort to
-    /// stair-casing materials, which can lead to inaccuracies.
-    Rough,
-    /// Smooth out material values with a box filter. `resolution` determines the size of the box
-    /// filter, with higher `resolution` giving more accuracy at the cost of simulation initialization time.
-    Smooth { resolution: NonZeroU32 }
-}
-
-impl MaterialDiscretization {
-    pub fn smooth_from_stability(stability: &FdtdStability) -> Self {
-        Self::Smooth {
-            resolution: stability.material_resolution,
-        }
-    }
-}
-
 /// Material properties
 ///
 /// For Perfect Electric Conductors, set any component of the `sig` field to [`Real::INFINITY`].

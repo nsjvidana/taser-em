@@ -34,10 +34,22 @@ pub fn init_pec(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = pml_coeffs.read(idx);
-    if !m.is_pec() { return; }
-    h.write(idx, Vec4::ZERO);
-    dn.write(idx, Vec4::ZERO);
-    en.write(idx, Vec4::ZERO);
+    let mut h_self = h.read(idx);
+    let mut dn_self = dn.read(idx);
+    let mut en_self = en.read(idx);
+    h_self.x = if m.is_pec_h(Axis::X) { 0. } else { h_self.x };
+    h_self.y = if m.is_pec_h(Axis::Y) { 0. } else { h_self.y };
+    h_self.z = if m.is_pec_h(Axis::Z) { 0. } else { h_self.z };
+    dn_self.x = if m.is_pec_de(Axis::X) { 0. } else { dn_self.x };
+    dn_self.y = if m.is_pec_de(Axis::Y) { 0. } else { dn_self.y };
+    dn_self.z = if m.is_pec_de(Axis::Z) { 0. } else { dn_self.z };
+    en_self.x = if m.is_pec_de(Axis::X) { 0. } else { en_self.x };
+    en_self.y = if m.is_pec_de(Axis::Y) { 0. } else { en_self.y };
+    en_self.z = if m.is_pec_de(Axis::Z) { 0. } else { en_self.z };
+    
+    h.write(idx, h_self);
+    dn.write(idx, dn_self);
+    en.write(idx, en_self);
 }
 
 #[spirv_bindgen]
@@ -68,7 +80,6 @@ pub fn gpu_lossy_h_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = pml_coeffs.read(idx);
-    if m.no_update() { return; }
     #[cfg(not(feature = "dim1"))]
     let mut ints = integrals.read(idx);
 
@@ -157,7 +168,6 @@ pub fn gpu_lossy_dn_en_update(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = pml_coeffs.read(idx);
-    if m.no_update() { return; }
 
     let mut ints = integrals.read(idx);
 
@@ -277,8 +287,11 @@ pub struct PmlCoefficients {
 }
 
 impl PmlCoefficients {
-    /// Update coefficients representing a grid that shouldn't be updated in the simulation.
-    pub const NO_UPDATE: Self = Self {
+    /// Update coefficients for a grid cell that is fully made of perfect electric conductor.
+    ///
+    /// Field components affected by PECs remain zero for the whole simulation, so a field component's
+    /// PML update coefficients have to be zeroed out.
+    pub const PEC: Self = Self {
         h1: Vec4::ZERO,
         h2: Vec4::ZERO,
         h3: Vec4::ZERO,
@@ -294,30 +307,16 @@ impl PmlCoefficients {
         en1: Vec4::ZERO,
     };
 
-    /// Update coefficients for a perfect electric conductor cell.
-    ///
-    /// PEC cells are considered no-update cells as their fields remain zero throughout the simulation,
-    /// so `PmlCoefficients::PEC.no_update()` always returns `true`.
-    pub const PEC: Self = Self {
-        dn_loss1: Vec4::splat(Real::MAX),
-        dn_loss2: Vec4::splat(Real::MAX),
-        ..Self::NO_UPDATE
-    };
-
-    /// A fast way of checking if a grid shouldn't be updated
-    ///
-    /// Used for skipping the update for PEC cells, as they remain with zeroed fields for the whole simulation.
-    #[inline]
-    pub fn no_update(&self) -> bool {
-        // h1 can't be zero, even with no PML conductivity (see PmlCoefficientsGrid::new()), therefore,
-        // this is a good way to check if a cell shouldn't be updated, since h1 == Vec4::ZERO is invalid.
-        self.h1 == Vec4::ZERO
+    /// If a H component of a cell is supposed to be PEC
+    pub fn is_pec_h(&self, axis: Axis) -> bool {
+        // h1 can't ever be zero, so this is a good way to check
+        self.h1.dyn_idx(axis) == 0.
     }
-
-    /// A fast way of checking if a grid cell is a perfect electric conductor cell
-    #[inline]
-    pub fn is_pec(&self) -> bool {
-        self.dn_loss1 == Vec4::splat(Real::MAX)
+    
+    /// If a Dn/En component of a cell is supposed to be PEC
+    pub fn is_pec_de(&self, axis: Axis) -> bool {
+        // dn1 can't ever be zero, and Dn & En are collocated, so this is a good way to check
+        self.dn1.dyn_idx(axis) == 0.
     }
 }
 
