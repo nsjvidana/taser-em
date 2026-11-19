@@ -30,8 +30,36 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct antenna
-    // Yagi-Uda antenna design by www.changpuak.ch
-    let elem_thickness = cell_size.min_element();
+    // https://www.changpuak.ch/electronics/yagi_uda_antenna.php
+    // Javascript Version 12.01.2014, based on Rothammel / DL6WU
+    // -------------------------------------------------------------
+    // Frequency     :  145  MHz, (useful from 142.1 to 147.9)
+    // Wavelength    :  2069  mm
+    // Rod Diameter  :  34.4583333  mm
+    // Boom Diameter :  0  mm
+    // Boom Length   :  1538  mm
+    // d/lambda      :  0.017    ( min.: 0.002 , max.: 0.01 )
+    // D/lambda      :  0.010    ( min.: 0.01 , max.: 0.05 )
+    // Elements      :  5
+    // Gain          :  7.99 dBd (approx.)
+    // -------------------------------------------------------------
+    // Reflector Length   : 997 mm
+    // Reflector Position :  0 mm
+    // -------------------------------------------------------------
+    // Dipole Position    : 497 mm
+    // -------------------------------------------------------------
+    // Director #1 Position : 652 mm ,  Length : 940 mm
+    // Distance Dipole - Dir. #1 : 155 mm
+    // -------------------------------------------------------------
+    // Director #2 Position : 1024 mm ,  Length : 931 mm
+    // Distance Dir. #1 - Dir. #2 : 372 mm
+    // -------------------------------------------------------------
+    // Director #3 Position : 1469 mm ,  Length : 923 mm
+    // Distance Dir. #2 - Dir. #3 : 445 mm
+    // -------------------------------------------------------------
+    // Directors / Parasitics are isolated.
+    // Please choose an isolater thicker than : 10 mm
+    let elem_thickness = 34.458e-3; // d/lambda is a bit too large here. try making this value smaller
     println!("elem_thickness: {}", elem_thickness);
     let pec = ElectricMaterial::PEC;
     // reflector
@@ -100,7 +128,7 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.005));
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.01));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::En).await?;
     testbed.set_pml_alpha(0.);
 

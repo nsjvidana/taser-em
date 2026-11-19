@@ -203,7 +203,7 @@ impl YeeGridMaterials {
 
         let pen_depth_thresh = cell_size.length() * 0.5;
 
-        let mat_at_cmp = |pt, is_h: bool, axis_idx: usize| {
+        let mat_at_cmp = |pt, is_de: bool, axis_idx: usize| {
             let query_pose = Pose3::from_translation(pt);
             bvh
                 .intersect_aabb(&query_cube.compute_aabb(&query_pose))
@@ -213,34 +213,34 @@ impl YeeGridMaterials {
                     let contact = parry3d::query::contact(&query_pose, &query_cube, pose, &**shape, 0.0);
                     let Ok(Some(contact)) = contact else { return None };
 
-                    if contact.dist >= pen_depth_thresh { return Some(*mat); }
+                    if contact.dist >= pen_depth_thresh { return Some((*mat, 1.)); }
                     if mat.sig[axis_idx].is_infinite() { // shallow penetration means this is component is at a surface
                         // set PEC for vector field components at pec interface
                         // PEC surface conditions (vector field conditions at a PEC surface):
                         // - En components tangential to PEC surfaces are `0.`
                         // - H components orthogonal to PEC surface are `0.`
                         let component_dir = Axis::try_from(axis_idx as u32)
-                            .unwrap()
+                            .expect("axis_idx must be valid. This is a bug.")
                             .to_vec3();
                         let angle = component_dir.angle_between(contact.normal2);
-                        // TODO: try making 0-to-1 term multiplied to all coeffs since
-                        //       PEC surface isn't guaranteed to be aligned with grid
-                        //       term can be stored in YeeCellMaterials
                         let angle_to_normal = angle.min(core::f32::consts::PI - angle);
-                        if is_h && angle_to_normal < Real::EPSILON || // H component = 0 if normal to surface
-                            !is_h && (core::f32::consts::FRAC_PI_2 - angle_to_normal).abs() < Real::EPSILON  // En component = 0 if tangent to surface
-                        {
-                            return Some(*mat)
-                        }
+                        // as H component gets closer to being parallel to normal, it approaches zero
+                        // as En component gets closer to being 90deg from normal, it approaches zero
+                        let mut coeff_lerp_t = angle_to_normal / core::f32::consts::FRAC_PI_2;
+                        if is_de { coeff_lerp_t = 1. - coeff_lerp_t; }
+                        // overwrite inf sig to stop zeroing out update coefficients in PmlCoefficientsGrid
+                        let mut sig = mat.sig;
+                        sig[axis_idx] = default_mat.sig[axis_idx];
+                        return Some((ElectricMaterial { sig, ..*mat }, coeff_lerp_t))
                     }
                     None
                 })
-                .unwrap_or(default_mat)
+                .unwrap_or((default_mat, 1.))
         };
 
         let cell_size3 = cell_size.to_3d(Vec3::ZERO);
-        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
         let h_offsets = Self::H_OFFSETS.map(|v| v * cell_size3);
+        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
         let mut mats = vec![YeeCellMaterials::ZERO; cell_count];
         // TODO: use ndarray::Array3 with parallel feature instead
         par_iter_mut!(mats)
@@ -248,13 +248,17 @@ impl YeeGridMaterials {
             .for_each(|(i, mat)| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
                 let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
+                let h_mat = std::array::from_fn(|i| {
+                    mat_at_cmp(pos + h_offsets[i], false, i)
+                });
+                let dn_mat = std::array::from_fn(|i| {
+                    mat_at_cmp(pos + dn_offsets[i], true, i)
+                });
                 *mat = YeeCellMaterials {
-                    dn: std::array::from_fn(|i| {
-                        mat_at_cmp(pos + dn_offsets[i], false, i)
-                    }),
-                    h: std::array::from_fn(|i| {
-                        mat_at_cmp(pos + h_offsets[i], true, i)
-                    }),
+                    dn: dn_mat.map(|(mat, _)| mat),
+                    h: h_mat.map(|(mat, _)| mat),
+                    h_coeffs_weight: dn_mat.map(|(_, factor)| factor),
+                    dn_coeffs_weight: h_mat.map(|(_, factor)| factor),
                 };
             });
 
@@ -340,21 +344,24 @@ impl YeeGridMaterials {
 /// The material present at each vector component
 #[derive(Copy, Clone, Debug)]
 pub struct YeeCellMaterials {
-    /// Material at Dn and En components
-    pub dn: [ElectricMaterial; MAX_DIM],
     /// Material at H components
     pub h: [ElectricMaterial; MAX_DIM],
+    /// Material at Dn and En components
+    pub dn: [ElectricMaterial; MAX_DIM],
+    /// Weight value from `0.` to `1.` multiplied to H update coefficients. Used for approximating PEC
+    /// surface fields
+    pub h_coeffs_weight: [f32; MAX_DIM],
+    /// Weight value from `0.` to `1.` multiplied to Dn update coefficients. Used for approximating PEC
+    /// surface fields
+    pub dn_coeffs_weight: [f32; MAX_DIM],
 }
 
 impl YeeCellMaterials {
-    pub const FREE_SPACE: Self = Self {
-        dn: [ElectricMaterial::FREE_SPACE; MAX_DIM],
-        h: [ElectricMaterial::FREE_SPACE; MAX_DIM],
-    };
-
     pub const ZERO: Self = Self {
-        dn: [ElectricMaterial::ZERO; MAX_DIM],
         h: [ElectricMaterial::ZERO; MAX_DIM],
+        dn: [ElectricMaterial::ZERO; MAX_DIM],
+        h_coeffs_weight: [1.; 3],
+        dn_coeffs_weight: [1.; 3],
     };
 
     /// Returns `self` with all PEC components having their conductivity set to zero
@@ -378,12 +385,10 @@ impl core::ops::Add for YeeCellMaterials {
 
     fn add(self, rhs: Self) -> Self::Output {
         Self {
-            dn: core::array::from_fn(|i|
-                self.dn[i] + rhs.dn[i]
-            ),
-            h: core::array::from_fn(|i|
-                self.h[i] + rhs.h[i]
-            ),
+            h: core::array::from_fn(|i| self.h[i] + rhs.h[i]),
+            dn: core::array::from_fn(|i| self.dn[i] + rhs.dn[i]),
+            h_coeffs_weight: core::array::from_fn(|i| self.h_coeffs_weight[i] + rhs.h_coeffs_weight[i]),
+            dn_coeffs_weight: core::array::from_fn(|i| self.dn_coeffs_weight[i] + rhs.dn_coeffs_weight[i]),
         }
     }
 }
@@ -393,12 +398,10 @@ impl core::ops::Div<Real> for YeeCellMaterials {
 
     fn div(self, rhs: Real) -> Self::Output {
         Self {
-            dn: core::array::from_fn(|i|
-                self.dn[i] / rhs
-            ),
-            h: core::array::from_fn(|i|
-                self.h[i] / rhs
-            ),
+            h: core::array::from_fn(|i| self.h[i] / rhs),
+            dn: core::array::from_fn(|i| self.dn[i] / rhs),
+            h_coeffs_weight: core::array::from_fn(|i| self.h_coeffs_weight[i] / rhs),
+            dn_coeffs_weight: core::array::from_fn(|i| self.dn_coeffs_weight[i] / rhs),
         }
     }
 }
@@ -528,6 +531,7 @@ impl PmlCoefficientsGrid {
                             coeff.h4[axis] = PmlCoefficients::PEC.h4[axis];
                         }
                     } else {
+                        let weight = cell_materials.h_coeffs_weight[axis_i];
                         let h_sigs_axis = h_sigs[axis_i];
                         let coeff_term0 = (
                             inv_dt + ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) +
@@ -543,7 +547,12 @@ impl PmlCoefficientsGrid {
                         #[cfg(any(feature = "dim2", feature = "dim3"))]
                         {
                             coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
+                            coeff.h4[axis] *= weight;
                         }
+                        // weight for things like PEC surface approximation
+                        coeff.h1[axis] *= weight;
+                        coeff.h2[axis] *= weight;
+                        coeff.h3[axis] *= weight;
                     }
 
                     // Dn/En update coefficients
@@ -560,6 +569,7 @@ impl PmlCoefficientsGrid {
                         }
                         coeff.en1[axis] = PmlCoefficients::PEC.en1[axis];
                     } else {
+                        let weight = cell_materials.dn_coeffs_weight[axis_i];
                         let dn_sigs_axis = dn_sigs[axis_i];
                         let coeff_term0 = (
                             inv_dt + ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) +
@@ -577,8 +587,16 @@ impl PmlCoefficientsGrid {
                         #[cfg(any(feature = "dim2", feature = "dim3"))]
                         {
                             coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
+                            coeff.dn4[axis] *= weight;
                         }
                         coeff.en1[axis] = dn_mat.eps_r[axis].recip();
+                        // weight for things like PEC surface approximation
+                        coeff.dn1[axis] *= weight;
+                        coeff.dn2[axis] *= weight;
+                        coeff.dn_loss1[axis] *= weight;
+                        coeff.dn_loss2[axis] *= weight;
+                        coeff.dn3[axis] *= weight;
+                        coeff.en1[axis] *= weight;
                     }
                 }
             });
