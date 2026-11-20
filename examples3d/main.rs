@@ -117,9 +117,10 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
+    let cpw = 120;
     let stability = FdtdStability {
-        cells_per_wavelength: 40,
-        spacer_region_widths: LayerWidths::splat_spatial(40),
+        cells_per_wavelength: cpw,
+        spacer_region_widths: LayerWidths::splat_spatial(cpw/4),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(freq);
@@ -132,21 +133,23 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct dipole antenna
-    let elem_thickness = 5e-3;
-    let dipole_len = 60e-3;
+    // Measurements are from https://www.changpuak.ch/electronics/Dipole_straight.php
+    // Frequency = 2400MHz, Diameter D = 7mm.
+    let elem_thickness = 5e-3; // diameter
+    let dipole_half_len = 28.8e-3;
     let pec = ElectricMaterial::PEC;
-    let feed_gap = (dipole_len/2.) / 10.;
+    let feed_gap = 0.6e-3 * 2.;
     let feed_center = Vect::new(0., 0., 0.);
-    let start = feed_center + Vect::new(0., feed_gap / 2. + dipole_len/2., 0.);
+    let start = feed_center + Vect::new(0., feed_gap / 2. + dipole_half_len, 0.);
     simulation.fill_region(
         start,
-        start + Vect::new(elem_thickness, -dipole_len/2., elem_thickness),
+        start + Vect::new(elem_thickness, -dipole_half_len, elem_thickness),
         pec
     );
-    let start = feed_center + Vect::new(0., -(feed_gap / 2. + dipole_len/2.), 0.);
+    let start = feed_center + Vect::new(0., -(feed_gap / 2. + dipole_half_len), 0.);
     simulation.fill_region(
         start,
-        start + Vect::new(elem_thickness, dipole_len/2., elem_thickness),
+        start + Vect::new(elem_thickness, dipole_half_len, elem_thickness),
         pec
     );
 
@@ -181,8 +184,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.01))
-        .with_alpha(AlphaMode::Mask(0.1), 1.);
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::En).await?;
     testbed.set_pml_alpha(0.);
 

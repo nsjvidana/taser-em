@@ -8,14 +8,14 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 /// Measurements were calculated with [changpuak](https://www.changpuak.ch/)
 pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
-    let freq = 145e6; // 145 MHz
+    let freq = 2.4e9; // 2.4 GHz
     let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
+    let cpw = 130;
     let stability = FdtdStability {
-        cells_per_wavelength: 60,
-        spacer_region_widths: LayerWidths::splat_spatial(60/4)
-            .with_axis_widths(SpatialAxis::X, LoHiWidths::splat(60/4).with_hi(60)),
+        cells_per_wavelength: cpw,
+        spacer_region_widths: LayerWidths::splat_spatial(cpw/4),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(freq);
@@ -30,49 +30,48 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct antenna
-    // https://www.changpuak.ch/electronics/yagi_uda_antenna.php
-    // Javascript Version 12.01.2014, based on Rothammel / DL6WU
-    // -------------------------------------------------------------
-    // Frequency     :  145  MHz, (useful from 142.1 to 147.9)
-    // Wavelength    :  2069  mm
-    // Rod Diameter  :  34.4583333  mm
-    // Boom Diameter :  0  mm
-    // Boom Length   :  1538  mm
-    // d/lambda      :  0.017    ( min.: 0.002 , max.: 0.01 )
-    // D/lambda      :  0.010    ( min.: 0.01 , max.: 0.05 )
-    // Elements      :  5
-    // Gain          :  7.99 dBd (approx.)
-    // -------------------------------------------------------------
-    // Reflector Length   : 997 mm
-    // Reflector Position :  0 mm
-    // -------------------------------------------------------------
-    // Dipole Position    : 497 mm
-    // -------------------------------------------------------------
-    // Director #1 Position : 652 mm ,  Length : 940 mm
-    // Distance Dipole - Dir. #1 : 155 mm
-    // -------------------------------------------------------------
-    // Director #2 Position : 1024 mm ,  Length : 931 mm
-    // Distance Dir. #1 - Dir. #2 : 372 mm
-    // -------------------------------------------------------------
-    // Director #3 Position : 1469 mm ,  Length : 923 mm
-    // Distance Dir. #2 - Dir. #3 : 445 mm
-    // -------------------------------------------------------------
-    // Directors / Parasitics are isolated.
-    // Please choose an isolater thicker than : 10 mm
-    let elem_thickness = 34.458e-3; // d/lambda is a bit too large here. try making this value smaller
-    println!("elem_thickness: {}", elem_thickness);
+    // **** YAGI UDA ANTENNA ****
+    // Design by www.changpuak.ch
+    // ---------------------------------------------------
+    // Frequency  :  2400  MHz
+    // Wavelength :  125  mm
+    // d/lambda   :  0.04    ( min.: 0.001 , max.: 0.04 )
+    // D/lambda   :  0.002    ( min.: 0.002 , max.: 0.04 )
+    // Boomlength :  100  mm
+    // Elements   :  5
+    // Gain       :  8.8  dB    (approx.)
+    // ---------------------------------------------------
+    // Reflector Length [mm] : 59
+    // Reflector Position [mm] : 0
+    // ---------------------------------
+    // Dipole Length [mm] : 60
+    // Dipole Position [mm] : 25
+    // ---------------------------------
+    // Director Length [mm] : 49
+    // Director Position [mm] : 50
+    // ---------------------------------
+    // Director Length [mm] : 49
+    // Director Position [mm] : 75
+    // ---------------------------------
+    // Director Length [mm] : 49
+    // Director Position [mm] : 100
+    // ---------------------------------
+    // Calculations based on NBS TECHNICAL NOTE 688
+    // Length might be slightly too long.
+    // Manufacturing Tolerances : < 0  mm
+    let elem_thickness = 5e-3;
     let pec = ElectricMaterial::PEC;
     // reflector
-    let refl_len = 997e-3;
+    let refl_len = 59e-3;
     simulation.fill_region(
         Vect::ZERO.with_y(refl_len/2.),
         Vect::new(elem_thickness, -refl_len/2., elem_thickness),
         pec
     );
     // dipole
-    let dipole_half_len = 490.4e-3;
-    let dipole_pos = 497e-3;
-    let feed_gap = (dipole_half_len) / 5.;
+    let dipole_half_len = 60e-3 / 2.;
+    let dipole_pos = 25e-3;
+    let feed_gap = 0.6e-3 * 3.;
     let feed_center = Vect::new(dipole_pos, 0., 0.);
     let start = feed_center + Vect::new(0., feed_gap / 2. + dipole_half_len, 0.);
     simulation.fill_region(
@@ -87,8 +86,8 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
         pec
     );
     // directors
-    let dir_positions = [652e-3, 1024e-3, 1469e-3];
-    let dir_lens = [940e-3, 931e-3, 923e-3];
+    let dir_lens = [49e-3, 49e-3, 49e-3];
+    let dir_positions = [50e-3, 75e-3, 100e-3];
     for (pos, dir_len) in dir_positions.into_iter().zip(dir_lens) {
         let start = Vect::new(pos, dir_len/2., 0.);
         simulation.fill_region(
@@ -101,7 +100,7 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     // Source injection in antenna feed gap
     let dipole = Dipole {
         dipole_type: DipoleType::Electric,
-        position: feed_center,
+        position: feed_center + Vec3::new(1., 0., 1.) * (elem_thickness / 2.),
         t_start: 0.0,
         moment: Vec3::Y,
     };
@@ -128,7 +127,7 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.01));
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::En).await?;
     testbed.set_pml_alpha(0.);
 
