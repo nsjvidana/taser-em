@@ -9,7 +9,7 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let sim_speed = 3;
+    let sim_speed = 2;
 
     // Simulation parameters w/ default stability values.
     let cpw = 130;
@@ -130,6 +130,7 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030));
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::En).await?;
     testbed.set_pml_alpha(0.);
+    testbed.visualization_mode.set_slice_view(SpatialAxis::Z, 0.);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));

@@ -86,11 +86,12 @@ impl FdtdTestbedViewer {
         let camera = OrbitCamera3d::default();
         let mut scene = SceneNode3d::default();
 
+        let grid_sizing = simulation.compute_grid_sizing(stability);
         let GridSizing {
             n_cells, world_to_grid
-        } = simulation.compute_grid_sizing(stability);
+        } = grid_sizing;
         let cell_size = simulation.fdtd_parameters.cell_size;
-        visualization_mode.initialize(&mut scene, n_cells, cell_size);
+        visualization_mode.initialize(&mut scene, grid_sizing, cell_size);
 
         // Default lighting
         let cam_light = cfg_select! {
@@ -322,7 +323,7 @@ impl FdtdTestbedViewer {
 
         // Visualize the version of the field that's stored on CPU
         // Don't read back here since that forces the read back & simulation to be in series with the visualization (slow)
-        self.visualization_mode.visualize_field(
+        self.visualization_mode.update_visual(
             readback,
             self.vector_field_visual,
             &mut self.window,
@@ -410,7 +411,9 @@ pub enum VisualizationMode {
         instances: Vec<InstanceData3d>,
         color_mode: ColorMode,
         alpha_mode: AlphaMode,
-        alpha: f32
+        alpha: f32,
+        grid_sizing: GridSizing,
+        cell_size: Vect,
     },
 }
 
@@ -459,9 +462,12 @@ impl VisualizationMode {
     pub fn initialize(
         &mut self,
         #[cfg_attr(feature = "dim1", allow(unused_variables))] scene: &mut SceneNode3d,
-        n_cells: GridIndex,
+        grid_sizing: GridSizing,
         cell_size: Vect,
     ) {
+        let GridSizing {
+            n_cells, ..
+        } = grid_sizing;
         let cell_count = n_cells.element_product();
         let cell_positions = into_par_iter!(0..cell_count)
             .map(|flat_idx| {
@@ -516,20 +522,56 @@ impl VisualizationMode {
                 },
                 #[cfg(feature = "dim3")]
                 VisualizationMode::Cubes {
-                    instanced_cube, instances, color_mode, alpha_mode, alpha
+                    instanced_cube, instances,
+                    color_mode, alpha_mode, alpha,
+                    grid_sizing: grid_sizing_stored, cell_size: cell_size_stored
                 } => {
                     *instanced_cube = scene
                         .add_cube(cell_size.x, cell_size.y, cell_size.z)
                         .set_alpha_mode(*alpha_mode)
                         .set_color(WHITE.with_alpha(*alpha));
+                    *grid_sizing_stored = grid_sizing;
+                    *cell_size_stored = cell_size;
                     initialize_instances(instanced_cube, instances, color_mode)
                 }
             }
         }
     }
 
+    /// Call this **AFTER** creating a testbed with `self` or after [`VisualizationMode::initialize`] is called.
+    ///
+    /// Makes `self` visualize only a slice of the grid located at `position` along `axis`.
+    #[cfg(feature = "dim3")]
+    pub fn set_slice_view(&mut self, axis: SpatialAxis, position: Real) {
+        let Self::Cubes {
+            instanced_cube, instances,
+            grid_sizing, cell_size,
+            ..
+        } = self;
+
+        let axis3 = Axis::from(axis);
+        let idx = ((position + grid_sizing.world_to_grid[axis3]) / cell_size[axis])
+            .round() as u32;
+        let slice_instances = par_iter!(instances)
+            .filter_map(|data| {
+                let inst_idx = (data.position[axis3] / cell_size[axis]).round() as u32;
+                (inst_idx == idx)
+                    .then_some(InstanceData3d {
+                        position: data.position,
+                        deformation: data.deformation,
+                        color: data.color,
+                        lines_color: data.lines_color,
+                        lines_width: data.lines_width,
+                        points_color: data.points_color,
+                        points_size: data.points_size,
+                    })
+            })
+            .collect::<Vec<_>>();
+        instanced_cube.set_instances(&slice_instances);
+    }
+
     #[allow(unused_variables)]
-    pub fn visualize_field(
+    pub fn update_visual(
         &mut self,
         readback: &FdtdStateReadback,
         vector_field_visual: VectorFieldVisual,
@@ -599,38 +641,54 @@ impl VisualizationMode {
 
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         {
-            let update_colors = |
-                instanced_obj: &mut SceneNode3d,
-                instances: &mut Vec<InstanceData3d>,
-                color_mode: &mut ColorMode,
-            | {
-                instanced_obj.apply_to_object_mut(&mut |o| {
-                    let magnitudes = get_magnitudes();
-                    color_mode.prepare(&magnitudes);
-                    let inst_count = o
-                        .instances()
-                        .borrow_mut()
-                        .colors
-                        .len();
-                    let colors = into_par_iter!(magnitudes)
-                        .take(inst_count)
-                        .map(|mag| {
-                            let c = color_mode.compute_color(mag);
-                            [c.r, c.g, c.b, c.a]
-                        })
-                        .collect::<Vec<_>>();
-                    *o.instances().borrow_mut().colors.data_mut() = Some(colors);
-                });
-            };
             match self {
                 #[cfg(feature = "dim2")]
                 VisualizationMode::Quads {
                     instanced_quad, instances, color_mode
-                } => update_colors(instanced_quad, instances, color_mode),
+                } => {
+                    instanced_quad.apply_to_object_mut(&mut |o| {
+                        let magnitudes = get_magnitudes();
+                        let inst_count = o
+                            .instances()
+                            .borrow_mut()
+                            .colors
+                            .len();
+                        let colors = into_par_iter!(magnitudes)
+                            .take(inst_count)
+                            .map(|mag| {
+                                let c = color_mode.compute_color(mag);
+                                [c.r, c.g, c.b, c.a]
+                            })
+                            .collect::<Vec<_>>();
+                        *o.instances().borrow_mut().colors.data_mut() = Some(colors);
+                    });
+                },
                 #[cfg(feature = "dim3")]
                 VisualizationMode::Cubes {
-                    instanced_cube, instances, color_mode, ..
-                } => update_colors(instanced_cube, instances, color_mode),
+                    instanced_cube, instances, color_mode,
+                    grid_sizing, cell_size, ..
+                } => {
+                    instanced_cube.apply_to_object_mut(&mut |o| {
+                        let magnitudes = get_magnitudes();
+                        color_mode.prepare(&magnitudes);
+
+                        let InstancesBuffer3d {
+                            positions,
+                            colors,
+                            ..
+                        } = &mut *o.instances().borrow_mut();
+                        if let (Some(colors), Some(positions)) = (colors.data_mut(), positions.data()) {
+                            into_par_iter!((colors, positions))
+                                .for_each(|(c, pos)| {
+                                    let i = (Vect::from_vec3(*pos) / *cell_size)
+                                        .as_grid_index()
+                                        .to_flat_idx(grid_sizing.n_cells) as usize;
+                                    let c_new = color_mode.compute_color(magnitudes[i]);
+                                    *c = [c_new.r, c_new.g, c_new.b, c_new.a];
+                                });
+                        }
+                    });
+                },
             }
         }
     }
@@ -656,6 +714,8 @@ impl Default for VisualizationMode {
                 instances: vec![],
                 alpha_mode: AlphaMode::Blend,
                 alpha: Self::DEFAULT_VISUAL_ALPHA,
+                grid_sizing: GridSizing { n_cells: Default::default(), world_to_grid: Default::default() },
+                cell_size: Default::default(),
             }
         }
     }
