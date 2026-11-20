@@ -9,7 +9,7 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Vecto
 
 #[kiss3d::main]
 async fn main() {
-    const EXAMPLE: Examples = Examples::Yagi;
+    const EXAMPLE: Examples = Examples::Dipole;
     match EXAMPLE {
         Examples::SuzanneTheScatterer => mesh_scatterer().await.unwrap(),
         Examples::Dipole => dipole_antenna().await.unwrap(),
@@ -156,7 +156,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Source injection in antenna feed gap
     let dipole = Dipole {
         dipole_type: DipoleType::Electric,
-        position: feed_center,
+        position: feed_center + Vect::ONE.with_y(0.) * elem_thickness,
         t_start: 0.0,
         moment: Vec3::Y,
     };
@@ -184,9 +184,11 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030));
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030))
+        .with_alpha(AlphaMode::Mask(0.1), 1.);
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::En).await?;
     testbed.set_pml_alpha(0.);
+    testbed.visualization_mode.slice_visual(SpatialAxis::Z, feed_center.z);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));

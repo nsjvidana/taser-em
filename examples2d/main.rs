@@ -110,38 +110,53 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     let freq = 2.4e9; // 2.4 GHz
     let dft_resolution = 50;
-    let sim_speed = 2;
+    let sim_speed = 3;
 
     // Simulation parameters w/ 30 cells-per-wavelength
-    let stability = FdtdStability::from_cpw(30);
+    let cpw = 120;
+    let stability = FdtdStability {
+        cells_per_wavelength: cpw,
+        spacer_region_widths: LayerWidths::splat_spatial(cpw/4),
+        ..Default::default()
+    };
     let cell_size = stability.cell_size_from_min_wavelength(freq);
     let dt = stability.cfl_condition(cell_size);
     let parameters = FdtdParameters {
         cell_size,
         dt,
-        material_discretization: MaterialDiscretization::smooth_from_stability(&stability)
+        material_discretization: MaterialDiscretization::Rough
     };
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct dipole antenna
-    let antenna_len = C_0 / (freq * 2.);
-    let elem_thickness = cell_size.y;
-    let feed_gap = cell_size.y * 2.;
-    let half_len = antenna_len / 2.0;
-    simulation
-        .fill_region(Vect::ZERO, Vect::new(elem_thickness, -half_len), ElectricMaterial::PEC)
-        .fill_region(
-            Vect::new(0., feed_gap),
-            Vect::new(0., feed_gap) + Vect::new(elem_thickness, half_len),
-            ElectricMaterial::PEC
-        );
+    // Measurements are from https://www.changpuak.ch/electronics/Dipole_straight.php
+    // Frequency = 2400MHz, Diameter D = 7mm.
+    let elem_thickness = 5e-3; // diameter
+    let dipole_half_len = 28.8e-3;
+    let pec = ElectricMaterial::PEC;
+    let feed_gap = 0.6e-3 * 2.;
+    let feed_center = Vect::new(0., 0.);
+    let start = feed_center + Vect::new(0., feed_gap / 2. + dipole_half_len);
+    simulation.fill_region(
+        start,
+        start + Vect::new(elem_thickness, -dipole_half_len),
+        pec
+    );
+    let start = feed_center + Vect::new(0., -(feed_gap / 2. + dipole_half_len));
+    simulation.fill_region(
+        start,
+        start + Vect::new(elem_thickness, dipole_half_len),
+        pec
+    );
 
     // Source injection in antenna feed gap
-    let source_values = Source::gaussian_max_f(freq, 1., dt);
-    let _dipole = simulation.add_dipole(
-        Dipole::electric(Vect::new(elem_thickness, feed_gap) / 2., Vec3::Y),
-        source_values
-    );
+    let dipole = Dipole {
+        dipole_type: DipoleType::Electric,
+        position: feed_center + Vect::ONE.with_y(0.) * elem_thickness,
+        t_start: 0.0,
+        moment: Vec3::Y,
+    };
+    simulation.add_dipole(dipole, Source::gaussian_max_f(freq, 1., dt));
 
     // Instantaneous and time-averaged power flux sensors
     let flux = simulation.add_flux_sensor(

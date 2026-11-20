@@ -80,7 +80,7 @@ impl FdtdLossySimulation {
     ) -> &mut Self {
         let region_dims = end - start;
 
-        let vec3_mask = Vec3::splat(self.fdtd_parameters.cell_size.max_element() * 3.);
+        let vec3_mask = Vec3::splat(self.fdtd_parameters.cell_size.max_element() * 10.);
         let half_extents = region_dims.to_3d(vec3_mask).abs() * 0.5;
 
         let shape = Cuboid::new(half_extents);
