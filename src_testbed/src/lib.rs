@@ -542,7 +542,7 @@ impl VisualizationMode {
     ///
     /// Makes `self` visualize only a slice of the grid located at `position` along `axis`.
     #[cfg(feature = "dim3")]
-    pub fn set_slice_view(&mut self, axis: SpatialAxis, position: Real) {
+    pub fn slice_visual(&mut self, axis: SpatialAxis, position: Real) {
         let Self::Cubes {
             instanced_cube, instances,
             grid_sizing, cell_size,
@@ -568,6 +568,18 @@ impl VisualizationMode {
             })
             .collect::<Vec<_>>();
         instanced_cube.set_instances(&slice_instances);
+    }
+
+    /// Call this **AFTER** creating a testbed with `self` or after [`VisualizationMode::initialize`] is called.
+    ///
+    /// Switches to full 3D volumetric grid visual (default visual).
+    #[cfg(feature = "dim3")]
+    pub fn full_grid_visual(&mut self) {
+        let Self::Cubes {
+            instanced_cube, instances,
+            ..
+        } = self;
+        instanced_cube.set_instances(instances);
     }
 
     #[allow(unused_variables)]

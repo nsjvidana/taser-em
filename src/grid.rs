@@ -285,7 +285,6 @@ impl YeeGridMaterials {
         let kernel_cells = grid_cells_iter(GridIndex::splat(downscale_factor)).collect::<Vec<_>>();
         let fine_n_cells = self.n_cells;
         let cell_count = n_cells.element_product() as usize;
-        let start = std::time::Instant::now();
         let materials = into_par_iter!(0..cell_count)
             .map(|coarse_idx| {
                 let subcell_fine = GridIndex::from_flat_idx(coarse_idx as u32, n_cells) * downscale_factor;
@@ -329,7 +328,6 @@ impl YeeGridMaterials {
                 downscaled_mats
             })
             .collect::<Vec<_>>();
-        println!("downscaling: {:?}", start.elapsed());
 
         YeeGridMaterials {
             n_cells,
