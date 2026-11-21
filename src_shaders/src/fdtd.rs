@@ -14,7 +14,10 @@ use khal_std::index::MaybeIndexUnchecked;
 use khal_std::macros::{spirv, spirv_bindgen};
 use crate::{cfg_cpu, workgroup_counts};
 
-/// Initialize field vectors inside perfect electric conductors to be zero.
+/// Initialize field vector components inside perfect electric conductors to be zero.
+///
+/// Other non-PEC components in the cell are left with their value, in case pre-defined vector fields
+/// are given.
 #[spirv_bindgen]
 #[cfg_attr(feature = "dim1", spirv(compute(threads(1, 1, 64))))]
 #[cfg_attr(feature = "dim2", spirv(compute(threads(8, 8, 1))))]
@@ -34,10 +37,35 @@ pub fn init_pec(
     let idx = cell_idx.to_flat_idx(n_cells) as usize;
 
     let m = pml_coeffs.read(idx);
-    if !m.is_pec() { return; }
-    h.write(idx, Vec4::ZERO);
-    dn.write(idx, Vec4::ZERO);
-    en.write(idx, Vec4::ZERO);
+    let h_self = h.read(idx);
+    let dn_self = dn.read(idx);
+    let en_self = en.read(idx);
+
+    let h_new = Vec4::new(
+        if m.is_pec_h(Axis::X) { 0. } else { h_self.x },
+        if m.is_pec_h(Axis::Y) { 0. } else { h_self.y },
+        if m.is_pec_h(Axis::Z) { 0. } else { h_self.z },
+        0.
+    );
+    let dn_x_bool = m.is_pec_dn(Axis::X);
+    let dn_y_bool = m.is_pec_dn(Axis::Y);
+    let dn_z_bool = m.is_pec_dn(Axis::Z);
+    let dn_new = Vec4::new(
+        if dn_x_bool { 0. } else { dn_self.x },
+        if dn_y_bool { 0. } else { dn_self.y },
+        if dn_z_bool { 0. } else { dn_self.z },
+        0.
+    );
+    let en_new = Vec4::new(
+        if dn_x_bool { 0. } else { en_self.x },
+        if dn_y_bool { 0. } else { en_self.y },
+        if dn_z_bool { 0. } else { en_self.z },
+        0.
+    );
+
+    h.write(idx, h_new);
+    dn.write(idx, dn_new);
+    en.write(idx, en_new);
 }
 
 #[spirv_bindgen]
@@ -277,8 +305,8 @@ pub struct PmlCoefficients {
 }
 
 impl PmlCoefficients {
-    /// Update coefficients representing a grid that shouldn't be updated in the simulation.
-    pub const NO_UPDATE: Self = Self {
+    /// Update coefficients for a perfect electric conductor cell.
+    pub const PEC: Self = Self {
         h1: Vec4::ZERO,
         h2: Vec4::ZERO,
         h3: Vec4::ZERO,
@@ -294,30 +322,28 @@ impl PmlCoefficients {
         en1: Vec4::ZERO,
     };
 
-    /// Update coefficients for a perfect electric conductor cell.
-    ///
-    /// PEC cells are considered no-update cells as their fields remain zero throughout the simulation,
-    /// so `PmlCoefficients::PEC.no_update()` always returns `true`.
-    pub const PEC: Self = Self {
-        dn_loss1: Vec4::splat(Real::MAX),
-        dn_loss2: Vec4::splat(Real::MAX),
-        ..Self::NO_UPDATE
-    };
-
-    /// A fast way of checking if a grid shouldn't be updated
-    ///
-    /// Used for skipping the update for PEC cells, as they remain with zeroed fields for the whole simulation.
+    /// A fast way of checking if a grid shouldn't be updated / can have its update skipped.
     #[inline]
     pub fn no_update(&self) -> bool {
-        // h1 can't be zero, even with no PML conductivity (see PmlCoefficientsGrid::new()), therefore,
-        // this is a good way to check if a cell shouldn't be updated, since h1 == Vec4::ZERO is invalid.
-        self.h1 == Vec4::ZERO
+        // h1 and dn1 can't be zero because dt can't be zero (see taser-em's PmlCoefficientsGrid::new()),
+        // so, this is a good way to check if a cell shouldn't be updated.
+        self.h1 == Vec4::ZERO && self.dn1 == Vec4::ZERO
     }
 
-    /// A fast way of checking if a grid cell is a perfect electric conductor cell
+    /// A fast way of checking if a H component in the cell corresponding to these coefficients
+    /// is in a PEC.
     #[inline]
-    pub fn is_pec(&self) -> bool {
-        self.dn_loss1 == Vec4::splat(Real::MAX)
+    pub fn is_pec_h(&self, axis: Axis) -> bool {
+        // h1 can't be zero, so this is a good check.
+        self.h1.dyn_idx(axis) == 0.
+    }
+
+    /// A fast way of checking if a Dn component in the cell corresponding to these coefficients
+    /// is in a PEC.
+    #[inline]
+    pub fn is_pec_dn(&self, axis: Axis) -> bool {
+        // dn1 can't be zero, so this is a good check.
+        self.dn1.dyn_idx(axis) == 0.
     }
 }
 

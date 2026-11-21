@@ -423,7 +423,16 @@ impl PmlCoefficientsGrid {
 
                     // H update coefficients
                     let h_mat = &cell_materials.h[axis_i];
-                    if h_mat.sig[axis].is_finite() {
+                    if h_mat.sig[axis].is_infinite() {
+                        coeff.h1[axis] = PmlCoefficients::PEC.h1[axis];
+                        coeff.h2[axis] = PmlCoefficients::PEC.h2[axis];
+                        coeff.h3[axis] = PmlCoefficients::PEC.h3[axis];
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.h4[axis] = PmlCoefficients::PEC.h4[axis];
+                        }
+                    }
+                    else {
                         let h_sigs_axis = h_sigs[axis_i];
                         let coeff_term0 = (
                             inv_dt + ((h_sigs_axis[axis1] + h_sigs_axis[axis2]) / (2. * EPS_0)) +
@@ -440,19 +449,23 @@ impl PmlCoefficientsGrid {
                         {
                             coeff.h4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * h_sigs_axis[axis1] * h_sigs_axis[axis2];
                         }
-                    } else { // Zero-out components inside perfect electric conductors
-                        coeff.h1[axis] = 0.;
-                        coeff.h2[axis] = 0.;
-                        coeff.h3[axis] = 0.;
-                        #[cfg(any(feature = "dim2", feature = "dim3"))]
-                        {
-                            coeff.h4[axis] = 0.;
-                        }
                     }
 
                     // Dn/En update coefficients
                     let dn_mat = &cell_materials.dn[axis_i];
-                    if dn_mat.sig[axis].is_finite() {
+                    if dn_mat.sig[axis].is_infinite() {
+                        coeff.dn1[axis] = PmlCoefficients::PEC.dn1[axis];
+                        coeff.dn2[axis] = PmlCoefficients::PEC.dn2[axis];
+                        coeff.dn_loss1[axis] = PmlCoefficients::PEC.dn_loss1[axis];
+                        coeff.dn_loss2[axis] = PmlCoefficients::PEC.dn_loss2[axis];
+                        coeff.dn3[axis] = PmlCoefficients::PEC.dn3[axis];
+                        #[cfg(any(feature = "dim2", feature = "dim3"))]
+                        {
+                            coeff.dn4[axis] = PmlCoefficients::PEC.dn4[axis];
+                        }
+                        coeff.en1[axis] = PmlCoefficients::PEC.en1[axis];
+                    }
+                    else {
                         let dn_sigs_axis = dn_sigs[axis_i];
                         let coeff_term0 = (
                             inv_dt + ((dn_sigs_axis[axis1] + dn_sigs_axis[axis2]) / (2. * EPS_0)) +
@@ -472,17 +485,6 @@ impl PmlCoefficientsGrid {
                             coeff.dn4[axis] = -coeff_term0 * (dt / (EPS_0 * EPS_0)) * dn_sigs_axis[axis1] * dn_sigs_axis[axis2];
                         }
                         coeff.en1[axis] = dn_mat.eps_r[axis].recip();
-                    } else { // Zero-out components inside perfect electric conductors
-                        coeff.dn1[axis] = 0.;
-                        coeff.dn2[axis] = 0.;
-                        coeff.dn_loss1[axis] = 0.;
-                        coeff.dn_loss2[axis] = 0.;
-                        coeff.dn3[axis] = 0.;
-                        #[cfg(any(feature = "dim2", feature = "dim3"))]
-                        {
-                            coeff.dn4[axis] = 0.;
-                        }
-                        coeff.en1[axis] = 0.;
                     }
                 }
             });
