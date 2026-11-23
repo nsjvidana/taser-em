@@ -12,7 +12,7 @@ use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::partitioning::{Bvh, BvhBuildStrategy};
-use parry3d::shape::{Cuboid, SharedShape};
+use parry3d::shape::SharedShape;
 use std::num::NonZeroU32;
 use std::path::Path;
 use taser_em_shaders::fdtd::PmlCoefficients;
@@ -287,19 +287,50 @@ impl YeeGridMaterials {
         let fine_n_cells = self.n_cells;
         let fine_n_cells3 = fine_n_cells.n_cells_to_3d();
         let cell_count = n_cells.element_product() as usize;
+        let remove_pec = |cmps: &mut [ElectricMaterial; MAX_DIM]| {
+            let mut n_pec = USizeVec3::ZERO;
+            cmps
+                .iter_mut()
+                .for_each(|m| {
+                    m.sig = Vec3::from_array(
+                        std::array::from_fn(|i|
+                            if m.sig[i].is_infinite() {
+                                n_pec[i] += 1;
+                                self.default_mat.sig[i]
+                            } else { m.sig[i] }
+                        )
+                    );
+                });
+            n_pec
+        };
         let materials = into_par_iter!(0..cell_count)
             .map(|coarse_idx| {
                 let subcell_fine = GridIndex::from_flat_idx(coarse_idx as u32, n_cells) * downscale_factor;
                 let mut mat_sum = YeeCellMaterials::ZERO;
                 let mut n_sums = 0;
+                let mut n_pec_h = USizeVec3::ZERO;
+                let mut n_pec_dn = USizeVec3::ZERO;
                 for k_cell_offset in kernel_cells.iter() {
                     let fine_cell = subcell_fine + k_cell_offset;
                     let fine_cell3 = fine_cell.cell_idx_to_3d();
                     if fine_cell3.cmplt(fine_n_cells3).all() {
                         let fine_idx = fine_cell.to_flat_idx(fine_n_cells) as usize;
-                        mat_sum = mat_sum + self.materials[fine_idx];
+                        let mut mat = self.materials[fine_idx];
+                        let pec_count_h = remove_pec(&mut mat.h);
+                        let pec_count_dn = remove_pec(&mut mat.dn);
+                        n_pec_h += pec_count_h;
+                        n_pec_dn += pec_count_dn;
+                        mat_sum = mat_sum + mat;
                         n_sums += 1;
                     }
+                }
+                // enable PEC for components w/ at least half its test points being PEC
+                let half_n_sums = n_sums / 2;
+                for (i, mat) in mat_sum.h.iter_mut().enumerate() {
+                    if n_pec_h[i] >= half_n_sums { mat.sig[i] = Real::INFINITY; }
+                }
+                for (i, mat) in mat_sum.dn.iter_mut().enumerate() {
+                    if n_pec_dn[i] >= half_n_sums { mat.sig[i] = Real::INFINITY; }
                 }
                 mat_sum / (n_sums as f32)
             })

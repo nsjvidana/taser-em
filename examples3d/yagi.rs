@@ -127,7 +127,7 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030))
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.020))
         .with_alpha(AlphaMode::Mask(0.1), 1.);
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
     testbed.set_pml_alpha(0.);
