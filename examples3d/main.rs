@@ -4,6 +4,7 @@ mod yagi;
 use kiss3d::prelude::*;
 use std::num::NonZeroU32;
 use taser_em3d::prelude::*;
+use taser_em3d::re_exports::khal::re_exports::wgpu;
 use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
 
 #[kiss3d::main]
@@ -113,13 +114,13 @@ pub async fn mesh_scatterer() -> anyhow::Result<()> {
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let freq = 2.4e9; // 2.4 GHz
-    let sim_speed = 1;
+    let sim_speed = 3;
 
     // Simulation parameters w/ default stability values.
+    let cpw = 120;
     let stability = FdtdStability {
-        cells_per_wavelength: 30,
-        spacer_region_widths: LayerWidths::splat_spatial(10)
-            .with_axis_widths(SpatialAxis::Y, LoHiWidths::splat(30)),
+        cells_per_wavelength: cpw,
+        spacer_region_widths: LayerWidths::splat_spatial(cpw/4),
         ..Default::default()
     };
     let cell_size = stability.cell_size_from_min_wavelength(freq);
@@ -132,27 +133,30 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct dipole antenna
-    let antenna_len = C_0 / (freq * 2.);
-    let elem_thickness = cell_size.y;
-    let feed_gap = cell_size.y * 2.;
-    let half_len = antenna_len / 2.0;
+    // Measurements are from https://www.changpuak.ch/electronics/Dipole_straight.php
+    // Frequency = 2400MHz, Diameter D = 7mm.
+    let elem_thickness = 5e-3; // diameter
+    let dipole_half_len = 28.8e-3;
     let pec = ElectricMaterial::PEC;
-    simulation
-        .fill_region(
-            Vect::ZERO,
-            Vect::new(elem_thickness, half_len, elem_thickness),
-            pec
-        )
-        .fill_region(
-            Vect::new(0., -feed_gap, 0.),
-            Vect::new(0., -feed_gap, 0.) + Vect::new(elem_thickness, -half_len, elem_thickness),
-            pec
-        );
+    let feed_gap = 0.6e-3 * 2.;
+    let feed_center = Vect::new(0., 0., 0.);
+    let start = feed_center + Vect::new(0., feed_gap / 2. + dipole_half_len, 0.);
+    simulation.fill_region(
+        start,
+        start + Vect::new(elem_thickness, -dipole_half_len, elem_thickness),
+        pec
+    );
+    let start = feed_center + Vect::new(0., -(feed_gap / 2. + dipole_half_len), 0.);
+    simulation.fill_region(
+        start,
+        start + Vect::new(elem_thickness, dipole_half_len, elem_thickness),
+        pec
+    );
 
     // Source injection in antenna feed gap
     let dipole = Dipole {
         dipole_type: DipoleType::Electric,
-        position: Vect::new(elem_thickness, -feed_gap, elem_thickness) / 2.,
+        position: feed_center + Vect::ONE.with_y(0.) * (elem_thickness / 2.),
         t_start: 0.0,
         moment: Vec3::Y,
     };
@@ -160,7 +164,15 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
         .add_dipole(dipole, Source::sin_cycle(freq, dt).repeat(10));
 
     // Set up buffers and pipeline
-    let backend = create_backend().await?;
+    let max_buffer_size = 512 << 20;
+    let backend = create_backend_custom( // request larger buffer limits for large simulation
+        None,
+        Some(wgpu::Limits {
+            max_buffer_size,
+            max_storage_buffer_binding_size: max_buffer_size,
+            ..Default::default()
+        })
+    ).await?;
     let boundary_conditions = BoundaryConditions::new(
         PECBoundaryX::from_backend(&backend)?,
         PECBoundaryY::from_backend(&backend)?,
@@ -172,9 +184,11 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25))
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030))
         .with_alpha(AlphaMode::Mask(0.1), 1.);
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
+    testbed.set_pml_alpha(0.);
+    testbed.visualization_mode.slice_visual(SpatialAxis::Z, elem_thickness / 2.);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
