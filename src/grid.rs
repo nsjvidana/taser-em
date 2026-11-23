@@ -11,10 +11,11 @@ use crate::{into_par_iter, par_iter_mut};
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
+use parry3d::partitioning::{Bvh, BvhBuildStrategy};
+use parry3d::query::PointQuery;
 use parry3d::shape::SharedShape;
 use std::num::NonZeroU32;
 use std::path::Path;
-use parry3d::query::PointQuery;
 use taser_em_shaders::fdtd::PmlCoefficients;
 use taser_em_shaders::math::*;
 
@@ -149,12 +150,16 @@ pub struct YeeGridMaterials {
 
 impl YeeGridMaterials {
     /// Spatial offset of each component in the Dn field at each cell
-    pub const DN_OFFSETS: [Vec3; MAX_DIM] = [Vec3::X, Vec3::Y, Vec3::Z];
+    pub const DN_OFFSETS: [Vec3; MAX_DIM] = [
+        Vec3::new(0.5, 0. , 0. ),
+        Vec3::new(0. , 0.5, 0. ),
+        Vec3::new(0. , 0. , 0.5),
+    ];
     /// Spatial offset of each component in the H field at each cell
     pub const H_OFFSETS: [Vec3; MAX_DIM] = [
-        Vec3::new(0., 1., 1.),
-        Vec3::new(1., 0., 1.),
-        Vec3::new(1., 1., 0.),
+        Vec3::new(0. , 0.5, 0.5),
+        Vec3::new(0.5, 0. , 0.5),
+        Vec3::new(0.5, 0.5, 0. ),
     ];
 
     /// Compute a material grid with the dimensions of `n_cells` by sampling material regions.
@@ -182,46 +187,48 @@ impl YeeGridMaterials {
         default_mat: ElectricMaterial,
     ) -> Self {
         let cell_count = n_cells.n_cells_to_3d().element_product() as usize;
+        let cell_size3 = cell_size.to_3d(Vec3::ZERO);
 
         let centered_scene_pose = regions.scene_pose.append_translation(world_to_grid);
 
-        let half_cell_size3 = (cell_size / 2.).to_3d(Vec3::ZERO);
-        let dn_offsets = Self::DN_OFFSETS.map(|v| v * half_cell_size3);
-        let h_offsets = Self::H_OFFSETS.map(|v| v * half_cell_size3);
         let regions_transformed = regions.regions.iter()
             .map(|r| {
                 let p = centered_scene_pose * r.pose;
-                (&r.shape, r.shape.compute_aabb(&p), p, r.material)
+                (&r.shape, p, r.material)
             })
             .collect::<Vec<_>>();
-        let regions_bb = regions_transformed
+
+        let aabbs = regions_transformed
             .iter()
-            .fold(Aabb::new_invalid(), |result, (_, aabb, _, _)| result.merged(aabb));
+            .map(|(shape, pose, _)| shape.compute_aabb(&pose))
+            .collect::<Vec<_>>();
+        let bvh = Bvh::from_leaves(BvhBuildStrategy::Ploc, &aabbs);
+        let cell_aabb = Aabb::from_half_extents(Vec3::ZERO, cell_size3 / 2.);
 
         let mat_at_pt = |pt| {
-            regions_transformed
-                .iter()
-                .find_map(|(s, aabb, p, m)|
-                    // avoid testing points that aren't in the vicinity of this region or any region.
-                    (regions_bb.contains_point(&Pose3::IDENTITY, pt) &&
-                     aabb.contains_point(&Pose3::IDENTITY, pt) &&
-                        s.contains_point(p, pt)).then_some(m)
-                )
-                .copied()
+            bvh
+                .intersect_aabb(&cell_aabb.translated(pt))
+                .find_map(|i| {
+                    let (shape, pose, mat) = &regions_transformed[i as usize];
+                    // TODO: PEC surface check
+                    if shape.contains_point(pose, pt) { Some(*mat) }
+                    else { None }
+                })
                 .unwrap_or(default_mat)
         };
 
-        let mut mats = vec![YeeCellMaterials::FREE_SPACE; cell_count];
-        par_iter_mut!(mats)
-            .enumerate()
-            .for_each(|(i, mat)| {
+        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
+        let h_offsets = Self::H_OFFSETS.map(|v| v * cell_size3);
+        let mats = into_par_iter!((0..cell_count))
+            .map(|i| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
                 let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
-                *mat = YeeCellMaterials {
+                YeeCellMaterials {
                     dn: dn_offsets.map(|off| mat_at_pt(pos + off)),
                     h: h_offsets.map(|off| mat_at_pt(pos + off)),
-                };
-            });
+                }
+            })
+            .collect::<Vec<_>>();
 
         Self {
             n_cells,
