@@ -12,8 +12,7 @@ use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign
 use glamx::{Pose3, Vec3};
 use parry3d::bounding_volume::{Aabb, BoundingVolume};
 use parry3d::partitioning::{Bvh, BvhBuildStrategy};
-use parry3d::query::PointQuery;
-use parry3d::shape::SharedShape;
+use parry3d::shape::{Cuboid, SharedShape};
 use std::num::NonZeroU32;
 use std::path::Path;
 use taser_em_shaders::fdtd::PmlCoefficients;
@@ -204,28 +203,62 @@ impl YeeGridMaterials {
             .collect::<Vec<_>>();
         let bvh = Bvh::from_leaves(BvhBuildStrategy::Ploc, &aabbs);
         let cell_aabb = Aabb::from_half_extents(Vec3::ZERO, cell_size3 / 2.);
+        let half_cell_diag = cell_size.length() / 2.;
 
-        let mat_at_pt = |pt| {
+        let mat_at_pt = |pt, axis: Axis, is_de: bool| {
+            let aabb = cell_aabb.translated(pt);
             bvh
-                .intersect_aabb(&cell_aabb.translated(pt))
+                .intersect_aabb(&aabb)
                 .find_map(|i| {
                     let (shape, pose, mat) = &regions_transformed[i as usize];
-                    // TODO: PEC surface check
-                    if shape.contains_point(pose, pt) { Some(*mat) }
-                    else { None }
+                    let surface_check = mat.sig[axis].is_infinite();
+                    let proj_surf =
+                        if surface_check {
+                            shape.project_point_with_max_dist(pose, pt, false, half_cell_diag)
+                        }
+                        else { None };
+                    let at_surface = proj_surf
+                        .is_some_and(|proj|
+                            aabb.contains_local_point(Vect::from_vec3(proj.point).to_3d(Vec3::ZERO))
+                        );
+                    let inside_region = shape.contains_point(pose, pt);
+
+                    if at_surface && mat.sig[axis].is_infinite() { // at PEC surface
+                        let ray = parry3d::query::Ray::new(pt, proj_surf.unwrap().point - pt);
+                        let Some(normal) = shape
+                            .cast_ray_and_get_normal(pose, &ray, half_cell_diag, false)
+                            .map(|inter| inter.normal)
+                        else { return None };
+
+                        // Vector field conditions at a PEC surface:
+                        // - H components orthogonal to PEC surface are `0.`
+                        // - En components tangential to PEC surface are `0.`
+                        let component_dir = axis.to_vec3();
+                        let angle = component_dir.angle_between(normal);
+                        let angle_to_normal = angle.min(core::f32::consts::PI - angle);
+                        (is_de && (angle_to_normal - core::f32::consts::FRAC_PI_2).abs() < parry3d::math::DEFAULT_EPSILON ||
+                            !is_de && angle_to_normal < parry3d::math::DEFAULT_EPSILON)
+                            .then_some(*mat)
+                    }
+                    else if inside_region { Some(*mat) }
+                    else { None } // not inside region nor at PEC surface
                 })
                 .unwrap_or(default_mat)
         };
 
-        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
         let h_offsets = Self::H_OFFSETS.map(|v| v * cell_size3);
+        let dn_offsets = Self::DN_OFFSETS.map(|v| v * cell_size3);
         let mats = into_par_iter!((0..cell_count))
             .map(|i| {
                 let grid_idx = GridIndex::from_flat_idx(i as u32, n_cells);
                 let pos = (grid_idx.as_vect() * cell_size).to_3d(Vec3::ZERO);
                 YeeCellMaterials {
-                    dn: dn_offsets.map(|off| mat_at_pt(pos + off)),
-                    h: h_offsets.map(|off| mat_at_pt(pos + off)),
+                    dn: std::array::from_fn(|i|
+                        mat_at_pt(pos + dn_offsets[i], Axis::ALL_AXES[i], true)
+                    ),
+                    h: std::array::from_fn(|i|
+                        mat_at_pt(pos + h_offsets[i], Axis::ALL_AXES[i], false)
+                    ),
                 }
             })
             .collect::<Vec<_>>();
