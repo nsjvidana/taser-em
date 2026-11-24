@@ -4,7 +4,7 @@ use kiss3d::glamx::Vec3;
 use std::sync::Arc;
 use taser_em2d::prelude::*;
 use taser_em_testbed2d::plot::*;
-use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode, re_exports::anyhow};
+use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VisualizationMode, re_exports::anyhow};
 
 #[kiss3d::main]
 async fn main() {
@@ -90,7 +90,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default();
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
     testbed.window.set_ambient(0.5);
 
     // Render simulation
@@ -218,7 +218,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     println!("Running on backend: {}", backend_name(&backend));
     let vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
     while testbed.render_frame(&backend, &state, &mut readback).await? {
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;

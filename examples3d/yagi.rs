@@ -1,7 +1,7 @@
 use kiss3d::prelude::*;
 use taser_em3d::prelude::*;
 use taser_em3d::re_exports::khal::re_exports::wgpu;
-use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
+use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, VisualizationMode};
 
 /// Yagi-Uda antenna example.
 ///
@@ -129,7 +129,7 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     let vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.020))
         .with_alpha(AlphaMode::Mask(0.1), 1.);
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::H).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
     testbed.set_pml_alpha(0.);
     testbed.visualization_mode.slice_visual(SpatialAxis::Z, elem_thickness / 2.);
 

@@ -160,7 +160,7 @@ pub async fn binary_grating() -> anyhow::Result<()> {
 
     // Run testbed viewer
     let vis_mode = VisualizationMode::default();
-    let mut viewer = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorFieldVisual::En).await?;
+    let mut viewer = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::En).await?;
     let steady_time = 4.5612865e-9; // found this value experimentally through multiple simulations
     let mut plot_calculated = false;
     while viewer.render_frame(&backend, &state, &mut readback).await? {

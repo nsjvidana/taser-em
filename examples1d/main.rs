@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 use kiss3d::prelude::BLUE;
 use taser_em1d::prelude::*;
-use taser_em_testbed1d::{ColorMode, FdtdTestbedViewer, VectorFieldVisual, VisualizationMode};
+use taser_em_testbed1d::{ColorMode, FdtdTestbedViewer, VisualizationMode};
 use taser_em_testbed1d::re_exports::anyhow;
 
 #[kiss3d::main]
@@ -70,7 +70,7 @@ pub async fn single_slab() -> anyhow::Result<()> {
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
     // Create viewer and set up camera
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorFieldVisual::H).await?;
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorField::H).await?;
     testbed.visualization_mode = testbed.visualization_mode.with_color_mode(ColorMode::AutoScale {
         color_min: BLUE,
         color_mid: BLUE,

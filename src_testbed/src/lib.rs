@@ -36,7 +36,7 @@ pub struct FdtdTestbedViewer {
     cell_size: Vect,
     pub visualization_mode: VisualizationMode,
     /// Which field should be visualized
-    pub vector_field_visual: VectorFieldVisual,
+    pub vector_field_visual: VectorField,
     /// A light source locked at the camera's location (optional, but is a point source by default)
     pub cam_light: Option<SceneNode3d>,
     grid_bb_min: Vec3,
@@ -73,7 +73,7 @@ impl FdtdTestbedViewer {
         simulation: &FdtdLossySimulation,
         stability: &FdtdStability,
         mut visualization_mode: VisualizationMode,
-        vector_field_visual: VectorFieldVisual,
+        vector_field_visual: VectorField,
     ) -> anyhow::Result<Self> {
         let title_dim = cfg_select! {
             feature = "dim1" => "1D",
@@ -330,20 +330,8 @@ impl FdtdTestbedViewer {
         );
 
         // Read back new field and request copy of field for next iteration
-        match self.vector_field_visual {
-            VectorFieldVisual::H => {
-                readback.read_back_h(backend)?;
-                readback.request_copy_h(backend, state)?;
-            },
-            VectorFieldVisual::Dn => {
-                readback.read_back_dn(backend)?;
-                readback.request_copy_dn(backend, state)?;
-            },
-            VectorFieldVisual::En => {
-                readback.read_back_en(backend)?;
-                readback.request_copy_en(backend, state)?;
-            },
-        }
+        readback.read_back_field(backend, self.vector_field_visual)?;
+        readback.request_copy_field(backend, state, self.vector_field_visual)?;
 
         Ok(window_bool)
     }
@@ -583,16 +571,10 @@ impl VisualizationMode {
     pub fn update_visual(
         &mut self,
         readback: &FdtdStateReadback,
-        vector_field_visual: VectorFieldVisual,
+        vector_field_visual: VectorField,
         window: &mut Window,
     ) {
-        let get_magnitudes = || {
-            match vector_field_visual {
-                VectorFieldVisual::H => readback.h_magnitudes(),
-                VectorFieldVisual::Dn => readback.dn_magnitudes(),
-                VectorFieldVisual::En => readback.en_magnitudes(),
-            }
-        };
+        let get_magnitudes = || readback.field_magnitudes(vector_field_visual);
 
         #[cfg(feature = "dim1")]
         {
@@ -620,16 +602,12 @@ impl VisualizationMode {
 
             *graph_max_magnitude = graph_max_magnitude.max(curr_max_mag);
 
-            let v_field = match vector_field_visual {
-                VectorFieldVisual::H => readback.get_h_field(),
-                VectorFieldVisual::Dn => readback.get_dn_field(),
-                VectorFieldVisual::En => readback.get_en_field(),
-            };
+            let v_field = readback.get_field_raw(vector_field_visual);
             let line_positions = par_iter!(positions)
                 .zip(par_iter!(v_field))
                 .map(|(cell_pos, vector)| {
                     let v = match vector_field_visual {
-                        VectorFieldVisual::H => sim_mode.extract_h_vector(vector),
+                        VectorField::H => sim_mode.extract_h_vector(vector),
                         _ => sim_mode.extract_e_vector(vector)
                     };
                     cell_pos + (v / *graph_max_magnitude) * *graph_max_val
@@ -751,14 +729,6 @@ impl Default for VisualizationMode {
             }
         }
     }
-}
-
-/// Which vector field to visualize
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum VectorFieldVisual {
-    H,
-    Dn,
-    En
 }
 
 /// How vector field magnitudes are colored
