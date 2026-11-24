@@ -199,7 +199,7 @@ impl YeeGridMaterials {
 
         let aabbs = regions_transformed
             .iter()
-            .map(|(shape, pose, _)| shape.compute_aabb(&pose))
+            .map(|(shape, pose, _)| shape.compute_aabb(pose))
             .collect::<Vec<_>>();
         let bvh = Bvh::from_leaves(BvhBuildStrategy::Ploc, &aabbs);
         let cell_aabb = Aabb::from_half_extents(Vec3::ZERO, cell_size3 / 2.);
@@ -225,10 +225,9 @@ impl YeeGridMaterials {
 
                     if at_surface && mat.sig[axis].is_infinite() { // at PEC surface
                         let ray = parry3d::query::Ray::new(pt, proj_surf.unwrap().point - pt);
-                        let Some(normal) = shape
+                        let normal = shape
                             .cast_ray_and_get_normal(pose, &ray, half_cell_diag, false)
-                            .map(|inter| inter.normal)
-                        else { return None };
+                            .map(|inter| inter.normal)?;
 
                         // Vector field conditions at a PEC surface:
                         // - H components orthogonal to PEC surface are `0.`
