@@ -400,6 +400,7 @@ pub enum VisualizationMode {
         color_mode: ColorMode,
         alpha_mode: AlphaMode,
         alpha: f32,
+        slice_visual: Option<(SpatialAxis, Real, Index)>,
         grid_sizing: GridSizing,
         cell_size: Vect
     },
@@ -508,8 +509,10 @@ impl VisualizationMode {
                 },
                 #[cfg(feature = "dim3")]
                 VisualizationMode::Cubes {
-                    instanced_cube, instances, color_mode, alpha_mode, alpha,
-                    grid_sizing: grid_sizing_stored, cell_size: cell_size_stored
+                    instanced_cube, instances,
+                    color_mode, alpha_mode, alpha,
+                    slice_visual,
+                    grid_sizing: grid_sizing_stored, cell_size: cell_size_stored,
                 } => {
                     *grid_sizing_stored = grid_sizing;
                     *cell_size_stored = cell_size;
@@ -517,26 +520,28 @@ impl VisualizationMode {
                         .add_cube(cell_size.x, cell_size.y, cell_size.z)
                         .set_alpha_mode(*alpha_mode)
                         .set_color(WHITE.with_alpha(*alpha));
-                    initialize_instances(instanced_cube, instances, color_mode)
+                    initialize_instances(instanced_cube, instances, color_mode);
+                    if let Some((axis, position, _)) = *slice_visual {
+                        self.slice_visual(axis, position);
+                    }
                 }
             }
         }
     }
 
-    /// Call this **AFTER** creating a testbed with `self` or after [`VisualizationMode::initialize`] is called.
-    ///
     /// Makes `self` visualize only a slice of the grid located at `position` along `axis`.
     #[cfg(feature = "dim3")]
     pub fn slice_visual(&mut self, axis: SpatialAxis, position: Real) {
         let Self::Cubes {
             instanced_cube, instances,
             grid_sizing, cell_size,
+            slice_visual,
             ..
         } = self;
 
         let axis3 = Axis::from(axis);
         let idx = ((position + grid_sizing.world_to_grid[axis3]) / cell_size[axis])
-            .round() as u32;
+            .round() as Index;
         let slice_instances = par_iter!(instances)
             .filter_map(|data| {
                 let inst_idx = (data.position[axis3] / cell_size[axis]).round() as u32;
@@ -552,7 +557,10 @@ impl VisualizationMode {
                     })
             })
             .collect::<Vec<_>>();
-        instanced_cube.set_instances(&slice_instances);
+        if !slice_instances.is_empty() {
+            instanced_cube.set_instances(&slice_instances);
+        }
+        *slice_visual = Some((axis, position, idx));
     }
 
     /// Call this **AFTER** creating a testbed with `self` or after [`VisualizationMode::initialize`] is called.
@@ -562,9 +570,11 @@ impl VisualizationMode {
     pub fn full_grid_visual(&mut self) {
         let Self::Cubes {
             instanced_cube, instances,
+            slice_visual,
             ..
         } = self;
         instanced_cube.set_instances(instances);
+        *slice_visual = None;
     }
 
     #[allow(unused_variables)]
@@ -628,29 +638,6 @@ impl VisualizationMode {
 
         #[cfg(any(feature = "dim2", feature = "dim3"))]
         {
-            let update_colors = |
-                instanced_obj: &mut SceneNode3d,
-                instances: &mut Vec<InstanceData3d>,
-                color_mode: &mut ColorMode,
-            | {
-                instanced_obj.apply_to_object_mut(&mut |o| {
-                    let magnitudes = get_magnitudes();
-                    color_mode.prepare(&magnitudes);
-                    let inst_count = o
-                        .instances()
-                        .borrow_mut()
-                        .colors
-                        .len();
-                    let colors = into_par_iter!(magnitudes)
-                        .take(inst_count)
-                        .map(|mag| {
-                            let c = color_mode.compute_color(mag);
-                            [c.r, c.g, c.b, c.a]
-                        })
-                        .collect::<Vec<_>>();
-                    *o.instances().borrow_mut().colors.data_mut() = Some(colors);
-                });
-            };
             match self {
                 #[cfg(feature = "dim2")]
                 VisualizationMode::Quads {
@@ -725,6 +712,7 @@ impl Default for VisualizationMode {
                     n_cells: GridIndex::ZERO,
                     world_to_grid: Vec3::NAN,
                 },
+                slice_visual: None,
                 cell_size: Vect::NAN
             }
         }

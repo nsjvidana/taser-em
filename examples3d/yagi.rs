@@ -126,12 +126,12 @@ pub async fn yagi_uda_antenna() -> anyhow::Result<()> {
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Create viewer and set up camera
-    let vis_mode = VisualizationMode::default()
+    let mut vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.020))
         .with_alpha(AlphaMode::Mask(0.1), 1.);
+    vis_mode.slice_visual(SpatialAxis::Z, elem_thickness / 2.);
     let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
     testbed.set_pml_alpha(0.);
-    testbed.visualization_mode.slice_visual(SpatialAxis::Z, elem_thickness / 2.);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
