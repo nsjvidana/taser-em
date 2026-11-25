@@ -35,8 +35,6 @@ pub fn gpu_power_flux(
     let sensor_idx = thread_id.z as usize;
     let sensor = flux_sensors.read(sensor_idx);
 
-    // TODO: try a "cell flat idx buffer" instead of calculating flat idx each invocation
-    //       also compare performance to see if it's worth the memory...
     let mut cell_idx3 = UVec3::ZERO;
     cell_idx3.dyn_insert(sensor.axis, sensor.position);
     cell_idx3.dyn_insert(sensor.axis1, thread_id.x);

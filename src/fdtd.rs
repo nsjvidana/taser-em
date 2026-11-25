@@ -15,7 +15,16 @@ use taser_em_shaders::fdtd::*;
 use taser_em_shaders::math::*;
 use taser_em_shaders::source::*;
 
-// TODO: Docs.
+/// Simulation builder for a FDTD simulation that supports lossy materials.
+///
+/// Use this struct to accumulate [`Source`]s, [`MaterialRegion`]s, PMLs, and sensors for a simulation.
+/// Run [`FdtdLossySimulation::finalize`] after everything is added to create simulation buffers.
+///
+/// You may want to use [`FdtdLossyHook`]s, as they let you do on-the-fly DFTs with [`DftRegionsHook`] or
+/// [`PowerFluxDftHook`].
+/// To do so, use [`FdtdLossySimulation::finalize_with_hooks`].
+///
+/// To read back data from the simulation during or after simulation, see [`FdtdStateReadback`].
 pub struct FdtdLossySimulation {
     pub fdtd_parameters: FdtdParameters,
     pub pml_parameters: PmlParameters,
@@ -65,6 +74,7 @@ impl FdtdLossySimulation {
         ptr
     }
 
+    /// Add sensor for instantaneous power flux.
     pub fn add_flux_sensor(&mut self, power_flux_sensor: InstantPowerFluxSensor) -> Arc<InstantPowerFluxSensor> {
         let ptr = Arc::new(power_flux_sensor);
         self.power_flux_sensors.push(ptr.clone());
@@ -72,6 +82,8 @@ impl FdtdLossySimulation {
     }
 
     /// Fill a box-shaped region from `start` to `end` with `material`
+    ///
+    /// Equivalent to adding a [`Cuboid`]-shaped [`MaterialRegion`].
     pub fn fill_region(
         &mut self,
         start: Vect,
@@ -231,7 +243,7 @@ impl FdtdLossySimulation {
     ///
     /// # Performance
     /// This can be a **very expensive function** if the simulation has high-detail geometries.
-    /// Use [`FdtdLossySimulation::finalize_no_init`] (and [`FdtdLossyPipeline::initialize`] on its output) to
+    /// Use [`FdtdLossySimulation::finalize_no_init`] (followed by [`FdtdLossyPipeline::initialize`]) to
     /// avoid redundant geometry computations that may be expensive.
     pub fn compute_state_construction_args(&self, stability: &FdtdStability) -> StateConstructionArgs<'_> {
         StateConstructionArgs {
@@ -240,6 +252,9 @@ impl FdtdLossySimulation {
         }
     }
 
+    /// Creates simulation buffers for a FDTD simulation containing everything described in `self`.
+    ///
+    /// Use [`FdtdLossyPipeline::simulate`] to submit a simulation step to the GPU immediately.
     pub fn finalize<BC: BoundaryConditionTypes>(
         &self,
         backend: &GpuBackend,
@@ -249,6 +264,7 @@ impl FdtdLossySimulation {
         self.finalize_with_hooks(backend, stability, pipeline, ())
     }
 
+    /// Like [`FdtdLossySimulation::finalize`], but with [`FdtdLossyHook`]s applied.
     pub fn finalize_with_hooks<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
         &self,
         backend: &GpuBackend,
@@ -268,6 +284,8 @@ impl FdtdLossySimulation {
         Ok(state)
     }
 
+    /// Must call [`FdtdLossyPipeline::initialize`] on this function's output before running
+    /// simulation.
     pub fn finalize_no_init<BC: BoundaryConditionTypes, H: FdtdLossyHook>(
         backend: &GpuBackend,
         args: StateConstructionArgs,
@@ -468,7 +486,7 @@ where
         })
     }
 
-    /// Initialize buffers
+    /// Initialize boundary condition and [`FdtdLossyHook`] states.
     pub fn initialize(
         &self,
         pass: &mut GpuPass,

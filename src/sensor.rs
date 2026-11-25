@@ -28,7 +28,6 @@ pub struct PowerFluxDftSensor {
     pub frequencies: Vec<Real>,
 }
 
-// TODO: interop w/ external DftRegionsHook instead?
 pub struct PowerFluxDftHook {
     /// Enables / disables updating the power flux integrals.
     ///
@@ -214,7 +213,6 @@ impl PowerFluxDftStates {
 
         let dft_region_states = DftRegionStates::new(backend, args, &region_objs)?;
 
-        // TODO: use a offset of region buf instead of gpu_dft_region_idx for each sensor?
         let mut flux_sensors = descriptions.iter()
             .map(|desc| {
                 let gpu_sensor = desc.gpu_desc_uninit();
