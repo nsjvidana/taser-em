@@ -1,29 +1,27 @@
 use std::num::NonZeroU32;
-use kiss3d::prelude::BLUE;
 use taser_em1d::prelude::*;
-use taser_em_testbed1d::{ColorMode, FdtdTestbedViewer, VisualizationMode};
 use taser_em_testbed1d::re_exports::anyhow;
+use taser_em_testbed1d::{FdtdTestbedViewer, VisualizationMode};
 
 #[kiss3d::main]
 async fn main() {
-    single_slab().await.unwrap()
+    suzanne().await.unwrap()
 }
 
-pub async fn single_slab() -> anyhow::Result<()> {
+pub async fn suzanne() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
-    let f_max = 2.4e9; // 2.4 GHz
-    let sim_speed = 10;
+    let freq = 2.4e9; // 2.4 GHz
+    let sim_speed = 1;
 
     // Simulation parameters
+    let cpw = 20;
     let stability = FdtdStability {
-        dt_safety_factor: 18.,
-        cells_per_wavelength: 10,
-        spacer_region_widths: LayerWidths::splat_spatial(20),
-        ..Default::default()
+        spacer_region_widths: LayerWidths::splat_spatial(cpw),
+        ..FdtdStability::from_cpw(cpw)
     };
-    let cell_size = stability.cell_size_from_min_wavelength(f_max);
+    let cell_size = stability.cell_size_from_min_wavelength(freq);
     let dt = stability.cfl_condition(cell_size)
-        .min(stability.dt_from_gaussian_freq(f_max));
+        .min(stability.dt_from_gaussian_freq(freq));
     let parameters = FdtdParameters {
         cell_size,
         dt,
@@ -32,21 +30,17 @@ pub async fn single_slab() -> anyhow::Result<()> {
         },
         // material_discretization: MaterialDiscretization::Rough,
     };
-    let pml_params = PmlParameters::new(dt);
-    pml_params.widths.with_axis_widths(SpatialAxis::Z, LoHiWidths::splat(0));
-    let mut simulation = FdtdLossySimulation::new(parameters, pml_params);
+    let mut simulation = FdtdLossySimulation::new(parameters, PmlParameters::new(dt));
 
     // Construct the slab
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
-        mu_r: Vec3::splat(1.),
-        sig: Vec3::INFINITY,
-        // sig: Vec3::splat(0.),
+        ..ElectricMaterial::FREE_SPACE
     };
     simulation.material_regions.load_trimesh_regions(
         mat,
         "assets/suzanne.obj",
-        Vec3::ONE
+        Vec3::splat(C_0 / freq)
     )?;
 
     // Compute TF/SF source with gaussian curve data points
@@ -55,30 +49,24 @@ pub async fn single_slab() -> anyhow::Result<()> {
         direction: Direction::Negative,
         t_start: 0.,
         polarization: Vec3::Y, // Ey/Hx mode
-        tfsf_buffer_width: LayerWidths::splat_spatial(3),
+        tfsf_buffer_width: LayerWidths::splat_spatial(4),
         injection_plane_only: false,
     };
-    simulation.add_tfsf(tfsf, Source::gaussian_max_f(f_max, 1., dt));
+    simulation.add_tfsf(tfsf, Source::gaussian_max_f(freq, 1., dt));
 
     // Set up buffers and pipeline
     let backend = create_backend().await?;
-    let boundary_condition = BoundaryConditions::new(
-        PeriodicBoundaryZ::from_backend(&backend)?,
-    );
-    let pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
+    let pipeline = FdtdLossyPipeline::new(
+        &backend,
+        BoundaryConditions::new(PECBoundaryZ::from_backend(&backend)?),
+        sim_speed
+    )?;
     let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
+    // TODO: don't require user to do make readback for viewer.
     let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
     // Create viewer and set up camera
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorField::H).await?;
-    testbed.visualization_mode = testbed.visualization_mode.with_color_mode(ColorMode::AutoScale {
-        color_min: BLUE,
-        color_mid: BLUE,
-        color_max: BLUE,
-        v_min: Real::MAX,
-        v_mid: 0.0,
-        v_max: Real::MIN,
-    });
+    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorField::En).await?;
 
     // Render simulation
     let backend_name = backend_name(&backend);

@@ -375,15 +375,12 @@ pub fn init_tfsf_masks(
         }
     }
 
-    let is_sf_corner = cfg_select! {
-        feature = "dim1" => true,
-        _ => {{
-            let mut at_sf_edge_count = 0;
-            for i in 0..3 {
-                at_sf_edge_count += at_min_sf_edge_a[i] as usize + at_max_sf_edge_a[i] as usize;
-            }
-            at_sf_edge_count >= 2
-        }}
+    let is_sf_corner = {
+        let mut at_sf_edge_count = 0;
+        for i in 0..3 {
+            at_sf_edge_count += at_min_sf_edge_a[i] as usize + at_max_sf_edge_a[i] as usize;
+        }
+        at_sf_edge_count >= 2
     };
 
     if is_sf_corner { return; }
