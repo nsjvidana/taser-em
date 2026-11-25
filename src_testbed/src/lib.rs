@@ -31,14 +31,15 @@ pub struct FdtdTestbedViewer {
     pml_alpha: f32,
     pub material_region_visuals: Vec<SceneNode3d>,
     pub material_region_alpha: f32,
-    background_mat: ElectricMaterial,
-    n_cells: GridIndex,
-    cell_size: Vect,
-    pub visualization_mode: VisualizationMode,
-    /// Which field should be visualized
-    pub vector_field_visual: VectorField,
     /// A light source locked at the camera's location (optional, but is a point source by default)
     pub cam_light: Option<SceneNode3d>,
+    /// Which field should be visualized
+    pub vector_field_visual: VectorField,
+    pub visualization_mode: VisualizationMode,
+    pub readback: FdtdStateReadback,
+    n_cells: GridIndex,
+    cell_size: Vect,
+    background_mat: ElectricMaterial,
     grid_bb_min: Vec3,
     grid_bb_max: Vec3,
     bb_color: Color,
@@ -69,9 +70,10 @@ impl FdtdTestbedViewer {
     /// set to [`RED`].
     ///
     /// Defaults to [`ColorMode::AutoScale`] for visualizing field magnitudes
-    pub async fn new(
-        simulation: &FdtdLossySimulation,
-        stability: &FdtdStability,
+    pub async fn new<BC: BoundaryConditionTypes>(
+        backend: &GpuBackend,
+        state: &FdtdLossyState<BC>,
+        #[cfg(not(feature = "dim3"))] mode: FdtdSimulationMode,
         mut visualization_mode: VisualizationMode,
         vector_field_visual: VectorField,
     ) -> anyhow::Result<Self> {
@@ -86,11 +88,11 @@ impl FdtdTestbedViewer {
         let camera = OrbitCamera3d::default();
         let mut scene = SceneNode3d::default();
 
-        let grid_sizing = simulation.compute_grid_sizing(stability);
+        let grid_sizing = state.grid_sizing;
         let GridSizing {
             n_cells, world_to_grid
         } = grid_sizing;
-        let cell_size = simulation.fdtd_parameters.cell_size;
+        let cell_size = state.fdtd_parameters.cell_size;
         visualization_mode.initialize(&mut scene, grid_sizing, cell_size);
 
         // Default lighting
@@ -112,7 +114,7 @@ impl FdtdTestbedViewer {
             pml_alpha: 0.25,
             material_region_visuals: vec![],
             material_region_alpha: Self::DEFAULT_REGION_ALPHA,
-            background_mat: simulation.background_material,
+            background_mat: state.background_material,
             n_cells,
             cell_size,
             visualization_mode,
@@ -121,14 +123,19 @@ impl FdtdTestbedViewer {
             grid_bb_min: Vec3::ZERO,
             grid_bb_max: grid_extents,
             bb_color: WHITE,
+            readback: FdtdStateReadback::new(
+                backend,
+                state,
+                #[cfg(not(feature = "dim3"))] mode
+            )?,
         };
         selff.default_cam_setup();
         selff.update_cam_light();
-        selff.add_pmls(&simulation.pml_parameters);
-        selff.add_region_meshes(&simulation.material_regions, world_to_grid);
-        selff.add_flux_planes(
-            simulation.power_flux_sensors.iter().map(|rc| rc.as_ref())
-        );
+        selff.add_pmls(&state.pml_parameters);
+        selff.add_region_meshes(&state.material_regions, world_to_grid);
+        if let Some(flux_states) = &state.power_flux_states {
+            selff.add_flux_planes(flux_states.sensors.iter().map(|ptr| ptr.as_ref()))
+        }
 
         Ok(selff)
     }
@@ -310,7 +317,6 @@ impl FdtdTestbedViewer {
         &mut self,
         backend: &GpuBackend,
         state: &FdtdLossyState<BC>,
-        readback: &mut FdtdStateReadback,
     ) -> TaserResult<bool> {
         self.update_cam_light();
         self.viewer_control_window();
@@ -324,14 +330,14 @@ impl FdtdTestbedViewer {
         // Visualize the version of the field that's stored on CPU
         // Don't read back here since that forces the read back & simulation to be in series with the visualization (slow)
         self.visualization_mode.update_visual(
-            readback,
+            &self.readback,
             self.vector_field_visual,
             &mut self.window,
         );
 
         // Read back new field and request copy of field for next iteration
-        readback.read_back_field(backend, self.vector_field_visual)?;
-        readback.request_copy_field(backend, state, self.vector_field_visual)?;
+        self.readback.read_back_field(backend, self.vector_field_visual)?;
+        self.readback.request_copy_field(backend, state, self.vector_field_visual)?;
 
         Ok(window_bool)
     }

@@ -378,7 +378,7 @@ pub struct Tfsf {
 impl SourceType for Tfsf {}
 
 /// Parameters for an auxiliary grid (used for TF/SF sources)
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct AuxGridParameters {
     pub pml_width: NonZeroU32,
     pub pml_sig_max: Real,

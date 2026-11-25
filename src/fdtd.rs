@@ -227,9 +227,9 @@ impl FdtdLossySimulation {
             .for_each(|r| r.material = self.background_material);
 
         Self {
-            fdtd_parameters: self.fdtd_parameters.clone(),
+            fdtd_parameters: self.fdtd_parameters,
             pml_parameters: self.pml_parameters,
-            tfsf_parameters: self.tfsf_parameters.clone(),
+            tfsf_parameters: self.tfsf_parameters,
             grid_sizing_mode: self.grid_sizing_mode,
             material_regions,
             background_material: self.background_material,
@@ -346,6 +346,9 @@ impl FdtdLossySimulation {
             hooks_states,
             state: FdtdLossyState {
                 bc_states: BoundaryConditionStates::new(&pipeline.boundary_conditions, sim)?,
+                material_regions: sim.material_regions.clone(),
+                pml_parameters: sim.pml_parameters,
+                fdtd_parameters: sim.fdtd_parameters,
                 // Uniforms / thread-independent vars
                 grid: grid.create_gpu_uniform(backend)?,
                 t_idx: 0.create_gpu_buffer(backend)?,
@@ -371,10 +374,8 @@ impl FdtdLossySimulation {
                 // Misc data
                 power_flux_states: PowerFluxStates::new(backend, sim, n_cells, &world_to_grid3)?,
                 workgroup_count: fdtd_lossy_workgroups(n_cells),
-                n_cells,
-                cell_size,
+                background_material: sim.background_material,
                 grid_sizing,
-                dt,
             }
         };
         Ok(state)
@@ -710,7 +711,7 @@ impl FdtdStateReadback {
         state: &FdtdLossyState<BC>,
         #[cfg(not(feature = "dim3"))] mode: FdtdSimulationMode
     ) -> TaserResult<Self> {
-        let zeroed_vector_field = vec![Vec4::ZERO; state.n_cells.element_product() as usize];
+        let zeroed_vector_field = vec![Vec4::ZERO; state.grid_sizing.n_cells.element_product() as usize];
         let cell_count = zeroed_vector_field.len();
         Ok(Self {
             h: zeroed_vector_field.clone(),
@@ -832,7 +833,7 @@ pub enum VectorField {
     En
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct FdtdParameters {
     pub cell_size: Vect,
     pub dt: Real,
@@ -974,6 +975,9 @@ impl<BC: BoundaryConditionTypes, H: FdtdLossyHook> AsMut<FdtdLossyState<BC>> for
 
 pub struct FdtdLossyState<BC: BoundaryConditionTypes> {
     pub bc_states: BoundaryConditionStates<BC>,
+    pub material_regions: MaterialRegions,
+    pub pml_parameters: PmlParameters,
+    pub fdtd_parameters: FdtdParameters,
     // Uniforms / thread-independent vars
     pub grid: GpuBuffer<GridParameters>,
     pub t_idx: GpuBuffer<u32>,
@@ -993,10 +997,8 @@ pub struct FdtdLossyState<BC: BoundaryConditionTypes> {
     pub power_flux_states: Option<PowerFluxStates>,
     // Misc data
     pub workgroup_count: [u32; 3],
-    pub n_cells: GridIndex,
-    pub cell_size: Vect,
+    pub background_material: ElectricMaterial,
     pub grid_sizing: GridSizing,
-    pub dt: Real,
 }
 
 /// Parameters judging how the PML will be constructed in the simulation
