@@ -9,7 +9,7 @@ use taser_em_testbed3d::{re_exports::anyhow, ColorMode, FdtdTestbedViewer, Visua
 
 #[kiss3d::main]
 async fn main() {
-    const EXAMPLE: Examples = Examples::Yagi;
+    const EXAMPLE: Examples = Examples::Bench;
     match EXAMPLE {
         Examples::SuzanneTheScatterer => mesh_scatterer().await.unwrap(),
         Examples::Dipole => dipole_antenna().await.unwrap(),
