@@ -130,7 +130,6 @@ pub async fn binary_grating() -> anyhow::Result<()> {
     );
     // simulation state and readbacks
     let mut state = simulation.finalize_with_hooks(&backend, &stability, &pipeline, region_states)?;
-    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
     let mut dft_regions_read = DftRegionReadback::new(&backend, &state.hooks_states)?;
 
     // Source-only simulation with the same DFT regions and pipeline
@@ -160,15 +159,16 @@ pub async fn binary_grating() -> anyhow::Result<()> {
 
     // Run testbed viewer
     let vis_mode = VisualizationMode::default();
-    let mut viewer = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::En).await?;
+    let mut viewer = FdtdTestbedViewer::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ, vis_mode, VectorField::En).await?;
     let steady_time = 4.5612865e-9; // found this value experimentally through multiple simulations
     let mut plot_calculated = false;
-    while viewer.render_frame(&backend, &state, &mut readback).await? {
-        readback.read_back_t_idx(&backend)?;
-        readback.request_copy_t_idx(&backend, &state)?;
-        let t = readback.get_t_idx() as Real * state.dt;
+    while viewer.render_frame().await? {
+        viewer.readback.read_back_t_idx(&backend)?;
+        viewer.readback.request_copy_t_idx(&backend, &state)?;
+        let t = viewer.readback.get_t_idx() as Real * state.fdtd_parameters.dt;
 
         if t < steady_time { // wait for steady-state
+            viewer.sync(&backend, &state)?;
             let mut encoder = backend.begin_encoding();
             let mut pass = encoder.begin_pass("2D binary grating", None);
             pipeline.dispatch_steps(&mut pass, &mut state)?;

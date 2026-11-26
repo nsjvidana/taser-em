@@ -62,22 +62,28 @@ pub async fn suzanne() -> anyhow::Result<()> {
         sim_speed
     )?;
     let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
-    // TODO: don't require user to do make readback for viewer.
-    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::EyHx)?;
 
     // Create viewer and set up camera
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, VisualizationMode::default(), VectorField::En).await?;
+    let mut viewer = FdtdTestbedViewer::new(
+        &backend,
+        &state,
+        FdtdSimulationMode::EyHx,
+        VisualizationMode::default(),
+        VectorField::En
+    ).await?;
 
     // Render simulation
     let backend_name = backend_name(&backend);
     println!("Running on backend: {backend_name}");
-    while testbed.render_frame(&backend, &state, &mut readback).await? {
+    while viewer.render_frame().await? {
+        viewer.sync(&backend, &state)?;
         pipeline.simulate(&backend, &mut state)?;
     }
 
-    readback.request_copy_t_idx(&backend, &state)?;
-    readback.read_back_t_idx(&backend)?;
-    let n_steps = readback.get_t_idx();
+    // Print duration of simulation
+    viewer.readback.request_copy_t_idx(&backend, &state)?;
+    viewer.readback.read_back_t_idx(&backend)?;
+    let n_steps = viewer.readback.get_t_idx();
     println!("simulated time: {:?} ns", n_steps as Real * dt * 1e9);
     println!("steps: {:?}", n_steps);
 

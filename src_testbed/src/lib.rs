@@ -310,14 +310,11 @@ impl FdtdTestbedViewer {
         }
     }
 
-    /// Renders one frame of the vector field `v_field`.
+    /// Renders one frame of the simulation. Run [`FdtdTestbedViewer::sync`] to keep frames
+    /// up-to-date with simulation.
     ///
     /// Returns `false` if the viewer should stop rendering (e.g. when the window closes).
-    pub async fn render_frame<BC: BoundaryConditionTypes>(
-        &mut self,
-        backend: &GpuBackend,
-        state: &FdtdLossyState<BC>,
-    ) -> TaserResult<bool> {
+    pub async fn render_frame(&mut self) -> TaserResult<bool> {
         self.update_cam_light();
         self.viewer_control_window();
 
@@ -327,19 +324,19 @@ impl FdtdTestbedViewer {
 
         let window_bool = self.window.render_3d(&mut self.scene, &mut self.camera).await;
 
-        // Visualize the version of the field that's stored on CPU
-        // Don't read back here since that forces the read back & simulation to be in series with the visualization (slow)
         self.visualization_mode.update_visual(
             &self.readback,
             self.vector_field_visual,
             &mut self.window,
         );
 
-        // Read back new field and request copy of field for next iteration
-        self.readback.read_back_field(backend, self.vector_field_visual)?;
-        self.readback.request_copy_field(backend, state, self.vector_field_visual)?;
-
         Ok(window_bool)
+    }
+
+    /// Synchronize the viewer's snapshot of simulation elements with `state`.
+    pub fn sync<BC: BoundaryConditionTypes>(&mut self, backend: &GpuBackend, state: &FdtdLossyState<BC>) -> TaserResult<()> {
+        self.readback.read_back_field(backend, self.vector_field_visual)?;
+        self.readback.request_copy_field(backend, state, self.vector_field_visual)
     }
 
     pub fn update_cam_light(&mut self) {
@@ -583,6 +580,7 @@ impl VisualizationMode {
         *slice_visual = None;
     }
 
+    /// Visualizes vector field that was already read back to `readback`.
     #[allow(unused_variables)]
     pub fn update_visual(
         &mut self,
@@ -624,7 +622,7 @@ impl VisualizationMode {
                 .map(|(cell_pos, vector)| {
                     let v = match vector_field_visual {
                         VectorField::H => sim_mode.extract_h_vector(vector),
-                        _ => sim_mode.extract_e_vector(vector)
+                        VectorField::Dn | VectorField::En => sim_mode.extract_e_vector(vector)
                     };
                     cell_pos + (v / *graph_max_magnitude) * *graph_max_val
                 })

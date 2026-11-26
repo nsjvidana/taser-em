@@ -811,17 +811,14 @@ impl FdtdStateReadback {
         let v_field = self.get_field_raw(field);
         cfg_select! {
             feature = "dim3" => v_field.iter().map(|v| v.length()).collect(),
-            _ =>
-                match self.mode {
-                    #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::EyHx => crate::par_iter!(v_field).map(|v| v.y.abs()).collect(),
-                    #[cfg(feature = "dim1")]
-                    FdtdSimulationMode::ExHy => crate::par_iter!(v_field).map(|v| v.x.abs()).collect(),
-                    #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseMagneticZ => crate::par_iter!(v_field).map(|v| v.z.abs()).collect(),
-                    #[cfg(feature = "dim2")]
-                    FdtdSimulationMode::TransverseElectricZ => crate::par_iter!(v_field).map(|v| v.xy().length()).collect(),
-                },
+            _ => crate::par_iter!(v_field)
+                .map(|v| {
+                    match field {
+                        VectorField::H => self.mode.get_h_magnitude(v),
+                        VectorField::Dn | VectorField::En => self.mode.get_e_magnitude(v),
+                    }
+                })
+                .collect()
         }
     }
 }

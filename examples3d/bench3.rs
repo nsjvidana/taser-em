@@ -94,7 +94,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
     println!("Average time per step: {avg_per_step:?}");
     println!("Number of steps steps: {n_steps}");
     println!("Steps per GPU submission (simulation speed): {sim_speed}");
-    println!("Number of cells: {}", state.n_cells.element_product());
+    println!("Number of cells: {}", state.grid_sizing.n_cells.element_product());
 
     Ok(())
 }

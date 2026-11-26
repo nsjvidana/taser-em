@@ -84,27 +84,23 @@ pub async fn mesh_scatterer() -> anyhow::Result<()> {
     );
     let pipeline = FdtdLossyPipeline::new(&backend, boundary_condition, sim_speed)?;
     let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
-    let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default();
-    let mut testbed = FdtdTestbedViewer::new(
-        &simulation,
-        &stability,
-        vis_mode,
-        VectorField::H
-    ).await?;
+    let mut testbed = FdtdTestbedViewer::new(&backend, &state, vis_mode, VectorField::H).await?;
     testbed.set_pml_alpha(0.);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
-    while testbed.render_frame(&backend, &state, &mut readback).await? {
+    while testbed.render_frame().await? {
+        testbed.sync(&backend, &state)?;
         pipeline.simulate(&backend, &mut state)?;
     }
 
-    readback.request_copy_t_idx(&backend, &state)?;
-    readback.read_back_t_idx(&backend)?;
-    let n_steps = readback.get_t_idx();
+    // Print duration of simulation
+    testbed.readback.request_copy_t_idx(&backend, &state)?;
+    testbed.readback.read_back_t_idx(&backend)?;
+    let n_steps = testbed.readback.get_t_idx();
     println!("Simulated time: {} ns", dt * n_steps as f32 * 1e9);
     println!("steps: {}", n_steps);
 
@@ -180,25 +176,26 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     );
     let pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
     let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
-    let mut readback = FdtdStateReadback::new(&backend, &state)?;
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default()
-        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.030))
+        .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.020))
         .with_alpha(AlphaMode::Mask(0.1), 1.);
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
+    let mut testbed = FdtdTestbedViewer::new(&backend, &state, vis_mode, VectorField::H).await?;
     testbed.set_pml_alpha(0.);
     testbed.visualization_mode.slice_visual(SpatialAxis::Z, elem_thickness / 2.);
 
     // Render simulation
     println!("Running on backend: {}", backend_name(&backend));
-    while testbed.render_frame(&backend, &state, &mut readback).await? {
+    while testbed.render_frame().await? {
+        testbed.sync(&backend, &state)?;
         pipeline.simulate(&backend, &mut state)?;
     }
 
-    readback.request_copy_t_idx(&backend, &state)?;
-    readback.read_back_t_idx(&backend)?;
-    let n_steps = readback.get_t_idx();
+    // Print duration of simulation
+    testbed.readback.request_copy_t_idx(&backend, &state)?;
+    testbed.readback.read_back_t_idx(&backend)?;
+    let n_steps = testbed.readback.get_t_idx();
     println!("simulated time: {:?} ns", n_steps as Real * dt * 1e9);
     println!("steps: {:?}", n_steps);
 

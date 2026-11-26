@@ -8,7 +8,7 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VisualizationMode, re_exp
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::BinaryGrating;
+    let example = Example::Suzanne;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),
@@ -24,17 +24,15 @@ enum Example {
     BenchAll,
 }
 
+/// A simple example of 2D FDTD simulation using meshes
 pub async fn suzanne_cross_section() -> anyhow::Result<()> {
     // Gaussian pulse maximum frequency
     let f_max = 2.4e9; // 2.4 GHz
     let sim_speed = 3;
+    let cpw = 30;
 
     // Simulation parameters w/ default stability values.
-    let stability = FdtdStability {
-        dt_safety_factor: 10.,
-        cells_per_wavelength: 15,
-        ..Default::default()
-    };
+    let stability = FdtdStability::from_cpw(cpw);
     let cell_size = stability.cell_size_from_min_wavelength(f_max);
     let dt = stability.cfl_condition(cell_size)
         .min(stability.dt_from_gaussian_freq(f_max));
@@ -52,9 +50,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
     let wavelen = C_0 / f_max;
     let mat = ElectricMaterial {
         eps_r: Vec3::splat(7.),
-        mu_r: Vec3::splat(1.),
-        sig: Vec3::INFINITY,
-        // sig: Vec3::splat(0.),
+        ..ElectricMaterial::FREE_SPACE
     };
     simulation.material_regions.load_trimesh_regions(
         mat,
@@ -70,7 +66,7 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
             direction: Direction::Negative,
             t_start: 0.0,
             polarization: Vec3::Z,
-            tfsf_buffer_width: LayerWidths::splat_spatial(3),
+            tfsf_buffer_width: LayerWidths::splat_spatial(8),
             injection_plane_only: false,
         },
         source_values,
@@ -86,31 +82,32 @@ pub async fn suzanne_cross_section() -> anyhow::Result<()> {
     );
     let pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
     let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
-    let mut readback = FdtdStateReadback::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ)?;
 
     // Create viewer and set up camera
     let vis_mode = VisualizationMode::default();
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
-    testbed.window.set_ambient(0.5);
+    let mut viewer = FdtdTestbedViewer::new(&backend, &state, FdtdSimulationMode::TransverseMagneticZ, vis_mode, VectorField::H).await?;
+    viewer.window.set_ambient(0.5);
 
     // Render simulation
-    while testbed.render_frame(&backend, &state, &mut readback).await? {
+    while viewer.render_frame().await? {
+        viewer.sync(&backend, &state)?;
         pipeline.simulate(&backend, &mut state)?;
     }
 
-    readback.request_copy_t_idx(&backend, &state)?;
-    readback.read_back_t_idx(&backend)?;
-    let n_steps = readback.get_t_idx();
+    viewer.readback.request_copy_t_idx(&backend, &state)?;
+    viewer.readback.read_back_t_idx(&backend)?;
+    let n_steps = viewer.readback.get_t_idx();
     println!("simulated time: {:?} ns", n_steps as Real * dt * 1e9);
     println!("steps: {:?}", n_steps);
 
     Ok(())
 }
 
+/// 2D straight "dipole antenna" simulation
 pub async fn dipole_antenna() -> anyhow::Result<()> {
     let freq = 2.4e9; // 2.4 GHz
     let dft_resolution = 50;
-    let sim_speed = 3;
+    let sim_speed = 5;
 
     // Simulation parameters w/ 30 cells-per-wavelength
     let cpw = 120;
@@ -152,7 +149,7 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     // Source injection in antenna feed gap
     let dipole = Dipole {
         dipole_type: DipoleType::Electric,
-        position: feed_center + Vect::ONE.with_y(0.) * elem_thickness,
+        position: feed_center + Vect::ONE.with_y(0.) * (elem_thickness / 2.),
         t_start: 0.0,
         moment: Vec3::Y,
     };
@@ -218,8 +215,8 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
     println!("Running on backend: {}", backend_name(&backend));
     let vis_mode = VisualizationMode::default()
         .with_color_mode(ColorMode::default().to_fixed_range(0.0..0.25));
-    let mut testbed = FdtdTestbedViewer::new(&simulation, &stability, vis_mode, VectorField::H).await?;
-    while testbed.render_frame(&backend, &state, &mut readback).await? {
+    let mut viewer = FdtdTestbedViewer::new(&backend, &state, FdtdSimulationMode::TransverseElectricZ, vis_mode, VectorField::En).await?;
+    while viewer.render_frame().await? {
         power_readback.read_back(&backend)?;
         power_readback.request_copy(&backend, &state)?;
         let instantaneous_flux = power_readback.get_power(&flux).unwrap();
@@ -239,10 +236,11 @@ pub async fn dipole_antenna() -> anyhow::Result<()> {
             normalized_plot.set_y(dfts_normalized.as_slice().unwrap());
         }
         plot_window.show(
-            &mut testbed,
+            &mut viewer,
             vec![flux_plot.create_line(), src_flux_plot.create_line(), normalized_plot.create_line()]
         )?;
 
+        viewer.sync(&backend, &state)?;
         let mut encoder = backend.begin_encoding();
         let mut pass = encoder.begin_pass("2D dipole antenna", None);
         pipeline.dispatch_steps(&mut pass, &mut state)?;
