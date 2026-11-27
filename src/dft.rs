@@ -194,12 +194,11 @@ impl DftRegionStates {
 
                 let flat_idx_incrs = {
                     let mut incrs = UVec3::ZERO;
-                    for (spatial_axis, axis) in SpatialAxis::ALL_SPATIAL.into_iter()
-                        .zip(SpatialAxis::ALL_AXES)
+                    for axis in SpatialAxis::ALL_AXES
                     {
-                        let mut grid_incr = GridIndex::ZERO;
-                        grid_incr[spatial_axis] = 1;
-                        incrs[axis] = grid_incr.to_flat_idx(n_cells);
+                        incrs[axis] = GridIndex::ZERO
+                            .with_axis(axis, 1)
+                            .to_flat_idx(n_cells);
                     }
                     incrs
                 };
