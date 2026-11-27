@@ -34,7 +34,7 @@ pub struct FdtdTestbedViewer {
     /// A light source locked at the camera's location (optional, but is a point source by default)
     pub cam_light: Option<SceneNode3d>,
     /// Which field should be visualized
-    pub vector_field_visual: VectorField,
+    vector_field_visual: VectorField,
     pub visualization_mode: VisualizationMode,
     pub readback: FdtdStateReadback,
     n_cells: GridIndex,
@@ -133,6 +133,7 @@ impl FdtdTestbedViewer {
         selff.update_cam_light();
         selff.add_pmls(&state.pml_parameters);
         selff.add_region_meshes(&state.material_regions, world_to_grid);
+        selff.readback.set_read_full_field(backend, state, vector_field_visual)?;
         if let Some(flux_states) = &state.power_flux_states {
             selff.add_flux_planes(flux_states.sensors.iter().map(|ptr| ptr.as_ref()))
         }
@@ -335,8 +336,27 @@ impl FdtdTestbedViewer {
 
     /// Synchronize the viewer's snapshot of simulation elements with `state`.
     pub fn sync<BC: BoundaryConditionTypes>(&mut self, backend: &GpuBackend, state: &FdtdLossyState<BC>) -> TaserResult<()> {
-        self.readback.read_back_field(backend, self.vector_field_visual)?;
-        self.readback.request_copy_field(backend, state, self.vector_field_visual)
+        #[cfg(feature = "dim3")]
+        if let VisualizationMode::Cubes { slice_visual, update_readback, .. } = &mut self.visualization_mode &&
+            *update_readback
+        {
+            let reads =
+                if let Some((s_axis, _, idx)) = slice_visual {
+                    let axis = Axis::from(*s_axis);
+                    let region = FdtdReadbackType::Region {
+                        start: GridIndex::ZERO.with_axis(axis, *idx),
+                        end: (self.n_cells - 1).with_axis(axis, *idx),
+                    };
+                    vec![(region, self.vector_field_visual)]
+                }
+                else {
+                    vec![(FdtdReadbackType::Full, self.vector_field_visual)]
+                };
+            self.readback.set_field_reads(backend, state, reads)?;
+            *update_readback = false;
+        }
+
+        self.readback.sync_fields(backend, state)
     }
 
     pub fn update_cam_light(&mut self) {
@@ -404,6 +424,11 @@ pub enum VisualizationMode {
         alpha_mode: AlphaMode,
         alpha: f32,
         slice_visual: Option<(SpatialAxis, Real, Index)>,
+        /// Marker for when a readback should be updated to support a change in visual type
+        /// (e.g. when `slice_visual` gets enabled).
+        ///
+        /// This gets disabled manually once a readback is updated.
+        update_readback: bool,
         grid_sizing: GridSizing,
         cell_size: Vect
     },
@@ -514,7 +539,7 @@ impl VisualizationMode {
                 VisualizationMode::Cubes {
                     instanced_cube, instances,
                     color_mode, alpha_mode, alpha,
-                    slice_visual,
+                    slice_visual, update_readback: _,
                     grid_sizing: grid_sizing_stored, cell_size: cell_size_stored,
                 } => {
                     *grid_sizing_stored = grid_sizing;
@@ -538,9 +563,10 @@ impl VisualizationMode {
         let Self::Cubes {
             instanced_cube, instances,
             grid_sizing, cell_size,
-            slice_visual,
+            slice_visual, update_readback,
             ..
         } = self;
+        *update_readback = true;
 
         let axis3 = Axis::from(axis);
         let idx = ((position + grid_sizing.world_to_grid[axis3]) / cell_size[axis])
@@ -573,9 +599,10 @@ impl VisualizationMode {
     pub fn full_grid_visual(&mut self) {
         let Self::Cubes {
             instanced_cube, instances,
-            slice_visual,
+            slice_visual, update_readback,
             ..
         } = self;
+        *update_readback = true;
         instanced_cube.set_instances(instances);
         *slice_visual = None;
     }
@@ -717,7 +744,8 @@ impl Default for VisualizationMode {
                     world_to_grid: Vec3::NAN,
                 },
                 slice_visual: None,
-                cell_size: Vect::NAN
+                update_readback: false,
+                cell_size: Vect::NAN,
             }
         }
     }

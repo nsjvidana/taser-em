@@ -14,5 +14,7 @@ pub enum Error {
     #[error(transparent)]
     PowerFlux(#[from] PowerFluxError),
     #[error(transparent)]
-    SourceError(#[from] SourceError)
+    SourceError(#[from] SourceError),
+    #[error(transparent)]
+    ReadbackError(#[from] FdtdReadbackError),
 }

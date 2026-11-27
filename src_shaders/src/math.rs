@@ -81,6 +81,11 @@ pub trait VectorValueExt: Sized {
     fn with_y(self, y: Self::Element) -> Self;
     /// Glam's `with_z()` function, but for all dimensions of this crate.
     fn with_z(self, z: Self::Element) -> Self;
+    /// Returns `self` with component along `axis` set to `v`.
+    ///
+    /// # Panics
+    /// Panics when `self` has no component along `axis`.
+    fn with_axis(self, axis: Axis, v: Self::Element) -> Self;
 }
 
 macro_rules! dim1_or_else {
@@ -175,6 +180,13 @@ macro_rules! impl_vector_value_ext {
                         feature = "dim3" => self.with_z(z)
                     }
                 )
+            }
+
+            #[inline]
+            fn with_axis(self, axis: Axis, v: Self::Element) -> Self {
+                let mut selff = self;
+                selff.dyn_insert(axis, v);
+                selff
             }
         }
     };

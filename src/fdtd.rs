@@ -6,6 +6,7 @@ use crate::gpu_util::*;
 use crate::prelude::*;
 use derivative::Derivative;
 use khal::backend::*;
+use ndarray::{Ix2, indices};
 use parry3d::bounding_volume::Aabb;
 use parry3d::shape::{Cuboid, SharedShape};
 use std::num::{NonZeroI32, NonZeroU32};
@@ -687,22 +688,29 @@ pub struct StateConstructionArgs<'a> {
 /// Utility struct for reading back vector field data to the host device (CPU):
 ///
 /// Follow these steps to get data:
-/// 1. Use the request functions (e.g. [`request_copy_field`](Self::request_copy_field))
-///    to initiate readback.
-/// 2. Use the read-back functions to copy data to the CPU (e.g. [`read_back_field`](Self::read_back_field))
-/// 3. Get vector field data using the appropriate functions
-///    (e.g. [`get_field_raw`](Self::get_field_raw), [`field_magnitudes`](Self::field_magnitudes), [`get_t_idx`](Self::get_t_idx))
+/// 1. Set which parts of vector field to read back (e.g. [`set_field_reads`](Self::set_field_reads))
+/// 2. Use the request functions to initiate readback (e.g. [`request_field_reads`](Self::request_field_reads),
+///    [`request_copy_t_idx`](Self::request_copy_t_idx)).
+/// 2. Use the read-back functions to copy data to the CPU (e.g. [`sync_fields`](Self::sync_fields)
+///    [`read_back_t_idx`](Self::read_back_t_idx))
+/// 3. Get the desited data using the appropriate functions (e.g. [`get_field_raw`](Self::get_field_raw),
+///    [`field_magnitudes`](Self::field_magnitudes), [`get_t_idx`](Self::get_t_idx))
 pub struct FdtdStateReadback {
     h: Vec<Vec4>,
     dn: Vec<Vec4>,
     en: Vec<Vec4>,
     t_idx: Vec<u32>,
-    h_read: GpuReadback<Vec4>,
-    dn_read: GpuReadback<Vec4>,
-    en_read: GpuReadback<Vec4>,
+    fields_read: GpuReadback<Vec4>,
+    fields_out: Vec<Vec4>,
     t_idx_read: GpuReadback<u32>,
     #[cfg(not(feature = "dim3"))]
-    mode: FdtdSimulationMode
+    mode: FdtdSimulationMode,
+    /// Buffer regions of vector field buffers to read back from GPU.
+    /// Used by [`request_field_reads`](Self::request_field_reads).
+    ///
+    /// Contains `(field, source_offset, count)` where `count` is number of vectors to copy, starting
+    /// from `source_offset` in the vector field buffer
+    field_regions: Vec<(VectorField, usize, usize)>
 }
 
 impl FdtdStateReadback {
@@ -712,41 +720,136 @@ impl FdtdStateReadback {
         #[cfg(not(feature = "dim3"))] mode: FdtdSimulationMode
     ) -> TaserResult<Self> {
         let zeroed_vector_field = vec![Vec4::ZERO; state.grid_sizing.n_cells.element_product() as usize];
-        let cell_count = zeroed_vector_field.len();
         Ok(Self {
             h: zeroed_vector_field.clone(),
             dn: zeroed_vector_field.clone(),
-            en: zeroed_vector_field,
+            en: zeroed_vector_field.clone(),
             t_idx: vec![0],
-            h_read: GpuReadback::new(backend, cell_count)?,
-            dn_read: GpuReadback::new(backend, cell_count)?,
-            en_read: GpuReadback::new(backend, cell_count)?,
+            fields_read: GpuReadback::new(backend, 1)?, // can't have zero-sized buffers, so make len 1
+            fields_out: vec![],
             t_idx_read: GpuReadback::new(backend, 1)?,
             #[cfg(not(feature = "dim3"))]
             mode,
+            field_regions: vec![],
         })
     }
 
-    #[cfg(not(feature = "dim3"))]
-    pub fn get_simulation_mode(&self) -> FdtdSimulationMode { self.mode }
+    /// Set the readbacks for vector fields that will be submitted by [`request_field_reads`](Self::request_field_reads).
+    ///
+    /// Automatically [`resize`](Self::resize)s `self` for reading back `state`
+    pub fn set_field_reads<BC: BoundaryConditionTypes>(
+        &mut self,
+        backend: &GpuBackend,
+        state: &FdtdLossyState<BC>,
+        reads: Vec<(FdtdReadbackType, VectorField)>,
+    ) -> TaserResult<()> {
+        let n_cells = state.grid_sizing.n_cells;
+        let cell_count = n_cells.element_product() as usize;
 
-    /// Submit a command for copying an entire vector field from GPU to CPU
-    pub fn request_copy_field<BC: BoundaryConditionTypes>(
+        let buf_regions = reads
+            .into_iter()
+            .map(|(read_type, field)| read_type.compute_buffer_regions(n_cells, cell_count, field))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        self.field_regions = buf_regions;
+        self.resize(backend, state)?;
+        Ok(())
+    }
+
+    /// Set `self` to only read back one entire vector field.
+    pub fn set_read_full_field<BC: BoundaryConditionTypes>(
         &mut self,
         backend: &GpuBackend,
         state: &FdtdLossyState<BC>,
         field: VectorField,
     ) -> TaserResult<()> {
-        let (read, vfield) = match field {
-            VectorField::H => (&mut self.h_read, &state.h),
-            VectorField::Dn => (&mut self.dn_read, &state.dn),
-            VectorField::En => (&mut self.en_read, &state.en),
-        };
-        if read.is_idle() {
-            read.request_copy(backend, vfield, 0)?;
-        }
+        self.set_field_reads(backend, state, vec![(FdtdReadbackType::Full, field)])
+    }
+
+    /// Resize buffer lengths to fit reading back vector fields from `state`
+    pub fn resize<BC: BoundaryConditionTypes>(
+        &mut self,
+        backend: &GpuBackend,
+        state: &FdtdLossyState<BC>
+    ) -> TaserResult<()> {
+        let cell_count = state.grid_sizing.n_cells.element_product() as usize;
+        let fields_len = self.field_regions
+            .iter()
+            .map(|(_, _, count)| *count)
+            .sum::<usize>();
+
+        if self.fields_read.len() != fields_len { self.fields_read = GpuReadback::new(backend, fields_len)?; }
+        self.fields_out.resize(fields_len, Vec4::ZERO);
+        self.h.resize(cell_count, Vec4::ZERO);
+        self.dn.resize(cell_count, Vec4::ZERO);
+        self.en.resize(cell_count, Vec4::ZERO);
         Ok(())
     }
+
+    /// Request all readbacks specified in [`set_reads`](Self::set_field_reads).
+    ///
+    /// If none were specified, or if readback is already underway, this function does nothing.
+    pub fn request_field_reads<BC: BoundaryConditionTypes>(
+        &mut self,
+        backend: &GpuBackend,
+        state: &FdtdLossyState<BC>,
+    ) -> TaserResult<()> {
+        if !self.fields_read.is_idle() || self.field_regions.is_empty() { return Ok(()); }
+
+        let sources = self.field_regions
+            .iter()
+            .copied()
+            .map(|(field, offset, count)| {
+                let buf = match field {
+                    VectorField::H => &state.h,
+                    VectorField::Dn => &state.dn,
+                    VectorField::En => &state.en,
+                };
+                (buf, offset, count)
+            })
+            .collect::<Vec<_>>();
+        self.fields_read.request(backend, &sources)?;
+        Ok(())
+    }
+
+    /// Does blocking readback of fields and submits copy for fields afterward.
+    /// This lets you call this function repeatedly. For simpler applications you would call this function.
+    ///
+    /// Note that this function does make readbacks one time step behind.
+    pub fn sync_fields<BC: BoundaryConditionTypes>(
+        &mut self,
+        backend: &GpuBackend,
+        state: &FdtdLossyState<BC>,
+    ) -> TaserResult<()> {
+        backend.synchronize()?;
+        self.try_readback_fields(backend);
+        self.request_field_reads(backend, state)
+    }
+
+    /// Non-blocking readback from GPU that updates `self`.
+    ///
+    /// Returns `false` if GPU is still busy.
+    pub fn try_readback_fields(&mut self, backend: &GpuBackend) -> bool {
+        if !self.fields_read.try_take(backend, &mut self.fields_out) { return false; }
+
+        let mut offset = 0;
+        for (field, field_offset, count) in &self.field_regions {
+            let field = match field {
+                VectorField::H => &mut self.h,
+                VectorField::Dn => &mut self.dn,
+                VectorField::En => &mut self.en,
+            };
+            field[*field_offset..(*field_offset + count)]
+                .copy_from_slice(&self.fields_out[offset..(offset + count)]);
+            offset += count;
+        }
+        true
+    }
+
+    #[cfg(not(feature = "dim3"))]
+    pub fn get_simulation_mode(&self) -> FdtdSimulationMode { self.mode }
 
     /// Submit command for copying time index to CPU.
     #[inline]
@@ -761,14 +864,7 @@ impl FdtdStateReadback {
         Ok(())
     }
 
-    /// Blocks the thread until a vector field is read into `self`. Must be called after [`request_copy_field`](Self::request_copy_field).
-    #[inline]
-    pub fn read_back_field(&mut self, backend: &GpuBackend, field: VectorField) -> TaserResult<()> {
-        backend.synchronize()?;
-        self.try_read_back_field(backend, field);
-        Ok(())
-    }
-
+    /// **Blocking** read of time index.
     #[inline]
     pub fn read_back_t_idx(&mut self, backend: &GpuBackend) -> TaserResult<()> {
         backend.synchronize()?;
@@ -776,18 +872,7 @@ impl FdtdStateReadback {
         Ok(())
     }
 
-    /// Try reading a vector field without blocking the thread. Must be called after [`request_copy_field`](Self::request_copy_field)
-    /// is called for the same `field`.
-    pub fn try_read_back_field(&mut self, backend: &GpuBackend, field: VectorField) -> bool {
-        let (field_read, vfield) = match field {
-            VectorField::H => (&mut self.h_read, &mut self.h),
-            VectorField::Dn => (&mut self.dn_read, &mut self.dn),
-            VectorField::En => (&mut self.en_read, &mut self.en),
-        };
-        field_read.try_take(backend, vfield)
-    }
-
-    /// Non-blocking read of time index
+    /// Non-blocking read of time index. Call after [`request_copy_t_idx`](Self::request_copy_t_idx)
     pub fn try_read_back_t_idx(&mut self, backend: &GpuBackend) -> bool {
         self.t_idx_read.try_take(backend, &mut self.t_idx)
     }
@@ -823,11 +908,88 @@ impl FdtdStateReadback {
     }
 }
 
+/// Select parts of the grid to update in a readback request
+#[derive(Clone, Debug)]
+pub enum FdtdReadbackType {
+    /// Read back entire grid
+    Full,
+    /// Read back box-shaped region of cells
+    ///
+    /// `start` and `end` are **inclusive**
+    Region {
+        start: GridIndex,
+        end: GridIndex,
+    },
+    /// Read back specific cells only.
+    ///
+    /// While readback requests for these all cells are submitted at once, this can be a slow for large
+    /// amounts of cells.
+    Cells(Vec<GridIndex>),
+}
+
+impl FdtdReadbackType {
+    pub(crate) fn compute_buffer_regions(
+        &self,
+        n_cells: GridIndex,
+        cell_count: usize,
+        field: VectorField
+    ) -> TaserResult<Vec<(VectorField, usize, usize)>> {
+        let buf_regions = match self {
+            FdtdReadbackType::Full => vec![(field, 0, cell_count)],
+            FdtdReadbackType::Region { start: pt1, end: pt2 } => {
+                let start = (*pt1).min(*pt2);
+                let end = (*pt1).max(*pt2);
+                if end.cmpge(n_cells).any() {
+                    Err(FdtdReadbackError::OutOfGrid {
+                        cell_idx: end, readback: self.clone(), n_cells
+                    })?;
+                }
+
+                // TODO: optimization for regions spanning entire x-y dimensions of grid
+                // one buffer copy for each x-row of cells (x rows are contiguous in memory)
+                let dims = (end - start + 1).n_cells_to_3d().as_usizevec3();
+                let start3 = start.cell_idx_to_3d();
+                indices(Ix2(dims.z, dims.y))
+                    .into_iter()
+                    .map(|(z, y)| {
+                        let z = z as Index;
+                        let y = y as Index;
+                        let buf_start = GridIndex::from_uvec3(start3 + UVec3::new(0, y, z))
+                            .to_flat_idx(n_cells);
+                        (field, buf_start as usize, dims.x)
+                    })
+                    .collect::<Vec<_>>()
+            },
+            FdtdReadbackType::Cells(cell_idxs) => {
+                // TODO: try sorting cell_idxs to reduce number of buffer copies?
+                cell_idxs
+                    .iter()
+                    .copied()
+                    .map(|cell_idx| {
+                        match cell_idx.cmplt(n_cells).all() {
+                            true => Ok((field, cell_idx.to_flat_idx(n_cells) as usize, 1)),
+                            false => Err(FdtdReadbackError::OutOfGrid {
+                                cell_idx, readback: self.clone(), n_cells
+                            })?
+                        }
+                    })
+                    .collect::<TaserResult<Vec<_>>>()?
+            },
+        };
+        Ok(buf_regions)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum VectorField {
     H,
     Dn,
     En
+}
+
+impl VectorField {
+    /// Number of vector fields this enum can represent
+    pub const COUNT: usize = 3;
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1171,5 +1333,15 @@ impl FdtdSimulationMode {
             #[cfg(feature = "dim2")]
             Self::TransverseElectricZ => e.xy().length(),
         }
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum FdtdReadbackError {
+    #[error("Readback bounds extend outside grid:\n Cell {cell_idx} in Readback: {readback:?}\n Grid n_cells: {n_cells}")]
+    OutOfGrid {
+        cell_idx: GridIndex,
+        readback: FdtdReadbackType,
+        n_cells: GridIndex
     }
 }

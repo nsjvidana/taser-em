@@ -95,11 +95,12 @@ pub async fn benchmark() -> anyhow::Result<()> {
     let pipeline = FdtdLossyPipeline::new(&backend, boundary_conditions, sim_speed)?;
     let mut state = simulation.finalize(&backend, &stability, &pipeline)?;
     let mut readback = FdtdStateReadback::new(&backend, &state)?;
+    readback.set_read_full_field(&backend, &state, VectorField::En)?;
 
     // Run simulation
     for _ in 0..WARMUP {
         pipeline.simulate(&backend, &mut state)?;
-        backend.synchronize()?;
+        readback.sync_fields(&backend, &state)?;
     }
 
     readback.request_copy_t_idx(&backend, &state)?;
@@ -109,7 +110,7 @@ pub async fn benchmark() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     for _ in 0..BENCH {
         pipeline.simulate(&backend, &mut state)?;
-        backend.synchronize()?;
+        readback.sync_fields(&backend, &state)?;
     }
     let elapsed = start.elapsed();
 
