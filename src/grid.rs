@@ -438,7 +438,7 @@ impl PmlCoefficientsGrid {
             let n_axis2x = n_cells3[axis]*2;
             let hi_end = (n_axis2x - 1).saturating_sub(ONE_CELL);
             let lo_end = ONE_CELL;
-            (0..n_axis2x)
+            into_par_iter!(0..n_axis2x)
                 .map(|i| {
                     if i < lo_end || i > hi_end { return 0. }
                     let lo_dist = i.abs_diff(lo_end) as Real;

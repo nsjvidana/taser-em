@@ -8,7 +8,7 @@ use taser_em_testbed2d::{ColorMode, FdtdTestbedViewer, VisualizationMode, re_exp
 
 #[kiss3d::main]
 async fn main() {
-    let example = Example::BinaryGrating;
+    let example = Example::Suzanne;
     match example {
         Example::Suzanne => suzanne_cross_section().await.unwrap(),
         Example::DipoleAntenna => dipole_antenna().await.unwrap(),

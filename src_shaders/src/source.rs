@@ -92,15 +92,20 @@ pub fn gpu_compute_tfsf_terms(
     let mut dn_source = Vec4::ZERO;
 
     let coeffs = pml_coeffs.read(idx);
+    let mut skipped_count = 0;
     for i in 0..tfsf_sources.len() {
         let GpuTfsf {
             a, a1, a2,
-            tf_min_a, vals_start, vals_end,
+            tf_min_a,
             corrections_start, num_correction_cells,
             inv_d_a, inv_d_a1, inv_d_a2,
+            finished,
             ..
         } = tfsf_sources.read(i);
-        if vals_start == vals_end { continue; } // skip invalid/inactive tfsf sources
+        if finished == true as u32 {
+            skipped_count += 1;
+            continue;
+        }
 
         let cell_idx_a = cell_idx3.dyn_idx(a);
         let corrections_end = (corrections_start + num_correction_cells - 1) as usize;
@@ -143,6 +148,9 @@ pub fn gpu_compute_tfsf_terms(
             (inv_d_a * h_src_a1_ma)
         );
     }
+
+    // skip extra work if all tfsf sources are done
+    if skipped_count == tfsf_sources.len() { return; }
 
     let (x_idx, y_idx, z_idx) = dim3_components_flat_idx(idx);
     atomic_add_f32(tfsf_src_h.at_mut(x_idx), h_source.x);
@@ -439,19 +447,38 @@ pub fn aux_grid_update(
     let GpuTfsf {
         direction,
         grid_start, vals_start, vals_end, t_start, n_cells,
+        t_stop,
         polarization_a1, polarization_a2,
         corrections_start, num_correction_cells,
         inv_d_a, ..
     } = tfsf_sources.read(tfsf_idx);
-    if vals_start == vals_end { return; } // skip invalid/inactive tfsf sources
 
     if cell_idx3.z >= n_cells { return; }
 
+    let is_positive_dir = direction == Direction::Positive;
     let last_idx_local = n_cells as usize - 1;
     let idx_local = cell_idx3.z as usize;
-    let idx_local_inv = last_idx_local - idx_local;
+    let idx_local_flipped = last_idx_local - idx_local;
 
-    let is_positive_dir = direction == Direction::Positive;
+    // correction-term indexing
+    let num_correction_cells = num_correction_cells as usize;
+    let dir_local_idx = if is_positive_dir { idx_local } else { idx_local_flipped };
+    let is_correction_cell = dir_local_idx > 0 && dir_local_idx <= num_correction_cells;
+    let sub_enable = is_correction_cell as usize;
+    let corr_idx_offset =
+        if is_positive_dir { dir_local_idx - 1 * sub_enable }
+        else { num_correction_cells - dir_local_idx * sub_enable };
+    let correction_idx = corrections_start as usize + corr_idx_offset;
+
+    // skip grid update for tfsf sources that finished
+    if *t_idx >= t_stop {
+        if !is_correction_cell { return; }
+        corrections.write(correction_idx, TfsfSourceValues::ZERO);
+        if dir_local_idx != 1 { return; }
+        tfsf_sources.at_mut(tfsf_idx).finished = true as u32;
+        return;
+    }
+
     let idx_offset = grid_start as usize;
     let idx = idx_offset + idx_local;
     let m = auxgr_coeffs.read(idx);
@@ -493,12 +520,7 @@ pub fn aux_grid_update(
     );
     en.write(idx, en_self);
 
-    let num_correction_cells = num_correction_cells as usize;
-    let dir_local_idx = if is_positive_dir { idx_local } else { idx_local_inv };
-    let is_correction_cell = dir_local_idx > 0 && dir_local_idx <= num_correction_cells;
     if !is_correction_cell { return; }
-    let corr_idx_offset = if is_positive_dir { dir_local_idx - 1 } else { num_correction_cells - dir_local_idx };
-    let correction_idx = corrections_start as usize + corr_idx_offset;
     corrections.write(correction_idx, TfsfSourceValues {
         en_a1: en_self_corr.x,
         en_a2: en_self_corr.y,
@@ -568,6 +590,15 @@ pub struct GpuTfsf {
     pub inv_d_a1: Real,
     pub inv_d_a2: Real,
     pub curr_src_val: Real,
+
+    /// Time at which this TFSF source is considered to be done.
+    ///
+    /// This happens when the source function is done injecting and enough time passed afterward for
+    /// a wave to travel the entire grid through background material.
+    pub t_stop: u32,
+    /// Set to `true` after time reaches `t_stop`.
+    pub finished: u32,
+
     // TODO: pub repeat_count: u32,
 }
 
@@ -603,11 +634,20 @@ pub struct AuxGridPmlCoeffs {
     pub en1: Vec2,
 }
 
-#[derive(Copy, Clone, Pod, Zeroable, Debug, Default)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct TfsfSourceValues {
     pub en_a1: Real,
     pub en_a2: Real,
     pub h_a1: Real,
     pub h_a2: Real,
+}
+
+impl TfsfSourceValues {
+    pub const ZERO: Self = Self {
+        en_a1: 0.,
+        en_a2: 0.,
+        h_a1: 0.,
+        h_a2: 0.,
+    };
 }

@@ -382,7 +382,7 @@ impl SourceType for Tfsf {}
 pub struct AuxGridParameters {
     pub pml_width: NonZeroU32,
     pub pml_sig_max: Real,
-    pub pml_grading_order: NonZeroI32
+    pub pml_grading_order: NonZeroI32,
 }
 
 pub struct TfsfPipeline {
@@ -493,6 +493,12 @@ impl TfsfStates {
         } = &sim.fdtd_parameters;
         let cell_count = n_cells3.element_product() as usize;
 
+        // calculate time for wave to propagate across grid full of bkg material
+        let n_bkg = sim.background_material.refractive_index().max_element();
+        let grid_diag = (GridIndex::from_uvec3(n_cells3).as_vect() * cell_size)
+            .length();
+        let t_prop = ((grid_diag / (C_0 / n_bkg)) / dt) as u32;
+
         let mut source_vals = vec![];
         let mut corrections = Vec::new();
         let mut coeffs = Vec::new();
@@ -503,7 +509,8 @@ impl TfsfStates {
         let (tfsf_refs, tfsf_srcs) = sim.tfsf_sources.iter()
             .filter_map(|source| {
                 let Tfsf {
-                    spatial_axis, direction, t_start,
+                    spatial_axis, direction,
+                    t_start,
                     polarization, tfsf_buffer_width, injection_plane_only
                 } = &*source.src_ref;
                 let vals = &source.data_points;
@@ -535,12 +542,18 @@ impl TfsfStates {
                 let vals_start = source_vals.len() as u32;
                 source_vals.extend_from_slice(vals);
 
+                let t_start = (t_start / dt) as u32;
+                // TODO: consider repeat_count for this. do checked multiply to see if overflows.
+                //       if overflows, set this to u32::MAX and have special case for when this
+                //       should be "infinite."
+                let t_stop = t_start + source_vals.len() as u32 + t_prop;
+
                 let pml_coeffs = {
                     let sig = {
                         const HALF_CELL: Index = 1;
                         const ONE_CELL: Index = HALF_CELL*2;
                         let n_axis2x = n_cells * ONE_CELL;
-                        let pml_end = match direction {
+                        let pml_end = match direction { // no explicit boundary cells
                             Direction::Positive => n_axis2x - HALF_CELL,
                             Direction::Negative => 0,
                             _ => panic!("Invalid wave direction")
@@ -603,7 +616,7 @@ impl TfsfStates {
                     grid_start: coeffs_start,
                     vals_start,
                     vals_end: source_vals.len() as u32 - 1,
-                    t_start: (t_start / dt) as u32,
+                    t_start,
                     n_cells,
                     polarization_a1: (*polarization)[a1],
                     polarization_a2: (*polarization)[a2],
@@ -614,6 +627,8 @@ impl TfsfStates {
                     inv_d_a1: inv_d[a1],
                     inv_d_a2: inv_d[a2],
                     curr_src_val: 0.0,
+                    t_stop,
+                    finished: false as u32,
                 };
 
                 Some((source.src_ref.clone(), tfsf))
